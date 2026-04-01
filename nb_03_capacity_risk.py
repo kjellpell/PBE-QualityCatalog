@@ -227,28 +227,27 @@ spark.sql("""
 
 spark.sql("""
     CREATE OR REPLACE TEMP VIEW weekly_with_trend AS
-    SELECT
-        w.*,
-        w.portefolje - LAG(w.portefolje, 3) OVER (
-            PARTITION BY w.Enhets_id ORDER BY w.uke_dato
-        ) AS portefolje_delta_3u,
-        CASE
-            WHEN LAG(w.portefolje, 3) OVER (
+    WITH lagged AS (
+        SELECT
+            w.*,
+            LAG(w.portefolje, 3) OVER (
                 PARTITION BY w.Enhets_id ORDER BY w.uke_dato
-            ) > 0
-            THEN (w.portefolje - LAG(w.portefolje, 3) OVER (
-                    PARTITION BY w.Enhets_id ORDER BY w.uke_dato
-                 )) * 1.0
-                 / LAG(w.portefolje, 3) OVER (
-                    PARTITION BY w.Enhets_id ORDER BY w.uke_dato
-                 )
+            ) AS lag_portefolje_3u
+        FROM weekly_with_portfolio w
+    )
+    SELECT
+        *,
+        portefolje - lag_portefolje_3u AS portefolje_delta_3u,
+        CASE
+            WHEN lag_portefolje_3u > 0
+            THEN (portefolje - lag_portefolje_3u) * 1.0 / lag_portefolje_3u
             ELSE NULL
         END AS portefolje_trend_3u,
-        AVG(w.produksjonsrate) OVER (
-            PARTITION BY w.Enhets_id ORDER BY w.uke_dato
+        AVG(produksjonsrate) OVER (
+            PARTITION BY Enhets_id ORDER BY uke_dato
             ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
         ) AS produksjonsrate_3u_snitt
-    FROM weekly_with_portfolio w
+    FROM lagged
 """)
 
 print("Portfolio and trend computed.")
