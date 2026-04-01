@@ -1,0 +1,393 @@
+# =============================================================================
+# NB_04_INVOICE_CONTROL.py
+# Checks invoices against gebyrforskriften.
+# Covers Fakturalinjer (2026+) and Fakturering+Bilag (pre-2026).
+# Schedule: nightly.
+# =============================================================================
+
+# CELL 1 — Imports and batch ID
+# -----------------------------------------------------------------------------
+from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
+from datetime import datetime
+
+spark = SparkSession.builder.getOrCreate()
+spark.sql("SET spark.sql.ansi.enabled = false")
+
+BATCH_ID           = datetime.now().strftime("%Y-%m-%d-invoice")
+ROUNDING_TOLERANCE = 1.0
+
+print(f"Batch: {BATCH_ID}")
+
+
+# CELL 1b — Load source tables as temp views
+# -----------------------------------------------------------------------------
+spark.read.table("Saksbehandling.Prosesser")\
+     .createOrReplaceTempView("Prosesser")
+spark.read.table("Saksbehandling.Fakturalinjer")\
+     .createOrReplaceTempView("Fakturalinjer")
+spark.read.table("Okonomi.Fakturering")\
+     .createOrReplaceTempView("Fakturering")
+spark.read.table("Okonomi.Bilag")\
+     .createOrReplaceTempView("Bilag")
+spark.read.table("Felles.Organisasjon")\
+     .createOrReplaceTempView("Organisasjon")
+
+print("Source tables loaded as temp views.")
+
+
+# CELL 2 — Build unified invoice lines using PySpark (avoids correlated subquery)
+# The pricelist year-matching is done in Python using a range join approach:
+# 1. Load invoice lines with invoice year
+# 2. Load pricelist with valid_from year
+# 3. Join on varenr where pricelist year <= invoice year
+# 4. Keep only the latest pricelist row per invoice line using window function
+# This is fully supported by Spark — no correlated subqueries anywhere.
+# -----------------------------------------------------------------------------
+from pyspark.sql.window import Window
+
+# Load raw tables
+fl_df = spark.sql("""
+    SELECT
+        fl.Fakturanr, fl.Prosess_id, fl.Fakturert_dato, fl.Betalt_dato,
+        fl.Status AS faktura_status,
+        fl.Linje_belop AS linje_belop,
+        fl.Fakturasum AS fakturasum,
+        fl.Tapt_gebyr,
+        CAST(fl.Produktnr AS STRING) AS varenr,
+        fl.Linje_beskrivelse AS linje_beskrivelse,
+        p.Indikator, p.Saksnummer, p.Enhets_id,
+        p.Enhetskode, p.Saksbehandler_kode, p.Saksbehandler_navn,
+        COALESCE(o.Enhet_navn, p.Enhetskode,
+            CAST(p.Enhets_id AS STRING)) AS Enhet_navn,
+        o.Seksjon_navn,
+        YEAR(fl.Fakturert_dato) AS faktura_year,
+        '2026+' AS kilde
+    FROM Fakturalinjer fl
+    JOIN Prosesser p ON fl.Prosess_id = p.Prosess_id
+    LEFT JOIN Organisasjon o ON p.Enhets_id = o.Enhets_id
+    WHERE fl.Fakturert_dato IS NOT NULL
+""")
+
+f_df = spark.sql("""
+    SELECT
+        f.Fakturanr, b.Prosess_id,
+        b.Bilagsdato AS Fakturert_dato,
+        NULL AS Betalt_dato,
+        f.Status AS faktura_status,
+        f.Belop AS linje_belop,
+        f.Belop AS fakturasum,
+        NULL AS Tapt_gebyr,
+        CAST(f.Artikkel AS STRING) AS varenr,
+        f.Fakturalinje AS linje_beskrivelse,
+        p.Indikator, p.Saksnummer, p.Enhets_id,
+        p.Enhetskode, p.Saksbehandler_kode, p.Saksbehandler_navn,
+        COALESCE(o.Enhet_navn, p.Enhetskode,
+            CAST(p.Enhets_id AS STRING)) AS Enhet_navn,
+        o.Seksjon_navn,
+        YEAR(b.Bilagsdato) AS faktura_year,
+        'pre-2026' AS kilde
+    FROM Fakturering f
+    JOIN Bilag b ON f.Fakturanr = b.Bilagsnr
+    JOIN Prosesser p ON b.Prosess_id = p.Prosess_id
+    LEFT JOIN Organisasjon o ON p.Enhets_id = o.Enhets_id
+    WHERE b.Bilagsdato IS NOT NULL
+""")
+
+# Combine invoice lines
+invoice_all = fl_df.union(f_df)\
+    .withColumn("invoice_line_id", F.monotonically_increasing_id())
+
+# Load pricelist — all years
+pl_df = spark.sql("""
+    SELECT
+        varenr,
+        CAST(valid_from AS INT) AS price_year,
+        description,
+        application_group
+    FROM pricelist_items
+""")
+
+# Join invoice lines to pricelist: varenr match AND pricelist year <= invoice year
+# Then keep only the row with the highest pricelist year per invoice line
+# Window function per invoice line ordered by price_year DESC
+joined = (
+    invoice_all
+    .join(pl_df,
+          (invoice_all.varenr == pl_df.varenr) &
+          (pl_df.price_year <= invoice_all.faktura_year),
+          how="left")
+    .drop(pl_df.varenr)
+)
+
+w = Window.partitionBy("invoice_line_id").orderBy(F.col("price_year").desc())
+
+joined_deduped = (
+    joined
+    .withColumn("rn", F.row_number().over(w))
+    .filter(F.col("rn") == 1)
+    .drop("rn", "faktura_year")
+    .withColumnRenamed("description", "varenr_beskrivelse")
+)
+
+final_inv = joined_deduped
+
+final_inv.createOrReplaceTempView("invoice_lines_unified")
+
+total_lines = final_inv.count()
+print(f"Invoice lines loaded: {total_lines:,}")
+
+
+# CELL 3 — Load current gebyr_reference
+# -----------------------------------------------------------------------------
+spark.sql("""
+    CREATE OR REPLACE TEMP VIEW ref AS
+    SELECT *
+    FROM gebyr_reference
+    WHERE valid_from <= CURRENT_DATE()
+    AND  (valid_to IS NULL OR valid_to >= CURRENT_DATE())
+""")
+print("Gebyr reference loaded.")
+
+
+# CELL 4 — EXACT checks
+# -----------------------------------------------------------------------------
+exact_violations = spark.sql(f"""
+    SELECT
+        il.Fakturanr, il.Prosess_id, il.Saksnummer, il.Indikator,
+        il.Enhets_id, il.Enhet_navn,
+        il.Saksbehandler_kode, il.Saksbehandler_navn,
+        il.varenr, il.varenr_beskrivelse,
+        il.linje_belop AS fakturert_belop,
+        r.expected_amount, r.forskrift_ref,
+        'FAKTURA_AVVIK_EKSAKT'  AS violation_type,
+        'Error'                 AS severity,
+        SHA2(CONCAT_WS('|',
+            'INV_EXACT',
+            CAST(il.Fakturanr AS STRING),
+            CAST(il.Prosess_id AS STRING),
+            il.varenr,
+            CAST(ROUND(il.linje_belop, 2) AS STRING),
+            CAST(ROUND(r.expected_amount, 2) AS STRING)
+        ), 256) AS alert_hash,
+        CONCAT(
+            'Fakturalinje ', il.varenr,
+            CASE WHEN il.varenr_beskrivelse IS NOT NULL
+                 THEN CONCAT(' (', il.varenr_beskrivelse, ')') ELSE '' END,
+            ': fakturert kr ', CAST(CAST(il.linje_belop AS INT) AS STRING),
+            ', forventet kr ', CAST(CAST(r.expected_amount AS INT) AS STRING),
+            ' iht. ', r.forskrift_ref, '.'
+        ) AS alert_message
+    FROM invoice_lines_unified il
+    JOIN ref r
+        ON  il.varenr = r.varenr
+        AND r.check_type = 'EXACT'
+        AND (r.applies_sakstype IS NULL
+             OR FIND_IN_SET(il.Indikator,
+                REPLACE(r.applies_sakstype, '|', ',')) > 0)
+    WHERE ABS(il.linje_belop - r.expected_amount) > {ROUNDING_TOLERANCE}
+""")
+exact_violations.createOrReplaceTempView("v_inv_exact")
+print(f"EXACT violations:       {exact_violations.count():>5}")
+
+
+# CELL 5 — MINIMUM FLOOR checks
+# -----------------------------------------------------------------------------
+min_violations = spark.sql(f"""
+    SELECT
+        il.Fakturanr, il.Prosess_id, il.Saksnummer, il.Indikator,
+        il.Enhets_id, il.Enhet_navn,
+        il.Saksbehandler_kode, il.Saksbehandler_navn,
+        il.varenr, il.varenr_beskrivelse,
+        il.linje_belop AS fakturert_belop,
+        r.min_amount, r.forskrift_ref,
+        'FAKTURA_UNDER_MINIMUM' AS violation_type,
+        'Warning'               AS severity,
+        SHA2(CONCAT_WS('|',
+            'INV_MIN',
+            CAST(il.Fakturanr AS STRING),
+            CAST(il.Prosess_id AS STRING),
+            il.varenr,
+            CAST(ROUND(il.linje_belop, 2) AS STRING),
+            CAST(ROUND(r.min_amount, 2) AS STRING)
+        ), 256) AS alert_hash,
+        CONCAT(
+            'Fakturalinje ', il.varenr,
+            CASE WHEN il.varenr_beskrivelse IS NOT NULL
+                 THEN CONCAT(' (', il.varenr_beskrivelse, ')') ELSE '' END,
+            ': fakturert kr ', CAST(CAST(il.linje_belop AS INT) AS STRING),
+            ' er under laveste mulige gebyr kr ',
+            CAST(CAST(r.min_amount AS INT) AS STRING),
+            ' iht. ', r.forskrift_ref, '.'
+        ) AS alert_message
+    FROM invoice_lines_unified il
+    JOIN ref r
+        ON  il.varenr = r.varenr
+        AND r.check_type = 'MIN'
+        AND (r.applies_sakstype IS NULL
+             OR FIND_IN_SET(il.Indikator,
+                REPLACE(r.applies_sakstype, '|', ',')) > 0)
+    WHERE il.linje_belop < r.min_amount
+""")
+min_violations.createOrReplaceTempView("v_inv_min")
+print(f"BELOW_MINIMUM:          {min_violations.count():>5}")
+
+
+# CELL 6 — TAPT_GEBYR check (2026+ only)
+# -----------------------------------------------------------------------------
+tapt_violations = spark.sql(f"""
+    SELECT
+        il.Fakturanr, il.Prosess_id, il.Saksnummer, il.Indikator,
+        il.Enhets_id, il.Enhet_navn,
+        il.Saksbehandler_kode, il.Saksbehandler_navn,
+        il.varenr, il.varenr_beskrivelse,
+        il.linje_belop AS fakturert_belop,
+        il.Tapt_gebyr,
+        NULL AS forskrift_ref,
+        'TAPT_GEBYR'   AS violation_type,
+        'Warning'      AS severity,
+        SHA2(CONCAT_WS('|',
+            'INV_TAPT',
+            CAST(il.Fakturanr AS STRING),
+            CAST(il.Prosess_id AS STRING),
+            il.varenr,
+            CAST(ROUND(il.Tapt_gebyr, 2) AS STRING)
+        ), 256) AS alert_hash,
+        CONCAT(
+            'Tapt gebyr på kr ',
+            CAST(CAST(il.Tapt_gebyr AS INT) AS STRING),
+            ' registrert på prosess ', CAST(il.Prosess_id AS STRING),
+            '. Årsak: fristoverskridelse.'
+        ) AS alert_message
+    FROM invoice_lines_unified il
+    WHERE il.kilde = '2026+'
+    AND   il.Tapt_gebyr IS NOT NULL
+    AND   il.Tapt_gebyr > 0
+""")
+tapt_violations.createOrReplaceTempView("v_inv_tapt")
+print(f"TAPT_GEBYR:             {tapt_violations.count():>5}")
+
+
+# CELL 7 — Union all invoice violations
+# -----------------------------------------------------------------------------
+all_invoice_violations = spark.sql("""
+    SELECT Fakturanr, Prosess_id, Saksnummer, Indikator,
+           Enhets_id, Enhet_navn, Saksbehandler_kode, Saksbehandler_navn,
+           varenr, violation_type, severity, alert_hash, alert_message
+    FROM v_inv_exact
+    UNION ALL
+    SELECT Fakturanr, Prosess_id, Saksnummer, Indikator,
+           Enhets_id, Enhet_navn, Saksbehandler_kode, Saksbehandler_navn,
+           varenr, violation_type, severity, alert_hash, alert_message
+    FROM v_inv_min
+    UNION ALL
+    SELECT Fakturanr, Prosess_id, Saksnummer, Indikator,
+           Enhets_id, Enhet_navn, Saksbehandler_kode, Saksbehandler_navn,
+           varenr, violation_type, severity, alert_hash, alert_message
+    FROM v_inv_tapt
+""")
+all_invoice_violations.createOrReplaceTempView("all_invoice_violations")
+print(f"\nTotal invoice violations: {all_invoice_violations.count():,}")
+
+
+# CELL 8 — Upsert invoice alerts; preserve first_detected_at on re-open
+# MERGE is idempotent: re-running never creates duplicates.
+# WHEN MATCHED AND OPEN: refresh message + batch only.
+# WHEN NOT MATCHED: insert fresh alert.
+# -----------------------------------------------------------------------------
+spark.sql(f"""
+    MERGE INTO dq_alert d
+    USING (
+        SELECT
+            SHA2(CONCAT_WS('|', v.alert_hash, r.rule_id), 256) AS alert_id,
+            v.alert_hash,
+            r.rule_id, v.violation_type, r.rule_version, 'INVOICE' AS category,
+            v.Prosess_id, v.Saksnummer, v.Indikator,
+            v.Enhets_id, v.Enhet_navn,
+            v.Saksbehandler_kode, v.Saksbehandler_navn,
+            v.severity, v.alert_message
+        FROM all_invoice_violations v
+        JOIN dq_rule r ON r.rule_code = v.violation_type AND r.active_flag = true
+    ) s
+    ON  d.alert_hash = s.alert_hash
+    AND d.status     = 'OPEN'
+    WHEN MATCHED THEN UPDATE SET
+        d.alert_message = s.alert_message,
+        d.batch_id      = '{BATCH_ID}'
+    WHEN NOT MATCHED THEN INSERT (
+        alert_id, alert_hash, rule_id, rule_code, rule_version, category,
+        prosess_id, saksnummer, indikator, enhets_id, enhet_navn,
+        saksbehandler_kode, saksbehandler_navn,
+        severity, alert_message,
+        detected_at, first_detected_at, batch_id, status
+    ) VALUES (
+        s.alert_id, s.alert_hash,
+        s.rule_id, s.violation_type, s.rule_version, 'INVOICE',
+        s.Prosess_id, s.Saksnummer, s.Indikator,
+        s.Enhets_id, s.Enhet_navn,
+        s.Saksbehandler_kode, s.Saksbehandler_navn,
+        s.severity, s.alert_message,
+        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+        '{BATCH_ID}', 'OPEN'
+    )
+""")
+print("Invoice alerts upserted.")
+
+
+# CELL 9 — Auto-resolve invoice alerts that no longer fire
+# -----------------------------------------------------------------------------
+spark.sql("""
+    CREATE OR REPLACE TEMP VIEW resolve_invoice_hashes AS
+    SELECT DISTINCT ex.alert_hash
+    FROM dq_alert ex
+    LEFT ANTI JOIN (
+        SELECT DISTINCT alert_hash FROM all_invoice_violations
+    ) cur
+    ON ex.alert_hash = cur.alert_hash
+    WHERE ex.category = 'INVOICE'
+    AND   ex.status   = 'OPEN'
+""")
+
+spark.sql("""
+    MERGE INTO dq_alert d
+    USING resolve_invoice_hashes r
+    ON  d.alert_hash = r.alert_hash
+    AND d.category   = 'INVOICE'
+    AND d.status     = 'OPEN'
+    WHEN MATCHED THEN UPDATE SET
+        d.status          = 'RESOLVED',
+        d.resolved_at     = CURRENT_TIMESTAMP,
+        d.resolved_method = 'AUTO_CLEARED'
+""")
+
+print("Auto-resolve sweep complete.")
+
+
+# CELL 10 — Summary
+# -----------------------------------------------------------------------------
+print("\n=== INVOICE SUMMARY ===")
+spark.sql("""
+    SELECT
+        rule_code AS type, severity, status,
+        COUNT(*) AS n,
+        COUNT(DISTINCT saksnummer) AS n_saker,
+        COUNT(DISTINCT enhet_navn) AS n_enheter
+    FROM dq_alert
+    WHERE category = 'INVOICE'
+    GROUP BY rule_code, severity, status
+    ORDER BY rule_code, status
+""").show(truncate=False)
+
+print("\n=== OPEN INVOICE ALERTS BY UNIT ===")
+spark.sql("""
+    SELECT
+        enhet_navn,
+        COUNT(*)                                               AS open_alerts,
+        SUM(CASE WHEN severity = 'Error'   THEN 1 ELSE 0 END) AS errors,
+        SUM(CASE WHEN severity = 'Warning' THEN 1 ELSE 0 END) AS warnings
+    FROM dq_alert
+    WHERE category = 'INVOICE'
+    AND   status   = 'OPEN'
+    GROUP BY enhet_navn
+    ORDER BY errors DESC, open_alerts DESC
+""").show(truncate=False)
