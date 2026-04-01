@@ -229,7 +229,7 @@ all_violations = spark.sql("""
            Prosess_id, Saksnummer, Indikator, Enhets_id, Enhet_navn,
            Saksbehandler_kode, Saksbehandler_navn, alert_hash, alert_message
     FROM v_r4
-""")
+""").cache()
 all_violations.createOrReplaceTempView("all_case_violations")
 print(f"\nTotal case violations: {all_violations.count():,}")
 
