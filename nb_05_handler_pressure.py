@@ -65,24 +65,46 @@ print("Source tables loaded.")
 
 
 # ── Pre-join indicator thresholds to avoid correlated subquery ────────────────
-# Load max_open_days per indicator from dq_rule_param.
-# Global default 365 used where no indicator-specific row exists.
-# This avoids a correlated subquery in the is_late CASE expression.
+# max_open_days per indicator — mirrors the regulation-based thresholds.
+# Update these values when regulations change.
 # -----------------------------------------------------------------------------
-spark.sql("""
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+
+INDICATOR_MAX_DAYS = {
+    "Byggesak 3 uker":              84,
+    "Byggesak 12 uker":            180,
+    "Byggesak uten frist":         730,
+    "Delesak 3 uker":               84,
+    "Delesak 12 uker":             180,
+    "Igangsettingstillatelse":     180,
+    "Brukstillatelse":             180,
+    "Ferdigattest":                365,
+    "Seksjonering":                180,
+    "Oppmåling":                   180,
+    "Endringstillatelse":          180,
+    "Offentlig ettersyn privat plan": 730,
+    "Dialogfase 1":                365,
+    "Til politisk behandling":     365,
+    "Tilsyn":                      365,
+    "Ulovlighet":                  730,
+}
+DEFAULT_MAX_DAYS = 365
+
+threshold_schema = StructType([
+    StructField("Indikator",      StringType(),  False),
+    StructField("max_open_days",  IntegerType(), False),
+])
+(spark.createDataFrame(
+    list(INDICATOR_MAX_DAYS.items()), schema=threshold_schema
+).createOrReplaceTempView("indicator_thresholds_lookup"))
+
+spark.sql(f"""
     CREATE OR REPLACE TEMP VIEW indicator_thresholds AS
     SELECT
         i.Indikator,
-        COALESCE(
-            CAST(rp.param_value AS INT),
-            365
-        ) AS max_open_days
+        COALESCE(t.max_open_days, {DEFAULT_MAX_DAYS}) AS max_open_days
     FROM (SELECT DISTINCT Indikator FROM Prosesser WHERE Indikator IS NOT NULL) i
-    LEFT JOIN dq_rule_param rp
-        ON  rp.rule_id    = 3
-        AND rp.scope_type = 'INDIKATOR'
-        AND rp.scope_key  = i.Indikator
-        AND rp.param_name = 'max_open_days'
+    LEFT JOIN indicator_thresholds_lookup t ON i.Indikator = t.Indikator
 """)
 print("Indicator thresholds loaded.")
 
