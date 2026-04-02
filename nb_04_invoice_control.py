@@ -250,24 +250,23 @@ all_invoice_violations.createOrReplaceTempView("all_invoice_violations")
 print(f"\nTotal invoice violations: {all_invoice_violations.count():,}")
 
 
-# CELL 8 — Upsert invoice alerts; preserve first_detected_at on re-open
+# CELL 8 — Upsert invoice violations; preserve first_detected_at on re-open
 # MERGE is idempotent: re-running never creates duplicates.
 # WHEN MATCHED AND OPEN: refresh message + batch only.
-# WHEN NOT MATCHED: insert fresh alert.
+# WHEN NOT MATCHED: insert fresh violation.
 # -----------------------------------------------------------------------------
 spark.sql(f"""
-    MERGE INTO dq_alert d
+    MERGE INTO invoice_violation d
     USING (
         SELECT
-            SHA2(CONCAT_WS('|', v.alert_hash, r.rule_id), 256) AS alert_id,
+            SHA2(CONCAT_WS('|', v.alert_hash, v.violation_type), 256) AS violation_id,
             v.alert_hash,
-            r.rule_id, v.violation_type, r.rule_version, 'INVOICE' AS category,
+            v.violation_type,
             v.Prosess_id, v.Saksnummer, v.Indikator,
             v.Enhets_id, v.Enhet_navn,
             v.Saksbehandler_kode, v.Saksbehandler_navn,
             v.severity, v.alert_message
         FROM all_invoice_violations v
-        JOIN dq_rule r ON r.rule_code = v.violation_type AND r.active_flag = true
     ) s
     ON  d.alert_hash = s.alert_hash
     AND d.status     = 'OPEN'
@@ -275,14 +274,13 @@ spark.sql(f"""
         d.alert_message = s.alert_message,
         d.batch_id      = '{BATCH_ID}'
     WHEN NOT MATCHED THEN INSERT (
-        alert_id, alert_hash, rule_id, rule_code, rule_version, category,
+        violation_id, alert_hash, violation_type,
         prosess_id, saksnummer, indikator, enhets_id, enhet_navn,
         saksbehandler_kode, saksbehandler_navn,
         severity, alert_message,
         detected_at, first_detected_at, batch_id, status
     ) VALUES (
-        s.alert_id, s.alert_hash,
-        s.rule_id, s.violation_type, s.rule_version, 'INVOICE',
+        s.violation_id, s.alert_hash, s.violation_type,
         s.Prosess_id, s.Saksnummer, s.Indikator,
         s.Enhets_id, s.Enhet_navn,
         s.Saksbehandler_kode, s.Saksbehandler_navn,
@@ -291,28 +289,26 @@ spark.sql(f"""
         '{BATCH_ID}', 'OPEN'
     )
 """)
-print("Invoice alerts upserted.")
+print("Invoice violations upserted.")
 
 
-# CELL 9 — Auto-resolve invoice alerts that no longer fire
+# CELL 9 — Auto-resolve invoice violations that no longer fire
 # -----------------------------------------------------------------------------
 spark.sql("""
     CREATE OR REPLACE TEMP VIEW resolve_invoice_hashes AS
     SELECT DISTINCT ex.alert_hash
-    FROM dq_alert ex
+    FROM invoice_violation ex
     LEFT ANTI JOIN (
         SELECT DISTINCT alert_hash FROM all_invoice_violations
     ) cur
     ON ex.alert_hash = cur.alert_hash
-    WHERE ex.category = 'INVOICE'
-    AND   ex.status   = 'OPEN'
+    WHERE ex.status = 'OPEN'
 """)
 
 spark.sql("""
-    MERGE INTO dq_alert d
+    MERGE INTO invoice_violation d
     USING resolve_invoice_hashes r
     ON  d.alert_hash = r.alert_hash
-    AND d.category   = 'INVOICE'
     AND d.status     = 'OPEN'
     WHEN MATCHED THEN UPDATE SET
         d.status          = 'RESOLVED',
@@ -328,26 +324,24 @@ print("Auto-resolve sweep complete.")
 print("\n=== INVOICE SUMMARY ===")
 spark.sql("""
     SELECT
-        rule_code AS type, severity, status,
+        violation_type AS type, severity, status,
         COUNT(*) AS n,
         COUNT(DISTINCT saksnummer) AS n_saker,
         COUNT(DISTINCT enhet_navn) AS n_enheter
-    FROM dq_alert
-    WHERE category = 'INVOICE'
-    GROUP BY rule_code, severity, status
-    ORDER BY rule_code, status
+    FROM invoice_violation
+    GROUP BY violation_type, severity, status
+    ORDER BY violation_type, status
 """).show(truncate=False)
 
-print("\n=== OPEN INVOICE ALERTS BY UNIT ===")
+print("\n=== OPEN INVOICE VIOLATIONS BY UNIT ===")
 spark.sql("""
     SELECT
         enhet_navn,
-        COUNT(*)                                               AS open_alerts,
+        COUNT(*)                                               AS open_violations,
         SUM(CASE WHEN severity = 'Error'   THEN 1 ELSE 0 END) AS errors,
         SUM(CASE WHEN severity = 'Warning' THEN 1 ELSE 0 END) AS warnings
-    FROM dq_alert
-    WHERE category = 'INVOICE'
-    AND   status   = 'OPEN'
+    FROM invoice_violation
+    WHERE status = 'OPEN'
     GROUP BY enhet_navn
-    ORDER BY errors DESC, open_alerts DESC
+    ORDER BY errors DESC, open_violations DESC
 """).show(truncate=False)
