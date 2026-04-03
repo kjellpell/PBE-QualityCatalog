@@ -44,7 +44,7 @@ description: Data quality rules for the main process / case records (Prosesser)
 # Table configuration used by validation_runner.py to load the source table
 # and pass the correct key columns to run_validation().
 pk_column: Saksnummer
-prosess_id_column: Saksnummer        # the process IS the case; PK = prosess_id
+prosess_id_column: Saksnummer        # PK and prosess_id are both Saksnummer for the Process table
 saksbehandler_column: Saksbehandler_kode
 
 # Optional pre-joins applied before validation.

@@ -152,7 +152,7 @@ def _run_gx_expectation(
         batch_def  = asset.add_batch_definition_whole_dataframe(
             name=f"{asset_name}_batch"
         )
-        batch_def.get_batch(batch_parameters={"dataframe": pdf})
+        batch = batch_def.get_batch(batch_parameters={"dataframe": pdf})
 
         suite = context.suites.add(
             gx.ExpectationSuite(name=f"{suite_name}_{rule['rule_id']}")
