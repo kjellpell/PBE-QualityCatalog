@@ -44,6 +44,10 @@ table: Milepel
 database: Saksbehandling
 description: Data quality rules for milestone records linked to case processes
 
+# Table configuration used by validation_runner.py
+pk_column: prosess_id
+prosess_id_column: prosess_id
+
 rules:
 
   # ---------------------------------------------------------------------------
@@ -181,7 +185,7 @@ rules:
     owner: Saksteam
 
   # ---------------------------------------------------------------------------
-  # Cross-table / referential integrity validations (Phase 1)
+  # Cross-table / referential integrity validations
   # ---------------------------------------------------------------------------
 
   - rule_id: MIL-008
@@ -202,7 +206,7 @@ rules:
     owner: Saksteam
 
   # ---------------------------------------------------------------------------
-  # Aggregate validations (Phase 1)
+  # Aggregate validations
   # ---------------------------------------------------------------------------
 
   - rule_id: MIL-009
@@ -220,4 +224,3 @@ rules:
     severity: high
     category: Uniqueness
     owner: Saksteam
-

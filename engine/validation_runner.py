@@ -1,31 +1,30 @@
 # =============================================================================
-# NB_DQ_VALIDATE.py
+# engine/validation_runner.py
 # YAML-driven data quality validation using Great Expectations (GX Core).
 #
 # Flow:
-#   1. Install GX Core and load YAML rule catalogs.
-#   2. Load source tables from Saksbehandling lakehouse:
-#        Saksbehandling.Prosesser   → Process (case) records
-#        Saksbehandling.Milepel     → Milestone records per process
-#        Saksbehandling.Fakturalinjer → Invoice lines per process
-#   3. For each rule group (Process, Milestone, Invoice):
+#   1. Install GX Core and load all YAML rule catalogs from the rules/ folder.
+#   2. For each rule file, load the source table from the Spark metastore
+#      using the table and database fields in the YAML header, then apply
+#      any configured pre-joins.
+#   3. For each rule in the catalog:
 #        a. Dispatch standard GX expectations via the GX Core validator.
-#        b. Dispatch custom expectations to the dedicated validator classes.
+#        b. Dispatch custom expectations to the CUSTOM_EXPECTATION_REGISTRY.
 #        c. Collect per-rule results (counts, success %, status).
 #        d. Collect per-row violation details (including prosess_id).
 #   4. Write summary rows to dq_run_results (Delta table).
 #   5. Write violation rows to dq_violations (Delta table).
 #   6. Print a human-readable run summary.
 #
-# All validation rules (columns, thresholds, sequences, pairs) are defined in
-# YAML files under dq_rules/.  No rule logic is hardcoded in this script.
+# All validation rules are defined in YAML files under rules/.
+# The engine automatically discovers and processes every *.yaml file in that
+# folder — no code changes are needed when adding new rule files.
 #
-# Phase 1 additions (unified processing framework):
-#   - Aggregate expectations: expect_column_sum_to_equal,
-#     expect_row_count_to_be_between, expect_unique_combination_of_columns
-#   - Cross-table FK validation: validate_foreign_key
-#   - SQL shorthand: expectation: sql + top-level sql: key (alias for sql_validation)
-#   - New result fields: rule_category, reference_table, reference_column
+# Phase 1 structure:
+#   engine/expectations.py   – all custom expectation classes (consolidated)
+#   engine/validation_runner.py – this file
+#   rules/                   – domain-specific YAML rule files
+#   outputs/validation_results/ – Delta table result logs
 #
 # Schedule: nightly (after source tables are refreshed).
 # Prerequisites: nb_dq_00_setup.py must have been run at least once.
@@ -63,25 +62,25 @@ RUN_ID        = str(uuid.uuid4())
 RUN_TIMESTAMP = datetime.utcnow()
 BATCH_DATE    = date.today()
 
-# Absolute path to the YAML rule folder (adjust if notebooks run elsewhere)
-RULES_DIR = Path(__file__).parent / "dq_rules"
+# Rules directory — all *.yaml files in this folder are loaded automatically.
+RULES_DIR = Path(__file__).parent.parent / "rules"
 
 print(f"Run ID    : {RUN_ID}")
 print(f"Timestamp : {RUN_TIMESTAMP.isoformat()}")
 print(f"Batch date: {BATCH_DATE}")
+print(f"Rules dir : {RULES_DIR}")
 
 
-# CELL 3 — Import custom GX expectation validators
-# These classes are defined in the dq_expectations package.
+# CELL 3 — Import custom expectation registry
+# All expectation classes are consolidated in engine/expectations.py.
 # -----------------------------------------------------------------------------
 import sys, os
 
-# Add repo root to path so the package can be imported inside a Fabric notebook
-_repo_root = str(Path(__file__).parent)
+_repo_root = str(Path(__file__).parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
-from dq_expectations import CUSTOM_EXPECTATION_REGISTRY   # noqa: E402
+from engine.expectations import CUSTOM_EXPECTATION_REGISTRY   # noqa: E402
 
 print("Custom expectation registry loaded:", list(CUSTOM_EXPECTATION_REGISTRY))
 
@@ -111,6 +110,24 @@ def _load_yaml(path: Path) -> dict:
         return yaml.safe_load(fh)
 
 
+def _load_all_rules(rules_dir: Path) -> list[dict]:
+    """
+    Discover and load all *.yaml files in rules_dir.
+    Returns a list of rule catalog dicts, one per file.
+    Files are processed in alphabetical order for deterministic runs.
+    """
+    catalogs = []
+    yaml_files = sorted(rules_dir.glob("*.yaml"))
+    if not yaml_files:
+        print(f"  Warning: no *.yaml files found in {rules_dir}")
+    for yaml_path in yaml_files:
+        catalog = _load_yaml(yaml_path)
+        catalogs.append(catalog)
+        print(f"  Loaded rule file: {yaml_path.name} "
+              f"({len(catalog.get('rules', []))} rules)")
+    return catalogs
+
+
 def _get_gx_context() -> gx.DataContext:
     """Return an ephemeral (in-memory) GX data context."""
     return gx.get_context()
@@ -127,7 +144,6 @@ def _run_gx_expectation(
     Returns a result_dict compatible with the standard contract.
     """
     try:
-        # Re-create the datasource and asset each time (ephemeral context)
         ds_name    = f"ds_{suite_name}_{rule['rule_id']}"
         asset_name = rule["rule_id"]
 
@@ -136,15 +152,12 @@ def _run_gx_expectation(
         batch_def  = asset.add_batch_definition_whole_dataframe(
             name=f"{asset_name}_batch"
         )
-        batch = batch_def.get_batch(
-            batch_parameters={"dataframe": pdf}
-        )
+        batch_def.get_batch(batch_parameters={"dataframe": pdf})
 
         suite = context.suites.add(
             gx.ExpectationSuite(name=f"{suite_name}_{rule['rule_id']}")
         )
 
-        # Build expectation config — column at top level OR inside parameters
         kwargs = {}
         if "column" in rule:
             kwargs["column"] = rule["column"]
@@ -167,15 +180,14 @@ def _run_gx_expectation(
         )
         results = validation_def.run()
 
-        # Extract counts from GX result
         er = results.results[0] if results.results else None
         if er is None:
             raise ValueError("No result returned from GX validator.")
 
-        total     = int(er.result.get("element_count", len(pdf)))
-        failed    = int(er.result.get("unexpected_count", 0))
-        passed    = total - failed
-        success   = er.success
+        total   = int(er.result.get("element_count", len(pdf)))
+        failed  = int(er.result.get("unexpected_count", 0))
+        passed  = total - failed
+        success = er.success
 
         return {
             "total_rows":  total,
@@ -216,13 +228,10 @@ def _violations_for_gx_rule(
     For GX null-check expectations, compute violations against the FULL
     Spark DataFrame so the violation table is complete (not limited to sample).
     Returns None for other GX expectations (not implemented at row level).
-
-    The column to check is read from rule["column"] — fully dynamic.
     """
     if rule["expectation"] != "expect_column_values_to_not_be_null":
         return None
 
-    # Column is specified dynamically in YAML
     col = rule.get("column")
     if not col or col not in full_df.columns:
         return None
@@ -244,29 +253,26 @@ def _violations_for_gx_rule(
 # CELL 5 — Schema for result accumulation
 # -----------------------------------------------------------------------------
 RESULT_SCHEMA = StructType([
-    StructField("run_id",         StringType(),    False),
-    StructField("run_timestamp",  TimestampType(), False),
-    StructField("batch_date",     DateType(),      False),
-    StructField("rule_group",     StringType(),    False),
-    StructField("rule_id",        StringType(),    False),
-    StructField("rule_name",      StringType(),    False),
-    StructField("table_name",     StringType(),    False),
-    StructField("expectation",    StringType(),    False),
-    StructField("severity",       StringType(),    False),
-    StructField("owner",          StringType(),    False),
-    StructField("total_rows",     LongType(),      True),
-    StructField("passed_rows",    LongType(),      True),
-    StructField("failed_rows",    LongType(),      True),
-    StructField("success_pct",    DoubleType(),    True),
-    StructField("status",         StringType(),    False),
-    StructField("details",        StringType(),    True),
-    # Cross-column comparison metadata (populated for validate_column_comparison)
+    StructField("run_id",            StringType(),    False),
+    StructField("run_timestamp",     TimestampType(), False),
+    StructField("batch_date",        DateType(),      False),
+    StructField("rule_group",        StringType(),    False),
+    StructField("rule_id",           StringType(),    False),
+    StructField("rule_name",         StringType(),    False),
+    StructField("table_name",        StringType(),    False),
+    StructField("expectation",       StringType(),    False),
+    StructField("severity",          StringType(),    False),
+    StructField("owner",             StringType(),    False),
+    StructField("total_rows",        LongType(),      True),
+    StructField("passed_rows",       LongType(),      True),
+    StructField("failed_rows",       LongType(),      True),
+    StructField("success_pct",       DoubleType(),    True),
+    StructField("status",            StringType(),    False),
+    StructField("details",           StringType(),    True),
     StructField("column_a",          StringType(),    True),
     StructField("column_b",          StringType(),    True),
     StructField("operator",          StringType(),    True),
-    # SQL fallback metadata (populated for sql / sql_validation)
     StructField("sql_query",         StringType(),    True),
-    # Phase 1 metadata fields
     StructField("rule_category",     StringType(),    True),
     StructField("reference_table",   StringType(),    True),
     StructField("reference_column",  StringType(),    True),
@@ -318,9 +324,6 @@ def run_validation(
     source_df        : full Spark DataFrame to validate
     pk_col           : primary key column of source_df (for violation rows)
     prosess_id_col   : column in source_df that holds the prosess_id link
-                       (used to populate the prosess_id field in violations).
-                       If None, prosess_id is set to primary_key_value when
-                       pk_col == prosess_id_col, else NULL.
     saksbehandler_col: optional handler code column (Process table only)
 
     Returns
@@ -328,16 +331,14 @@ def run_validation(
     results_df    Spark DataFrame matching RESULT_SCHEMA
     violations_df Spark DataFrame matching VIOLATION_SCHEMA
     """
-    rule_group  = rule_catalog["rule_group"]
-    table_name  = rule_catalog["table"]
-    rules       = rule_catalog.get("rules", [])
+    rule_group = rule_catalog["rule_group"]
+    table_name = rule_catalog["table"]
+    rules      = rule_catalog.get("rules", [])
 
     all_results    = []
     all_violations = _empty_violations()
 
     gx_context = _get_gx_context()
-
-    # Pandas sample for GX native expectations.
     pdf_sample = source_df.limit(SAMPLE_SIZE).toPandas()
 
     for rule in rules:
@@ -347,7 +348,6 @@ def run_validation(
         severity  = rule.get("severity", "medium")
         owner     = rule.get("owner", "")
 
-        # Extract metadata for cross-column and SQL rules
         params    = rule.get("parameters", {})
         column_a  = params.get("column_A") if exp_name == "validate_column_comparison" else None
         column_b  = params.get("column_B") if exp_name == "validate_column_comparison" else None
@@ -358,7 +358,6 @@ def run_validation(
             else None
         )
 
-        # Phase 1 metadata
         rule_category    = rule.get("category") or rule.get("rule_category")
         ref_block        = params.get("reference", {})
         reference_table  = ref_block.get("table")  if exp_name == "validate_foreign_key" else None
@@ -368,21 +367,16 @@ def run_validation(
 
         try:
             if exp_name in GX_NATIVE_EXPECTATIONS:
-                # ── GX built-in expectation ──────────────────────────────────
                 result = _run_gx_expectation(
                     gx_context, pdf_sample, rule, suite_name=rule_group
                 )
-                # For null checks: also get row-level violations from full df
                 viols_spark = _violations_for_gx_rule(
                     source_df, rule, pk_col, prosess_id_col, saksbehandler_col
                 )
 
             elif exp_name in CUSTOM_EXPECTATION_REGISTRY:
-                # ── Custom PySpark expectation ───────────────────────────────
-                validator    = CUSTOM_EXPECTATION_REGISTRY[exp_name]()
-                result, viols_spark = validator.validate(
-                    source_df, rule, spark
-                )
+                validator   = CUSTOM_EXPECTATION_REGISTRY[exp_name]()
+                result, viols_spark = validator.validate(source_df, rule, spark)
 
             else:
                 result = {
@@ -434,30 +428,20 @@ def run_validation(
             reference_column,
         ))
 
-        # Attach run metadata and prosess_id to violation rows
         if viols_spark is not None and viols_spark.count() > 0:
-            # Ensure optional columns exist
             if "saksbehandler_kode" not in viols_spark.columns:
                 viols_spark = viols_spark.withColumn(
                     "saksbehandler_kode",
                     F.lit(None).cast("string"),
                 )
 
-            # Derive prosess_id for this violation batch:
-            #   - If prosess_id_col == pk_col (or pk_col is the process key):
-            #     prosess_id = primary_key_value
-            #   - If a separate prosess_id column is available in source_df:
-            #     join it in from the source table
-            #   - Otherwise: NULL
             if prosess_id_col and prosess_id_col == pk_col:
-                # Primary key IS the prosess_id (Process table)
                 prosess_id_expr = F.col("primary_key_value")
             elif (
                 prosess_id_col
                 and prosess_id_col in source_df.columns
                 and prosess_id_col != pk_col
             ):
-                # primary_key_value links back to source; join for prosess_id
                 lookup = source_df.select(
                     F.col(pk_col).cast("string").alias("_pk"),
                     F.col(prosess_id_col).cast("string").alias("_prosess_id"),
@@ -466,10 +450,7 @@ def run_validation(
                     lookup,
                     viols_spark["primary_key_value"] == lookup["_pk"],
                     how="left",
-                ).withColumn(
-                    "_resolved_prosess_id",
-                    F.col("_prosess_id"),
-                )
+                ).withColumn("_resolved_prosess_id", F.col("_prosess_id"))
                 prosess_id_expr = F.col("_resolved_prosess_id")
             else:
                 prosess_id_expr = F.lit(None).cast("string")
@@ -498,92 +479,68 @@ def run_validation(
     return results_df, all_violations
 
 
-# CELL 7 — Load source tables
+# CELL 7 — Load all rule catalogs and source tables dynamically
 # -----------------------------------------------------------------------------
-print("Loading source tables…")
+print("\nLoading rule catalogs from rules/ folder…")
+all_catalogs = _load_all_rules(RULES_DIR)
 
-# Process data — Saksbehandling.Prosesser
-# Attach case status from Saksbehandling.Saker so milestone-pair rules
-# that reference Status can work correctly.
-prosesser_df = spark.read.table("Saksbehandling.Prosesser")
-saker_df = (
-    spark.read.table("Saksbehandling.Saker")
-    .select("Saksnummer", "Status")
-)
-prosesser_df = prosesser_df.join(saker_df, on="Saksnummer", how="left")
-print(f"  Prosesser rows       : {prosesser_df.count():,}")
+all_results_combined    = _empty_results()
+all_violations_combined = _empty_violations()
 
-# Milestone data — Saksbehandling.Milepel
-milepel_df = spark.read.table("Saksbehandling.Milepel")
-print(f"  Milepel rows         : {milepel_df.count():,}")
+for catalog in all_catalogs:
+    rule_group  = catalog["rule_group"]
+    table_name  = catalog["table"]
+    database    = catalog.get("database", "")
+    pk_col      = catalog.get("pk_column", "id")
+    prosess_col = catalog.get("prosess_id_column")
+    handler_col = catalog.get("saksbehandler_column")
+    joins_cfg   = catalog.get("joins", [])
 
-# Invoice data — Saksbehandling.Fakturalinjer
-fakturalinjer_df = spark.read.table("Saksbehandling.Fakturalinjer")
-print(f"  Fakturalinjer rows   : {fakturalinjer_df.count():,}")
+    full_table = f"{database}.{table_name}" if database else table_name
+    print(f"\n=== {rule_group.upper()} VALIDATIONS ({full_table}) ===")
 
+    # Load the source table
+    source_df = spark.read.table(full_table)
+    print(f"  Source rows: {source_df.count():,}")
 
-# CELL 8 — Run Process validations
-# -----------------------------------------------------------------------------
-print("\n=== PROCESS VALIDATIONS (Saksbehandling.Prosesser) ===")
-process_catalog = _load_yaml(RULES_DIR / "process_rules.yaml")
-process_results, process_violations = run_validation(
-    rule_catalog=process_catalog,
-    source_df=prosesser_df,
-    pk_col="Saksnummer",
-    prosess_id_col="Saksnummer",   # the process IS the case; PK = prosess_id
-    saksbehandler_col="Saksbehandler_kode",
-)
+    # Apply pre-defined joins (e.g. enriching Prosesser with Status from Saker)
+    for join_cfg in joins_cfg:
+        join_table  = join_cfg["table"]
+        join_on     = join_cfg["on"]
+        join_how    = join_cfg.get("how", "left")
+        join_select = join_cfg.get("select")
 
+        join_df = spark.read.table(join_table)
+        if join_select:
+            join_df = join_df.select(*join_select)
+        source_df = source_df.join(join_df, on=join_on, how=join_how)
+        print(f"  Joined with {join_table} on {join_on} ({join_how})")
 
-# CELL 9 — Run Milestone validations
-# -----------------------------------------------------------------------------
-print("\n=== MILESTONE VALIDATIONS (Saksbehandling.Milepel) ===")
-milestone_catalog = _load_yaml(RULES_DIR / "milestone_rules.yaml")
-milestone_results, milestone_violations = run_validation(
-    rule_catalog=milestone_catalog,
-    source_df=milepel_df,
-    pk_col="prosess_id",
-    prosess_id_col="prosess_id",   # PK is prosess_id for the milestone table
-    saksbehandler_col=None,
-)
+    # Run validation
+    results_df, violations_df = run_validation(
+        rule_catalog=catalog,
+        source_df=source_df,
+        pk_col=pk_col,
+        prosess_id_col=prosess_col,
+        saksbehandler_col=handler_col,
+    )
 
-
-# CELL 10 — Run Invoice validations
-# -----------------------------------------------------------------------------
-print("\n=== INVOICE VALIDATIONS (Saksbehandling.Fakturalinjer) ===")
-invoice_catalog = _load_yaml(RULES_DIR / "invoice_rules.yaml")
-invoice_results, invoice_violations = run_validation(
-    rule_catalog=invoice_catalog,
-    source_df=fakturalinjer_df,
-    pk_col="Fakturanr",
-    prosess_id_col="prosess_id",   # FK to Prosesser (NULL if column absent)
-    saksbehandler_col=None,
-)
+    all_results_combined    = all_results_combined.unionByName(results_df)
+    all_violations_combined = all_violations_combined.unionByName(violations_df)
 
 
-# CELL 11 — Combine and write results to Delta tables
+# CELL 8 — Write results to Delta tables
 # -----------------------------------------------------------------------------
 print("\nWriting results to Delta tables…")
 
-all_results = (
-    process_results
-    .unionByName(milestone_results)
-    .unionByName(invoice_results)
-)
-all_violations = (
-    process_violations
-    .unionByName(milestone_violations)
-    .unionByName(invoice_violations)
-)
+all_results_combined.write.mode("append").saveAsTable("dq_run_results")
+print(f"  dq_run_results   : {all_results_combined.count()} rows appended.")
 
-all_results.write.mode("append").saveAsTable("dq_run_results")
-print(f"  dq_run_results    : {all_results.count()} rows appended.")
-
-all_violations.write.mode("append").saveAsTable("dq_violations")
-print(f"  dq_violations     : {all_violations.count()} rows appended.")
+all_violations_combined.write.mode("append").saveAsTable("dq_violations")
+print(f"  dq_violations    : {all_violations_combined.count()} rows appended.")
 
 
-# CELL 12 — Run summary
+# CELL 9 — Run summary
 # -----------------------------------------------------------------------------
 print("\n=== DATA QUALITY RUN SUMMARY ===")
 spark.sql(f"""
@@ -602,29 +559,3 @@ spark.sql(f"""
     GROUP BY rule_group
     ORDER BY rule_group
 """).show(truncate=False)
-
-print("\n=== FAILED / ERROR RULES ===")
-spark.sql(f"""
-    SELECT
-        rule_group,
-        rule_id,
-        rule_name,
-        severity,
-        failed_rows,
-        ROUND(success_pct, 1) AS success_pct,
-        details
-    FROM dq_run_results
-    WHERE run_id = '{RUN_ID}'
-    AND   status IN ('FAILED', 'ERROR')
-    ORDER BY
-        CASE severity
-            WHEN 'critical' THEN 1
-            WHEN 'high'     THEN 2
-            WHEN 'medium'   THEN 3
-            ELSE 4
-        END,
-        rule_group,
-        rule_id
-""").show(50, truncate=False)
-
-print(f"\nRun complete.  Run ID: {RUN_ID}")
