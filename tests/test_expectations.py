@@ -1132,20 +1132,6 @@ class TestResolutionTracking:
         )
         assert res_ts_field.nullable
 
-    def test_violation_schema_contains_failure_type(self, spark):
-        """VIOLATION_SCHEMA must include the failure_type enrichment field."""
-        from engine.resolution import VIOLATION_SCHEMA
-        field_names = {f.name for f in VIOLATION_SCHEMA.fields}
-        assert "failure_type" in field_names
-
-    def test_failure_type_is_nullable(self, spark):
-        """failure_type must be nullable (rules without a category have NULL failure_type)."""
-        from engine.resolution import VIOLATION_SCHEMA
-        ft_field = next(
-            f for f in VIOLATION_SCHEMA.fields if f.name == "failure_type"
-        )
-        assert ft_field.nullable, "failure_type must be nullable"
-
 
 # ---------------------------------------------------------------------------
 # Delta Log Enrichment — failure_type and Power BI fields
