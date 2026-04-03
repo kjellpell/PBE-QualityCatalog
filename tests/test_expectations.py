@@ -959,3 +959,157 @@ class TestRegistry:
                 )
             except Exception as exc:
                 pytest.fail(f"Could not instantiate {name}: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Resolution Tracking — _find_stale_violations helper
+# ---------------------------------------------------------------------------
+
+class TestResolutionTracking:
+    """
+    Tests for the _find_stale_violations helper and the two new VIOLATION_SCHEMA
+    fields (issue_status, resolution_timestamp).
+    """
+
+    def _make_violations_df(self, spark, rows):
+        """Create a minimal violations DataFrame with the fields needed by
+        _find_stale_violations: rule_id and primary_key_value."""
+        schema = StructType([
+            StructField("rule_id",           StringType(), False),
+            StructField("primary_key_value", StringType(), True),
+        ])
+        return spark.createDataFrame(rows, schema)
+
+    def test_stale_violation_detected(self, spark):
+        """A violation present in previous run but absent from current run is stale."""
+        from engine.resolution import _find_stale_violations
+
+        existing = self._make_violations_df(spark, [
+            ("PROC-001", "PK-1"),
+            ("PROC-001", "PK-2"),
+        ])
+        current = self._make_violations_df(spark, [
+            ("PROC-001", "PK-2"),   # PK-1 is now fixed
+        ])
+        stale = _find_stale_violations(existing, current)
+        rows = {(r.rule_id, r.primary_key_value) for r in stale.collect()}
+        assert rows == {("PROC-001", "PK-1")}
+
+    def test_no_stale_when_all_still_active(self, spark):
+        """No violations are stale when all previous violations recur."""
+        from engine.resolution import _find_stale_violations
+
+        existing = self._make_violations_df(spark, [("R-001", "A"), ("R-001", "B")])
+        current  = self._make_violations_df(spark, [("R-001", "A"), ("R-001", "B")])
+        stale = _find_stale_violations(existing, current)
+        assert stale.count() == 0
+
+    def test_no_stale_when_previous_empty(self, spark):
+        """No stale violations when there were no previous active violations."""
+        from engine.resolution import _find_stale_violations
+
+        existing = self._make_violations_df(spark, [])
+        current  = self._make_violations_df(spark, [("R-001", "A")])
+        stale = _find_stale_violations(existing, current)
+        assert stale.count() == 0
+
+    def test_all_stale_when_current_empty(self, spark):
+        """All previous violations become stale when there are no current violations."""
+        from engine.resolution import _find_stale_violations
+
+        existing = self._make_violations_df(spark, [
+            ("R-001", "A"),
+            ("R-001", "B"),
+        ])
+        current = self._make_violations_df(spark, [])
+        stale = _find_stale_violations(existing, current)
+        assert stale.count() == 2
+
+    def test_stale_only_for_matching_rule(self, spark):
+        """Staleness is scoped per rule_id: different rules do not interfere."""
+        from engine.resolution import _find_stale_violations
+
+        existing = self._make_violations_df(spark, [
+            ("R-001", "PK-1"),
+            ("R-002", "PK-1"),
+        ])
+        current = self._make_violations_df(spark, [
+            ("R-001", "PK-1"),   # still active for R-001
+            # R-002 / PK-1 is absent → should be stale
+        ])
+        stale = _find_stale_violations(existing, current)
+        rows = {(r.rule_id, r.primary_key_value) for r in stale.collect()}
+        assert rows == {("R-002", "PK-1")}
+
+    def test_violation_schema_contains_issue_status(self, spark):
+        """VIOLATION_SCHEMA must include the issue_status field."""
+        from engine.resolution import VIOLATION_SCHEMA
+        field_names = {f.name for f in VIOLATION_SCHEMA.fields}
+        assert "issue_status" in field_names
+
+    def test_violation_schema_contains_resolution_timestamp(self, spark):
+        """VIOLATION_SCHEMA must include the resolution_timestamp field."""
+        from engine.resolution import VIOLATION_SCHEMA
+        field_names = {f.name for f in VIOLATION_SCHEMA.fields}
+        assert "resolution_timestamp" in field_names
+
+    def test_issue_status_is_not_nullable(self, spark):
+        """issue_status must be defined as NOT NULL in VIOLATION_SCHEMA."""
+        from engine.resolution import VIOLATION_SCHEMA
+        status_field = next(
+            f for f in VIOLATION_SCHEMA.fields if f.name == "issue_status"
+        )
+        assert not status_field.nullable, "issue_status must be NOT NULL"
+
+    def test_resolution_timestamp_is_nullable(self, spark):
+        """resolution_timestamp must be nullable (NULL while issue is Active)."""
+        from engine.resolution import VIOLATION_SCHEMA
+        res_ts_field = next(
+            f for f in VIOLATION_SCHEMA.fields if f.name == "resolution_timestamp"
+        )
+        assert res_ts_field.nullable, "resolution_timestamp must be nullable"
+
+    def test_new_violations_carry_active_status(self, spark):
+        """
+        Violations produced by expectation classes have the raw five-column
+        schema; the runner selects issue_status='Active' and
+        resolution_timestamp=NULL before persisting.  Here we verify that a
+        real expectation validates correctly and that the VIOLATION_SCHEMA
+        nullability constraints are set as documented.
+        """
+        from engine.expectations import ColumnComparisonExpectation
+        from engine.resolution import VIOLATION_SCHEMA
+
+        schema = StructType([
+            StructField("id",    StringType(),  True),
+            StructField("col_a", IntegerType(), True),
+            StructField("col_b", IntegerType(), True),
+        ])
+        df = spark.createDataFrame([("PK-1", 2, 5)], schema)
+        rule = {
+            "rule_id": "T-RT",
+            "name": "test",
+            "expectation": "validate_column_comparison",
+            "parameters": {
+                "column_A": "col_a",
+                "column_B": "col_b",
+                "operator": ">",
+                "pk_column": "id",
+            },
+        }
+        result, viols = ColumnComparisonExpectation().validate(df, rule, spark)
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+
+        # Confirm VIOLATION_SCHEMA nullability contract
+        status_field = next(
+            f for f in VIOLATION_SCHEMA.fields if f.name == "issue_status"
+        )
+        assert not status_field.nullable
+        res_ts_field = next(
+            f for f in VIOLATION_SCHEMA.fields if f.name == "resolution_timestamp"
+        )
+        assert res_ts_field.nullable
+
+
+

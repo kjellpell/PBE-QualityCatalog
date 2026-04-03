@@ -71,8 +71,9 @@ print(f"Batch date: {BATCH_DATE}")
 print(f"Rules dir : {RULES_DIR}")
 
 
-# CELL 3 — Import custom expectation registry
+# CELL 3 — Import custom expectation registry and resolution helpers
 # All expectation classes are consolidated in engine/expectations.py.
+# Resolution-tracking helpers live in engine/resolution.py.
 # -----------------------------------------------------------------------------
 import sys, os
 
@@ -81,6 +82,11 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
 from engine.expectations import CUSTOM_EXPECTATION_REGISTRY   # noqa: E402
+from engine.resolution import (                                # noqa: E402
+    VIOLATION_SCHEMA,
+    _find_stale_violations,
+    _apply_resolution_tracking,
+)
 
 print("Custom expectation registry loaded:", list(CUSTOM_EXPECTATION_REGISTRY))
 
@@ -278,25 +284,6 @@ RESULT_SCHEMA = StructType([
     StructField("reference_column",  StringType(),    True),
 ])
 
-VIOLATION_SCHEMA = StructType([
-    StructField("run_id",             StringType(),    False),
-    StructField("run_timestamp",      TimestampType(), False),
-    StructField("batch_date",         DateType(),      False),
-    StructField("rule_group",         StringType(),    False),
-    StructField("rule_id",            StringType(),    False),
-    StructField("rule_name",          StringType(),    False),
-    StructField("table_name",         StringType(),    False),
-    StructField("severity",           StringType(),    False),
-    StructField("owner",              StringType(),    False),
-    StructField("prosess_id",         StringType(),    True),
-    StructField("primary_key_value",  StringType(),    True),
-    StructField("violated_column",    StringType(),    True),
-    StructField("actual_value",       StringType(),    True),
-    StructField("expected_condition", StringType(),    True),
-    StructField("violation_detail",   StringType(),    True),
-    StructField("saksbehandler_kode", StringType(),    True),
-])
-
 
 def _empty_results():
     return spark.createDataFrame([], RESULT_SCHEMA)
@@ -472,6 +459,8 @@ def run_validation(
                 F.col("expected_condition"),
                 F.col("violation_detail"),
                 F.col("saksbehandler_kode"),
+                F.lit("Active").alias("issue_status"),
+                F.lit(None).cast("string").alias("resolution_timestamp"),
             )
             all_violations = all_violations.unionByName(viols_spark)
 
@@ -536,8 +525,13 @@ print("\nWriting results to Delta tables…")
 all_results_combined.write.mode("append").saveAsTable("dq_run_results")
 print(f"  dq_run_results   : {all_results_combined.count()} rows appended.")
 
-all_violations_combined.write.mode("append").saveAsTable("dq_violations")
-print(f"  dq_violations    : {all_violations_combined.count()} rows appended.")
+_apply_resolution_tracking(
+    all_violations_combined,
+    spark_session=spark,
+    violations_table="dq_violations",
+    run_timestamp=RUN_TIMESTAMP,
+)
+print(f"  dq_violations    : {all_violations_combined.count()} violations processed.")
 
 
 # CELL 9 — Run summary

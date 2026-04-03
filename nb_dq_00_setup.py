@@ -87,35 +87,55 @@ print("dq_run_results ready.")
 
 
 # CELL 3 — dq_violations
-# One row per offending record per rule per run.
+# One row per offending record per rule (current state — upserted each run).
 # Used by Power BI for the drill-through / detail view.
 # Key fields for the semantic model:
-#   prosess_id          – links the violation back to Saksbehandling.Prosesser
-#   primary_key_value   – the PK value of the offending row in its own table
-#   violated_column     – which column caused the violation
-#   severity / owner    – copied from the rule definition for easy filtering
+#   prosess_id           – links the violation back to Saksbehandling.Prosesser
+#   primary_key_value    – the PK value of the offending row in its own table
+#   violated_column      – which column caused the violation
+#   severity / owner     – copied from the rule definition for easy filtering
+#   issue_status         – 'Active' while the violation persists; 'Resolved' once fixed
+#   resolution_timestamp – ISO timestamp of when the violation was resolved (NULL if still Active)
 # -----------------------------------------------------------------------------
 spark.sql("""
 CREATE TABLE IF NOT EXISTS dq_violations (
-    run_id              STRING,
-    run_timestamp       TIMESTAMP,
-    batch_date          DATE,
-    rule_group          STRING,
-    rule_id             STRING,
-    rule_name           STRING,
-    table_name          STRING,
-    severity            STRING,
-    owner               STRING,
-    prosess_id          STRING,
-    primary_key_value   STRING,
-    violated_column     STRING,
-    actual_value        STRING,
-    expected_condition  STRING,
-    violation_detail    STRING,
-    saksbehandler_kode  STRING
+    run_id               STRING,
+    run_timestamp        TIMESTAMP,
+    batch_date           DATE,
+    rule_group           STRING,
+    rule_id              STRING,
+    rule_name            STRING,
+    table_name           STRING,
+    severity             STRING,
+    owner                STRING,
+    prosess_id           STRING,
+    primary_key_value    STRING,
+    violated_column      STRING,
+    actual_value         STRING,
+    expected_condition   STRING,
+    violation_detail     STRING,
+    saksbehandler_kode   STRING,
+    issue_status         STRING,
+    resolution_timestamp STRING
 )
 USING DELTA
 """)
+
+# Add new columns to the existing table if this script is re-run against an
+# older deployment that pre-dates these fields.
+for _col_def in [
+    "issue_status         STRING",
+    "resolution_timestamp STRING",
+]:
+    try:
+        spark.sql(
+            f"ALTER TABLE dq_violations ADD COLUMNS ({_col_def})"
+        )
+    except Exception as _exc:
+        _msg = str(_exc).lower()
+        if "already exists" not in _msg and "duplicate" not in _msg:
+            print(f"  Warning: could not add column '{_col_def}': {_exc}")
+
 print("dq_violations ready.")
 
 
