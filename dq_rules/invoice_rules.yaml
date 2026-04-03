@@ -1,6 +1,12 @@
 # =============================================================================
 # INVOICE BUSINESS RULES — maintained by the Finance Team
-# Table: Faktura.Fakturalinjer
+# Table: Saksbehandling.Fakturalinjer
+#
+# Schema assumptions:
+#   prosess_id  – foreign key linking each invoice line to Saksbehandling.Prosesser
+#   Fakturanr   – invoice number (primary key / grouping key)
+#   linje_belop – line-level amount
+#   Faktura_type – invoice classification (e.g. "Kreditnota")
 #
 # How to add a rule:
 #   1. Pick the next rule_id (INV-NNN).
@@ -10,14 +16,16 @@
 #                     expect_column_values_to_be_in_set
 #        Custom:      expect_refund_validation
 #                     expect_invoice_total_consistency
-#   3. Add the rule block below and save this file.
-#   4. The next validation run will pick it up automatically.
+#   3. For rules that target a specific column, set the top-level "column" field.
+#      For multi-column or parameterised rules, use a "parameters" block.
+#   4. Add the rule block below and save this file.
+#   5. The next validation run will pick it up automatically.
 # =============================================================================
 
 rule_group: Invoice
 table: Fakturalinjer
-database: Faktura
-description: Data quality rules for invoice line data
+database: Saksbehandling
+description: Data quality rules for invoice line data linked to case processes
 
 rules:
 

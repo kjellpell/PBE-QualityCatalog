@@ -60,7 +60,7 @@ class InvoiceRefundValidationExpectation:
         amount_col  = params["amount_column"]
         type_col    = params["type_column"]
         credit_type = params["credit_type"]
-        pk_col      = "Fakturanr"
+        pk_col      = params.get("pk_column", "Fakturanr")
 
         # Only evaluate rows where the amount column is present and negative
         evaluated = df.filter(
