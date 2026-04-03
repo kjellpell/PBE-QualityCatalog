@@ -70,7 +70,7 @@ for _col_def in [
     "operator        STRING",
     "sql_query       STRING",
     "rule_category   STRING",
-    "reference_table  STRING",
+    "reference_table STRING",
     "reference_column STRING",
 ]:
     try:
