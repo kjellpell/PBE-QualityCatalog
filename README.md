@@ -185,11 +185,14 @@ Each row tracks the **current state** of a single data quality issue identified 
 
 | Column | Description |
 |---|---|
+| `run_id` | UUID for the validation run that last touched this violation |
 | `rule_id` | Links back to `dq_run_results` |
+| `failure_type` | Failure category from the rule definition (e.g. `Completeness`, `Business Logic`, `Referential Integrity`) — use for Power BI slice-and-dice |
 | `prosess_id` | Process ID for drill-through |
 | `primary_key_value` | PK of the offending row — use this to locate the responsible owner outside the framework |
 | `violated_column` | Column that caused the violation |
 | `violation_detail` | Human-readable description of the issue |
+| `severity` | critical / high / medium / low |
 | `issue_status` | `Active` while the violation persists; `Resolved` once the underlying data is fixed |
 | `resolution_timestamp` | ISO-8601 timestamp of when the issue was automatically resolved (NULL while still Active) |
 | `run_timestamp` | Timestamp of the most recent validation run that confirmed this violation |
@@ -230,4 +233,4 @@ Tests in `tests/test_expectations.py` cover the core expectation classes and the
 | **Phase 1** | ✅ Complete | Consolidated expectations, modular YAML rules, dynamic engine, FK + aggregate validations |
 | **Phase 2** | ✅ Complete | Removed backward-compatible aliases; added `validate_column_exclusions` for negative/forbidden-state validations |
 | **Phase 3** | ✅ Complete | Automated resolution tracking (`issue_status`, `resolution_timestamp`) via Delta MERGE |
-| **Phase 4** | Planned | Rule dependencies, enhanced Power BI measures |
+| **Phase 4** | ✅ Complete | Removed all remaining backward-compat aliases; enriched `dq_violations` with `failure_type` for Power BI categorisation; bug fixes |

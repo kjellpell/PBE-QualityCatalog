@@ -40,6 +40,7 @@ VIOLATION_SCHEMA = StructType([
     StructField("table_name",          StringType(),    False),
     StructField("severity",            StringType(),    False),
     StructField("owner",               StringType(),    False),
+    StructField("failure_type",        StringType(),    True),
     StructField("prosess_id",          StringType(),    True),
     StructField("primary_key_value",   StringType(),    True),
     StructField("violated_column",     StringType(),    True),

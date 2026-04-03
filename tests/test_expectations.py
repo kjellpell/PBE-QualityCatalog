@@ -482,8 +482,10 @@ class TestValidateSequenceOrderExpectation:
         result, viols = ValidateSequenceOrderExpectation().validate(df, self._rule(), spark)
         assert result["status"] == "FAILED"
 
-    def test_old_milestone_column_param_still_works(self, spark):
-        # Backward compat: milestone_column alias should still work
+    def test_old_milestone_column_param_is_unsupported(self, spark):
+        # Backward-compat alias 'milestone_column' has been removed; the rule
+        # must use 'value_column' instead.  Without the correct param the
+        # expectation returns ERROR.
         from engine.expectations import ValidateSequenceOrderExpectation
         df = self._make_df(spark, [
             ("G1", "Start", "2024-01-01"),
@@ -494,14 +496,17 @@ class TestValidateSequenceOrderExpectation:
             "name": "test",
             "expectation": "validate_sequence_order",
             "parameters": {
-                "milestone_column":  "step",     # old param name
+                "milestone_column":  "step",     # old param name — no longer supported
                 "group_column":      "group_id",
                 "date_column":       "event_date",
                 "expected_sequence": ["Start", "End"],
             },
         }
         result, _ = ValidateSequenceOrderExpectation().validate(df, rule, spark)
-        assert result["status"] == "PASSED"
+        assert result["status"] == "ERROR", (
+            "Rule using unsupported 'milestone_column' alias must return ERROR; "
+            "got: " + result["status"]
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -655,14 +660,27 @@ class TestValidateConditionalColumnValueExpectation:
         )
         assert result["status"] == "PASSED"
 
-    def test_backward_compat_old_params(self, spark):
-        # Verify old parameter names (via expect_refund_validation alias) still work
+    def test_backward_compat_old_params_no_longer_supported(self, spark):
+        # Old parameter names (amount_column, type_column, credit_type) have been
+        # removed. Using them must now return an ERROR due to missing required params.
         from engine.expectations import ValidateConditionalColumnValueExpectation
         df = self._make_df(spark, [("1", -50.0, "Standard")])
-        result, viols = ValidateConditionalColumnValueExpectation().validate(
-            df, self._rule_backward_compat(), spark
+        rule = {
+            "rule_id": "T-COND-COMPAT",
+            "name": "test",
+            "expectation": "validate_conditional_column_value",
+            "parameters": {
+                "amount_column": "amount",     # old param — no longer supported
+                "type_column":   "record_type",  # old param — no longer supported
+                "credit_type":   "Credit",       # old param — no longer supported
+                "pk_column":     "id",
+            },
+        }
+        result, _ = ValidateConditionalColumnValueExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR", (
+            "Old parameter aliases must no longer be accepted; expected ERROR, "
+            "got: " + result["status"]
         )
-        assert result["status"] == "FAILED"
 
     def test_missing_params_errors(self, spark):
         from engine.expectations import ValidateConditionalColumnValueExpectation
@@ -723,7 +741,7 @@ class TestValidateGroupAggregateMatchExpectation:
         assert result["status"] == "FAILED"
         assert viols.count() == 1
 
-    def test_backward_compat_old_params(self, spark):
+    def test_backward_compat_old_params_no_longer_supported(self, spark):
         from engine.expectations import ValidateGroupAggregateMatchExpectation
         df = self._make_df(spark, [
             ("INV1", 50.0, 100.0),
@@ -732,16 +750,19 @@ class TestValidateGroupAggregateMatchExpectation:
         rule = {
             "rule_id": "T-GRP-COMPAT",
             "name": "test",
-            "expectation": "expect_invoice_total_consistency",
+            "expectation": "validate_group_aggregate_match",
             "parameters": {
-                "invoice_id_column":    "invoice_id",     # old param name
-                "line_amount_column":   "line_amount",    # old param name
-                "header_amount_column": "header_amount",  # old param name
+                "invoice_id_column":    "invoice_id",     # old param — no longer supported
+                "line_amount_column":   "line_amount",    # old param — no longer supported
+                "header_amount_column": "header_amount",  # old param — no longer supported
                 "tolerance":            0.01,
             },
         }
         result, _ = ValidateGroupAggregateMatchExpectation().validate(df, rule, spark)
-        assert result["status"] == "PASSED"
+        assert result["status"] == "ERROR", (
+            "Old parameter aliases must no longer be accepted; expected ERROR, "
+            "got: " + result["status"]
+        )
 
     def test_missing_reference_column_skips(self, spark):
         from engine.expectations import ValidateGroupAggregateMatchExpectation
@@ -1111,5 +1132,75 @@ class TestResolutionTracking:
         )
         assert res_ts_field.nullable
 
+    def test_violation_schema_contains_failure_type(self, spark):
+        """VIOLATION_SCHEMA must include the failure_type enrichment field."""
+        from engine.resolution import VIOLATION_SCHEMA
+        field_names = {f.name for f in VIOLATION_SCHEMA.fields}
+        assert "failure_type" in field_names
+
+    def test_failure_type_is_nullable(self, spark):
+        """failure_type must be nullable (rules without a category have NULL failure_type)."""
+        from engine.resolution import VIOLATION_SCHEMA
+        ft_field = next(
+            f for f in VIOLATION_SCHEMA.fields if f.name == "failure_type"
+        )
+        assert ft_field.nullable, "failure_type must be nullable"
 
 
+# ---------------------------------------------------------------------------
+# Delta Log Enrichment — failure_type and Power BI fields
+# ---------------------------------------------------------------------------
+
+class TestDeltaLogEnrichment:
+    """
+    Tests that verify the enriched delta log fields introduced for Power BI
+    integration: failure_type.
+    """
+
+    def test_failure_type_field_in_violation_schema(self, spark):
+        """The VIOLATION_SCHEMA must contain failure_type for Power BI categorisation."""
+        from engine.resolution import VIOLATION_SCHEMA
+        field_names = [f.name for f in VIOLATION_SCHEMA.fields]
+        assert "failure_type" in field_names, (
+            "failure_type is required in VIOLATION_SCHEMA for Power BI failure categorisation"
+        )
+
+    def test_run_id_field_in_violation_schema(self, spark):
+        """VIOLATION_SCHEMA must contain run_id as the Validation Run ID."""
+        from engine.resolution import VIOLATION_SCHEMA
+        field_names = [f.name for f in VIOLATION_SCHEMA.fields]
+        assert "run_id" in field_names
+
+    def test_run_timestamp_field_in_violation_schema(self, spark):
+        """VIOLATION_SCHEMA must contain run_timestamp as execution metadata."""
+        from engine.resolution import VIOLATION_SCHEMA
+        field_names = [f.name for f in VIOLATION_SCHEMA.fields]
+        assert "run_timestamp" in field_names
+
+    def test_failure_type_nullable_in_schema(self, spark):
+        """failure_type must be nullable since not all rules define a category."""
+        from engine.resolution import VIOLATION_SCHEMA
+        ft_field = next(
+            (f for f in VIOLATION_SCHEMA.fields if f.name == "failure_type"), None
+        )
+        assert ft_field is not None, "failure_type field must exist in VIOLATION_SCHEMA"
+        assert ft_field.nullable, "failure_type must be nullable"
+
+    def test_all_required_pbi_fields_present(self, spark):
+        """All fields required for actionable Power BI reports must be in VIOLATION_SCHEMA."""
+        from engine.resolution import VIOLATION_SCHEMA
+        field_names = {f.name for f in VIOLATION_SCHEMA.fields}
+        required_for_pbi = {
+            "run_id",              # Validation Run ID — links violations to a specific run
+            "run_timestamp",       # Execution metadata — when the run occurred
+            "batch_date",          # Partitioning field for historical reporting
+            "rule_id",             # Rule reference for drill-through
+            "rule_name",           # Human-readable rule label
+            "severity",            # Priority filtering in Power BI
+            "failure_type",        # Category-based filtering (Completeness / Business Logic / etc.)
+            "primary_key_value",   # Row-level traceability to the source record
+            "issue_status",        # Active / Resolved tracking
+            "resolution_timestamp",# When the issue was resolved
+        }
+        missing = required_for_pbi - field_names
+        assert not missing, f"Missing required Power BI fields: {missing}"

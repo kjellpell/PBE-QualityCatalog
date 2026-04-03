@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS dq_violations (
     table_name           STRING,
     severity             STRING,
     owner                STRING,
+    failure_type         STRING,
     prosess_id           STRING,
     primary_key_value    STRING,
     violated_column      STRING,
@@ -124,6 +125,7 @@ USING DELTA
 # Add new columns to the existing table if this script is re-run against an
 # older deployment that pre-dates these fields.
 for _col_def in [
+    "failure_type         STRING",
     "issue_status         STRING",
     "resolution_timestamp STRING",
 ]:
