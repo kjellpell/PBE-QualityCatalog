@@ -209,24 +209,18 @@ def _violations_for_gx_rule(
     if not col or col not in full_df.columns:
         return None
 
-    viols = full_df.filter(F.col(col).isNull()).select(
+    base_cols = [
         F.col(pk_col).cast("string").alias("primary_key_value"),
         F.lit(col).alias("violated_column"),
         F.lit(None).cast("string").alias("actual_value"),
         F.lit(f"{col} must not be null").alias("expected_condition"),
         F.lit(f"{col} is null").alias("violation_detail"),
-    )
-
+    ]
     if saksbehandler_col and saksbehandler_col in full_df.columns:
-        viols = full_df.filter(F.col(col).isNull()).select(
-            F.col(pk_col).cast("string").alias("primary_key_value"),
-            F.lit(col).alias("violated_column"),
-            F.lit(None).cast("string").alias("actual_value"),
-            F.lit(f"{col} must not be null").alias("expected_condition"),
-            F.lit(f"{col} is null").alias("violation_detail"),
-            F.col(saksbehandler_col).cast("string").alias("saksbehandler_kode"),
+        base_cols.append(
+            F.col(saksbehandler_col).cast("string").alias("saksbehandler_kode")
         )
-    return viols
+    return full_df.filter(F.col(col).isNull()).select(*base_cols)
 
 
 # CELL 5 — Schema for result accumulation
@@ -301,12 +295,9 @@ def run_validation(
 
     gx_context = _get_gx_context()
 
-    # Pandas sample for GX native expectations
-    pdf_sample = (
-        source_df.limit(SAMPLE_SIZE).toPandas()
-        if source_df.count() > SAMPLE_SIZE
-        else source_df.toPandas()
-    )
+    # Pandas sample for GX native expectations.
+    # Using limit() avoids a full table scan just to check the row count.
+    pdf_sample = source_df.limit(SAMPLE_SIZE).toPandas()
 
     for rule in rules:
         rule_id   = rule["rule_id"]
