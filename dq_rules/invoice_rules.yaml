@@ -1,0 +1,94 @@
+# =============================================================================
+# INVOICE BUSINESS RULES — maintained by the Finance Team
+# Table: Faktura.Fakturalinjer
+#
+# How to add a rule:
+#   1. Pick the next rule_id (INV-NNN).
+#   2. Choose an expectation:
+#        Standard GX: expect_column_values_to_not_be_null
+#                     expect_column_values_to_be_greater_than
+#                     expect_column_values_to_be_in_set
+#        Custom:      expect_refund_validation
+#                     expect_invoice_total_consistency
+#   3. Add the rule block below and save this file.
+#   4. The next validation run will pick it up automatically.
+# =============================================================================
+
+rule_group: Invoice
+table: Fakturalinjer
+database: Faktura
+description: Data quality rules for invoice line data
+
+rules:
+
+  # ---------------------------------------------------------------------------
+  # Null / completeness checks
+  # ---------------------------------------------------------------------------
+
+  - rule_id: INV-001
+    name: Fakturanr cannot be null
+    description: >
+      Every invoice line must reference an invoice number.
+      A null Fakturanr prevents the line from being traced to its invoice.
+    expectation: expect_column_values_to_not_be_null
+    column: Fakturanr
+    severity: critical
+    owner: Finansteam
+
+  - rule_id: INV-002
+    name: linje_belop cannot be null
+    description: >
+      Every invoice line must have an amount recorded.
+      A null amount makes it impossible to reconcile the invoice.
+    expectation: expect_column_values_to_not_be_null
+    column: linje_belop
+    severity: critical
+    owner: Finansteam
+
+  - rule_id: INV-003
+    name: Faktura_type cannot be null
+    description: >
+      The invoice type must always be populated so the system knows how to
+      classify and process each invoice line (e.g. standard vs. credit note).
+    expectation: expect_column_values_to_not_be_null
+    column: Faktura_type
+    severity: high
+    owner: Finansteam
+
+  # ---------------------------------------------------------------------------
+  # Amount / refund validation
+  # ---------------------------------------------------------------------------
+
+  - rule_id: INV-004
+    name: Negative amounts only allowed on credit notes (Kreditnota)
+    description: >
+      A negative linje_belop is only valid when Faktura_type = 'Kreditnota'.
+      Negative amounts on other invoice types indicate a data entry error or
+      a missing credit-note classification.
+    expectation: expect_refund_validation
+    parameters:
+      amount_column: linje_belop
+      type_column: Faktura_type
+      credit_type: Kreditnota
+    severity: high
+    owner: Finansteam
+
+  # ---------------------------------------------------------------------------
+  # Invoice-level consistency checks
+  # ---------------------------------------------------------------------------
+
+  - rule_id: INV-005
+    name: Sum of line amounts must match invoice header total
+    description: >
+      The sum of all linje_belop values for a given Fakturanr must equal the
+      Faktura_belop recorded on the invoice header (within a small tolerance).
+      A mismatch indicates either missing lines or a header update that was
+      not reflected in the detail lines.
+    expectation: expect_invoice_total_consistency
+    parameters:
+      invoice_id_column: Fakturanr
+      line_amount_column: linje_belop
+      header_amount_column: Faktura_belop
+      tolerance: 0.01
+    severity: high
+    owner: Finansteam
