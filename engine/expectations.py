@@ -300,7 +300,7 @@ class ColumnSumExpectation:
         deviation = abs(actual - expected)
         passed    = deviation <= tolerance
 
-        condition = f"SUM({column}) == {expected} (+-{tolerance})"
+        condition = f"SUM({column}) == {expected} (\u00b1{tolerance})"
 
         result = {
             "total_rows":  total,
@@ -309,7 +309,7 @@ class ColumnSumExpectation:
             "success_pct": 100.0 if passed else 0.0,
             "status":      "PASSED" if passed else "FAILED",
             "details": (
-                f"SUM({column}) = {actual:.4f}, expected {expected} +-{tolerance}."
+                f"SUM({column}) = {actual:.4f}, expected {expected} \u00b1{tolerance}."
                 if not passed
                 else f"SUM({column}) = {actual:.4f} satisfies {condition}."
             ),
@@ -845,7 +845,7 @@ class ValidateSequenceOrderExpectation:
         if failed == 0:
             return _passed_result(total), _empty_violations(spark)
 
-        seq_str = " -> ".join(expected_sequence)
+        seq_str = " \u2192 ".join(expected_sequence)
         violations_out = violations_df.select(
             F.col(group_col).cast("string").alias("primary_key_value"),
             F.lit(value_col).alias("violated_column"),
