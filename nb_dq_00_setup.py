@@ -68,8 +68,11 @@ for _col_def in [
         spark.sql(
             f"ALTER TABLE dq_run_results ADD COLUMNS ({_col_def})"
         )
-    except Exception:
-        pass  # Column already exists — safe to ignore
+    except Exception as _exc:
+        # Silently skip if the column already exists; surface all other errors.
+        _msg = str(_exc).lower()
+        if "already exists" not in _msg and "duplicate" not in _msg:
+            print(f"  Warning: could not add column '{_col_def}': {_exc}")
 
 print("dq_run_results ready.")
 
