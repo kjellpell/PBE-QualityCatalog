@@ -1,7 +1,8 @@
 # =============================================================================
 # dq_expectations/case_expectations.py
 #
-# Custom Great Expectations–style validators for Case data (Prosesser table).
+# Custom Great Expectations–style validators for Case / Process data
+# (Saksbehandling.Prosesser table).
 #
 # Each class implements:
 #   validate(df, rule, spark) → (result_dict, violations_df | None)
@@ -17,6 +18,10 @@
 #   violations_df  Spark DataFrame | None
 #     Columns: primary_key_value, violated_column,
 #              actual_value, expected_condition, violation_detail
+#
+# The primary key column is read from the YAML rule's "parameters.pk_column"
+# field (default: "Saksnummer") so these validators work with any table that
+# has a comparable structure without changing Python code.
 #
 # Adding a new expectation:
 #   1. Create a class with a validate() method following the contract above.
@@ -73,7 +78,7 @@ class CaseMilestoneOrderExpectation:
         params      = rule.get("parameters", {})
         start_col   = params["start_column"]
         stop_col    = params["stop_column"]
-        pk_col      = "Saksnummer"
+        pk_col      = params.get("pk_column", "Saksnummer")
         condition   = f"{start_col} <= {stop_col}"
 
         # Only evaluate rows where both dates are present
@@ -148,7 +153,7 @@ class CaseMilestonePairsExpectation:
         start_col        = params["start_column"]
         stop_col         = params["stop_column"]
         closed_indicator = params["closed_indicator"]
-        pk_col           = "Saksnummer"
+        pk_col           = params.get("pk_column", "Saksnummer")
 
         # We only care about rows that are supposed to be finished
         # The Prosesser table does not hold Status directly; we join via Saker.
@@ -229,7 +234,7 @@ class CaseNoOpenMilestonePairsExpectation:
         params    = rule.get("parameters", {})
         start_col = params["start_column"]
         stop_col  = params["stop_column"]
-        pk_col    = "Saksnummer"
+        pk_col    = params.get("pk_column", "Saksnummer")
 
         total = df.count()
         if total == 0:

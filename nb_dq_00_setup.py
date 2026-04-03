@@ -17,6 +17,12 @@ print("Spark ready.")
 # CELL 2 — dq_run_results
 # One row per rule per validation run.
 # Used by Power BI for the summary / scorecard view.
+# Key fields for the semantic model:
+#   rule_group    – Process | Milestone | Invoice
+#   expectation   – the expectation type applied
+#   table_name    – the source table validated
+#   severity      – critical | high | medium | low
+#   status        – PASSED | FAILED | ERROR
 # -----------------------------------------------------------------------------
 spark.sql("""
 CREATE TABLE IF NOT EXISTS dq_run_results (
@@ -45,6 +51,11 @@ print("dq_run_results ready.")
 # CELL 3 — dq_violations
 # One row per offending record per rule per run.
 # Used by Power BI for the drill-through / detail view.
+# Key fields for the semantic model:
+#   prosess_id          – links the violation back to Saksbehandling.Prosesser
+#   primary_key_value   – the PK value of the offending row in its own table
+#   violated_column     – which column caused the violation
+#   severity / owner    – copied from the rule definition for easy filtering
 # -----------------------------------------------------------------------------
 spark.sql("""
 CREATE TABLE IF NOT EXISTS dq_violations (
@@ -57,6 +68,7 @@ CREATE TABLE IF NOT EXISTS dq_violations (
     table_name          STRING,
     severity            STRING,
     owner               STRING,
+    prosess_id          STRING,
     primary_key_value   STRING,
     violated_column     STRING,
     actual_value        STRING,

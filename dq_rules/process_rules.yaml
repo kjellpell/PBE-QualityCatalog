@@ -1,0 +1,57 @@
+# =============================================================================
+# PROCESS BUSINESS RULES — maintained by the Case Management Team
+# Table: Saksbehandling.Prosesser
+#
+# How to add a rule:
+#   1. Pick the next rule_id (PROC-NNN).
+#   2. Choose an expectation:
+#        Standard GX: expect_column_values_to_not_be_null
+#                     expect_column_values_to_be_greater_than
+#                     expect_column_values_to_be_in_set
+#        Custom:      (register new expectations in dq_expectations/__init__.py)
+#   3. For rules that target a specific column, set the top-level "column" field.
+#      For multi-column or parameterised rules, use a "parameters" block.
+#   4. Add the rule block below and save this file.
+#   5. The next validation run will pick it up automatically.
+# =============================================================================
+
+rule_group: Process
+table: Prosesser
+database: Saksbehandling
+description: Data quality rules for the main process / case records (Prosesser)
+
+rules:
+
+  # ---------------------------------------------------------------------------
+  # Null / completeness checks
+  # ---------------------------------------------------------------------------
+
+  - rule_id: PROC-001
+    name: Saksnummer cannot be null
+    description: >
+      Every row in Prosesser must reference a valid case number.
+      A null Saksnummer means the process cannot be traced back to a case.
+    expectation: expect_column_values_to_not_be_null
+    column: Saksnummer
+    severity: critical
+    owner: Saksteam
+
+  - rule_id: PROC-002
+    name: Indikator cannot be null
+    description: >
+      Every process must have a valid indicator (case type / sakstype).
+      Without an indicator the case cannot be categorised or reported correctly.
+    expectation: expect_column_values_to_not_be_null
+    column: Indikator
+    severity: high
+    owner: Saksteam
+
+  - rule_id: PROC-003
+    name: Saksbehandler_kode cannot be null for open cases
+    description: >
+      All open (active) processes must be assigned to a handler.
+      Unassigned open cases represent a governance gap.
+    expectation: expect_column_values_to_not_be_null
+    column: Saksbehandler_kode
+    severity: high
+    owner: Saksteam
