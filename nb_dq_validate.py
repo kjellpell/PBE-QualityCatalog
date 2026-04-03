@@ -253,6 +253,12 @@ RESULT_SCHEMA = StructType([
     StructField("success_pct",    DoubleType(),    True),
     StructField("status",         StringType(),    False),
     StructField("details",        StringType(),    True),
+    # Cross-column comparison metadata (populated for validate_column_comparison)
+    StructField("column_a",       StringType(),    True),
+    StructField("column_b",       StringType(),    True),
+    StructField("operator",       StringType(),    True),
+    # SQL fallback metadata (populated for sql_validation)
+    StructField("sql_query",      StringType(),    True),
 ])
 
 VIOLATION_SCHEMA = StructType([
@@ -330,6 +336,13 @@ def run_validation(
         severity  = rule.get("severity", "medium")
         owner     = rule.get("owner", "")
 
+        # Extract metadata for cross-column and SQL rules
+        params    = rule.get("parameters", {})
+        column_a  = params.get("column_A") if exp_name == "validate_column_comparison" else None
+        column_b  = params.get("column_B") if exp_name == "validate_column_comparison" else None
+        operator  = params.get("operator")  if exp_name == "validate_column_comparison" else None
+        sql_query = params.get("sql")       if exp_name == "sql_validation"             else None
+
         print(f"  → [{rule_id}] {rule_name} ({exp_name}) ... ", end="")
 
         try:
@@ -391,6 +404,10 @@ def run_validation(
             result["success_pct"],
             result["status"],
             result["details"],
+            column_a,
+            column_b,
+            operator,
+            sql_query,
         ))
 
         # Attach run metadata and prosess_id to violation rows

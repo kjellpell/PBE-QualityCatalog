@@ -19,6 +19,10 @@ from dq_expectations.milestone_expectations import (
     MilestonePairsCompleteExpectation,
     MilestoneNoOrphanExpectation,
 )
+from dq_expectations.common_expectations import (
+    ColumnComparisonExpectation,
+    SqlValidationExpectation,
+)
 
 # Map YAML expectation names to validator classes.
 # Add new entries here when creating new custom validators.
@@ -35,6 +39,9 @@ CUSTOM_EXPECTATION_REGISTRY = {
     "expect_milestone_sequence":           MilestoneSequenceExpectation,
     "expect_milestone_pairs_complete":     MilestonePairsCompleteExpectation,
     "expect_no_orphan_milestones":         MilestoneNoOrphanExpectation,
+    # Generic cross-table validators (any table)
+    "validate_column_comparison":          ColumnComparisonExpectation,
+    "sql_validation":                      SqlValidationExpectation,
 }
 
 __all__ = [
@@ -47,5 +54,7 @@ __all__ = [
     "MilestoneSequenceExpectation",
     "MilestonePairsCompleteExpectation",
     "MilestoneNoOrphanExpectation",
+    "ColumnComparisonExpectation",
+    "SqlValidationExpectation",
     "CUSTOM_EXPECTATION_REGISTRY",
 ]

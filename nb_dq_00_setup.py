@@ -2,7 +2,9 @@
 # NB_DQ_00_SETUP.py
 # Creates all Delta tables used by the GX Core data quality framework.
 # Run once before the first validation run.
-# Safe to re-run — all statements use CREATE TABLE IF NOT EXISTS.
+# Safe to re-run — all statements use CREATE TABLE IF NOT EXISTS, and
+# ALTER TABLE ... ADD COLUMNS IF NOT EXISTS is used so the script can also
+# be re-run against existing tables to add new columns without data loss.
 # =============================================================================
 
 # CELL 1 — Spark session
@@ -23,6 +25,10 @@ print("Spark ready.")
 #   table_name    – the source table validated
 #   severity      – critical | high | medium | low
 #   status        – PASSED | FAILED | ERROR
+#   column_a      – left-hand column (validate_column_comparison only)
+#   column_b      – right-hand column (validate_column_comparison only)
+#   operator      – comparison operator (validate_column_comparison only)
+#   sql_query     – the SQL string executed (sql_validation only)
 # -----------------------------------------------------------------------------
 spark.sql("""
 CREATE TABLE IF NOT EXISTS dq_run_results (
@@ -41,10 +47,30 @@ CREATE TABLE IF NOT EXISTS dq_run_results (
     failed_rows     BIGINT,
     success_pct     DOUBLE,
     status          STRING,
-    details         STRING
+    details         STRING,
+    column_a        STRING,
+    column_b        STRING,
+    operator        STRING,
+    sql_query       STRING
 )
 USING DELTA
 """)
+
+# Add new columns to the existing table if this script is re-run against an
+# older deployment that pre-dates these fields.
+for _col_def in [
+    "column_a  STRING",
+    "column_b  STRING",
+    "operator  STRING",
+    "sql_query STRING",
+]:
+    try:
+        spark.sql(
+            f"ALTER TABLE dq_run_results ADD COLUMNS ({_col_def})"
+        )
+    except Exception:
+        pass  # Column already exists — safe to ignore
+
 print("dq_run_results ready.")
 
 
