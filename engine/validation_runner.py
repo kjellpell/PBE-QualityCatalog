@@ -42,7 +42,7 @@
 # -----------------------------------------------------------------------------
 import yaml
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from pathlib import Path
 
 import great_expectations as gx
@@ -57,18 +57,6 @@ from pyspark.sql.types import (
 
 spark = SparkSession.builder.getOrCreate()
 spark.sql("SET spark.sql.ansi.enabled = false")
-
-RUN_ID        = str(uuid.uuid4())
-RUN_TIMESTAMP = datetime.utcnow()
-BATCH_DATE    = date.today()
-
-# Rules directory — all *.yaml files in this folder are loaded automatically.
-RULES_DIR = Path(__file__).parent.parent / "rules"
-
-print(f"Run ID    : {RUN_ID}")
-print(f"Timestamp : {RUN_TIMESTAMP.isoformat()}")
-print(f"Batch date: {BATCH_DATE}")
-print(f"Rules dir : {RULES_DIR}")
 
 
 # CELL 3 — Import custom expectation registry and resolution helpers
@@ -87,8 +75,36 @@ from engine.resolution import (                                # noqa: E402
     _find_stale_violations,
     _apply_resolution_tracking,
 )
+from engine.runtime import (                                   # noqa: E402
+    classify_retryable_error,
+    load_config_module,
+    resolve_rules_dir,
+    resolve_targets,
+    write_execution_metric,
+)
 
 print("Custom expectation registry loaded:", list(CUSTOM_EXPECTATION_REGISTRY))
+
+CONFIG, CONFIG_PATH = load_config_module("QualityCatalogConfig")
+RUNTIME, RUNTIME_PATH = load_config_module("QualityCatalogRuntime")
+TARGETS = resolve_targets(CONFIG, RUNTIME)
+
+RUN_ID = str(uuid.uuid4())
+RUN_TIMESTAMP = datetime.utcnow()
+BATCH_DATE = date.today()
+STARTED_AT = datetime.now(timezone.utc)
+RULES_DIR = resolve_rules_dir(CONFIG, Path(__file__).parent.parent)
+
+print(f"Run ID    : {RUN_ID}")
+print(f"Timestamp : {RUN_TIMESTAMP.isoformat()}")
+print(f"Batch date: {BATCH_DATE}")
+print(f"Rules dir : {RULES_DIR}")
+print(f"Config    : {CONFIG_PATH}")
+print(f"Runtime   : {RUNTIME_PATH}")
+print(f"Dry run   : {RUNTIME.DRY_RUN}")
+print(f"Results   : {TARGETS['results_table']}")
+print(f"Violations: {TARGETS['violations_table']}")
+print(f"Metrics   : {TARGETS['execution_metrics_table']}")
 
 
 # CELL 4 — GX Core context and helper functions
@@ -108,7 +124,7 @@ GX_NATIVE_EXPECTATIONS = {
 
 # GX operates on a Pandas sample for standard expectations.
 # Adjust SAMPLE_SIZE for the trade-off between accuracy and runtime.
-SAMPLE_SIZE = 50_000
+SAMPLE_SIZE = CONFIG.GX_SAMPLE_SIZE
 
 
 def _load_yaml(path: Path) -> dict:
@@ -469,88 +485,135 @@ def run_validation(
     return results_df, all_violations
 
 
-# CELL 7 — Load all rule catalogs and source tables dynamically
-# -----------------------------------------------------------------------------
-print("\nLoading rule catalogs from rules/ folder…")
-all_catalogs = _load_all_rules(RULES_DIR)
+def main() -> tuple[int, int]:
+    print("\nLoading rule catalogs from rules/ folder…")
+    all_catalogs = _load_all_rules(RULES_DIR)
+    if not all_catalogs and RUNTIME.FAIL_ON_EMPTY_RULES:
+        raise RuntimeError(f"No rule catalogs found in {RULES_DIR}")
 
-all_results_combined    = _empty_results()
-all_violations_combined = _empty_violations()
+    all_results_combined = _empty_results()
+    all_violations_combined = _empty_violations()
 
-for catalog in all_catalogs:
-    rule_group  = catalog["rule_group"]
-    table_name  = catalog["table"]
-    database    = catalog.get("database", "")
-    pk_col      = catalog.get("pk_column", "id")
-    prosess_col = catalog.get("prosess_id_column")
-    handler_col = catalog.get("saksbehandler_column")
-    joins_cfg   = catalog.get("joins", [])
+    for catalog in all_catalogs:
+        rule_group = catalog["rule_group"]
+        table_name = catalog["table"]
+        database = catalog.get("database", "")
+        pk_col = catalog.get("pk_column", "id")
+        prosess_col = catalog.get("prosess_id_column")
+        handler_col = catalog.get("saksbehandler_column")
+        joins_cfg = catalog.get("joins", [])
 
-    full_table = f"{database}.{table_name}" if database else table_name
-    print(f"\n=== {rule_group.upper()} VALIDATIONS ({full_table}) ===")
+        full_table = f"{database}.{table_name}" if database else table_name
+        print(f"\n=== {rule_group.upper()} VALIDATIONS ({full_table}) ===")
 
-    # Load the source table
-    source_df = spark.read.table(full_table)
-    print(f"  Source rows: {source_df.count():,}")
+        source_df = spark.read.table(full_table)
+        source_count = source_df.count()
+        if source_count == 0 and RUNTIME.FAIL_ON_EMPTY_SOURCE:
+            raise RuntimeError(f"Source table is empty: {full_table}")
+        print(f"  Source rows: {source_count:,}")
 
-    # Apply pre-defined joins (e.g. enriching Prosesser with Status from Saker)
-    for join_cfg in joins_cfg:
-        join_table  = join_cfg["table"]
-        join_on     = join_cfg["on"]
-        join_how    = join_cfg.get("how", "left")
-        join_select = join_cfg.get("select")
+        for join_cfg in joins_cfg:
+            join_table = join_cfg["table"]
+            join_on = join_cfg["on"]
+            join_how = join_cfg.get("how", "left")
+            join_select = join_cfg.get("select")
 
-        join_df = spark.read.table(join_table)
-        if join_select:
-            join_df = join_df.select(*join_select)
-        source_df = source_df.join(join_df, on=join_on, how=join_how)
-        print(f"  Joined with {join_table} on {join_on} ({join_how})")
+            join_df = spark.read.table(join_table)
+            if join_select:
+                join_df = join_df.select(*join_select)
+            source_df = source_df.join(join_df, on=join_on, how=join_how)
+            print(f"  Joined with {join_table} on {join_on} ({join_how})")
 
-    # Run validation
-    results_df, violations_df = run_validation(
-        rule_catalog=catalog,
-        source_df=source_df,
-        pk_col=pk_col,
-        prosess_id_col=prosess_col,
-        saksbehandler_col=handler_col,
+        results_df, violations_df = run_validation(
+            rule_catalog=catalog,
+            source_df=source_df,
+            pk_col=pk_col,
+            prosess_id_col=prosess_col,
+            saksbehandler_col=handler_col,
+        )
+
+        all_results_combined = all_results_combined.unionByName(results_df)
+        all_violations_combined = all_violations_combined.unionByName(violations_df)
+
+    print("\nWriting results to Delta tables…")
+
+    all_results_combined.write.mode("append").saveAsTable(TARGETS["results_table"])
+    results_count = all_results_combined.count()
+    print(f"  {TARGETS['results_table']} : {results_count} rows appended.")
+
+    _apply_resolution_tracking(
+        all_violations_combined,
+        spark_session=spark,
+        violations_table=TARGETS["violations_table"],
+        run_timestamp=RUN_TIMESTAMP,
     )
+    violations_count = all_violations_combined.count()
+    print(f"  {TARGETS['violations_table']} : {violations_count} violations processed.")
 
-    all_results_combined    = all_results_combined.unionByName(results_df)
-    all_violations_combined = all_violations_combined.unionByName(violations_df)
+    print("\n=== DATA QUALITY RUN SUMMARY ===")
+    spark.sql(
+        f"""
+        SELECT
+            rule_group,
+            COUNT(*)                                                    AS total_rules,
+            SUM(CASE WHEN status = 'PASSED' THEN 1 ELSE 0 END)         AS passed,
+            SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END)         AS failed,
+            SUM(CASE WHEN status = 'ERROR'  THEN 1 ELSE 0 END)         AS errors,
+            ROUND(
+                SUM(CASE WHEN status = 'PASSED' THEN 1 ELSE 0 END)
+                * 100.0 / COUNT(*), 1
+            )                                                           AS quality_score_pct
+        FROM {TARGETS['results_table']}
+        WHERE run_id = '{RUN_ID}'
+        GROUP BY rule_group
+        ORDER BY rule_group
+        """
+    ).show(truncate=False)
+
+    return results_count, violations_count
 
 
-# CELL 8 — Write results to Delta tables
-# -----------------------------------------------------------------------------
-print("\nWriting results to Delta tables…")
-
-all_results_combined.write.mode("append").saveAsTable("dq_run_results")
-print(f"  dq_run_results   : {all_results_combined.count()} rows appended.")
-
-_apply_resolution_tracking(
-    all_violations_combined,
-    spark_session=spark,
-    violations_table="dq_violations",
-    run_timestamp=RUN_TIMESTAMP,
-)
-print(f"  dq_violations    : {all_violations_combined.count()} violations processed.")
-
-
-# CELL 9 — Run summary
-# -----------------------------------------------------------------------------
-print("\n=== DATA QUALITY RUN SUMMARY ===")
-spark.sql(f"""
-    SELECT
-        rule_group,
-        COUNT(*)                                                    AS total_rules,
-        SUM(CASE WHEN status = 'PASSED' THEN 1 ELSE 0 END)         AS passed,
-        SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END)         AS failed,
-        SUM(CASE WHEN status = 'ERROR'  THEN 1 ELSE 0 END)         AS errors,
-        ROUND(
-            SUM(CASE WHEN status = 'PASSED' THEN 1 ELSE 0 END)
-            * 100.0 / COUNT(*), 1
-        )                                                           AS quality_score_pct
-    FROM dq_run_results
-    WHERE run_id = '{RUN_ID}'
-    GROUP BY rule_group
-    ORDER BY rule_group
-""").show(truncate=False)
+try:
+    results_count, violations_count = main()
+    FINISHED_AT = datetime.now(timezone.utc)
+    write_execution_metric(
+        spark,
+        TARGETS["execution_metrics_table"],
+        {
+            "script_name": "validation_runner",
+            "status": "Succeeded",
+            "dry_run": RUNTIME.DRY_RUN,
+            "config_version": CONFIG.CONFIG_VERSION,
+            "pipeline_version": CONFIG.PIPELINE_VERSION,
+            "output_target": TARGETS["results_table"],
+            "artifact_target": TARGETS["violations_table"],
+            "row_count": int(results_count),
+            "started_at_utc": STARTED_AT,
+            "finished_at_utc": FINISHED_AT,
+            "duration_seconds": float((FINISHED_AT - STARTED_AT).total_seconds()),
+            "is_retryable": False,
+            "error_message": None,
+        },
+    )
+except Exception as exc:
+    FINISHED_AT = datetime.now(timezone.utc)
+    write_execution_metric(
+        spark,
+        TARGETS["execution_metrics_table"],
+        {
+            "script_name": "validation_runner",
+            "status": "Failed",
+            "dry_run": RUNTIME.DRY_RUN,
+            "config_version": CONFIG.CONFIG_VERSION,
+            "pipeline_version": CONFIG.PIPELINE_VERSION,
+            "output_target": TARGETS["results_table"],
+            "artifact_target": TARGETS["violations_table"],
+            "row_count": 0,
+            "started_at_utc": STARTED_AT,
+            "finished_at_utc": FINISHED_AT,
+            "duration_seconds": float((FINISHED_AT - STARTED_AT).total_seconds()),
+            "is_retryable": classify_retryable_error(str(exc), RUNTIME),
+            "error_message": str(exc)[:4000],
+        },
+    )
+    raise

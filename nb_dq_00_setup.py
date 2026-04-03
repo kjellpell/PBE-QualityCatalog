@@ -141,5 +141,29 @@ for _col_def in [
 print("dq_violations ready.")
 
 
+# CELL 4 — dq_execution_metrics
+# One row per runner execution for operator observability.
+spark.sql("""
+CREATE TABLE IF NOT EXISTS dq_execution_metrics (
+    script_name        STRING,
+    status             STRING,
+    dry_run            BOOLEAN,
+    config_version     STRING,
+    pipeline_version   STRING,
+    output_target      STRING,
+    artifact_target    STRING,
+    row_count          BIGINT,
+    started_at_utc     TIMESTAMP,
+    finished_at_utc    TIMESTAMP,
+    duration_seconds   DOUBLE,
+    is_retryable       BOOLEAN,
+    error_message      STRING
+)
+USING DELTA
+""")
+
+print("dq_execution_metrics ready.")
+
+
 print("\n=== DQ SETUP COMPLETE ===")
-print("Delta tables: dq_run_results, dq_violations")
+print("Delta tables: dq_run_results, dq_violations, dq_execution_metrics")

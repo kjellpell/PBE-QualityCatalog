@@ -72,10 +72,10 @@ rules:
       Every milestone row must identify the type/name of the milestone.
       A null Milepel means the record cannot be categorised or sequenced.
     expectation: expect_column_values_to_not_be_null
-    column: Milepel        # <-- change this to target a different column
+    column: Milepel
     severity: critical
     category: Completeness
-    owner: Saksteam
+    owner: IT
 
   - rule_id: MIL-002
     name: prosess_id cannot be null
@@ -83,86 +83,85 @@ rules:
       Every milestone row must be linked to a process via prosess_id.
       An unlinked milestone cannot be attributed to any case.
     expectation: expect_column_values_to_not_be_null
-    column: prosess_id     # <-- change this to target a different column
+    column: prosess_id
     severity: critical
     category: Completeness
-    owner: Saksteam
-
+    owner: IT
+ 
   # ---------------------------------------------------------------------------
   # Milestone sequence checks
   # ---------------------------------------------------------------------------
 
-  - rule_id: MIL-004
+  - rule_id: MIL-003
     name: Milestones must follow the defined sequence
     description: >
-      When multiple milestones in the expected_sequence are present for the
-      same process, they must appear in the correct chronological order
-      (determined by date_column).  Out-of-order milestones indicate
-      timeline recording errors.
+      When multiple milestones in the expected sequence are present for the
+      same process, they must appear in the correct chronological order.
+      Out-of-order milestones indicate timeline recording errors.
     expectation: validate_sequence_order
     parameters:
-      value_column: Milepel              # <-- column holding value names
-      group_column: prosess_id           # <-- column that identifies the group
-      date_column: Milepel_dato          # <-- date/timestamp column used for ordering
-      expected_sequence:                 # <-- define the required order here
+      value_column: Milepel
+      group_column: prosess_id
+      date_column: StartDate
+      expected_sequence:
         - Startbehandling
         - Behandling
         - Stoppbehandling
     severity: high
     category: Business Logic
-    owner: Saksteam
+    owner: IT
 
   # ---------------------------------------------------------------------------
   # Milestone pair completeness checks
   # ---------------------------------------------------------------------------
 
-  - rule_id: MIL-005
+  - rule_id: MIL-004
     name: Milestone pairs must both be present
     description: >
       For each required pair, if either milestone type exists for a process
-      the partner milestone must also exist.  A half-complete pair means
+      the partner milestone must also exist. A half-complete pair means
       the process lifecycle is unresolved.
     expectation: validate_paired_presence
     parameters:
-      value_column: Milepel              # <-- column holding value names
-      group_column: prosess_id           # <-- column that identifies the group
-      required_pairs:                    # <-- list each [start, stop] pair
+      value_column: Milepel
+      group_column: prosess_id
+      required_pairs:
         - [Startbehandling, Stoppbehandling]
     severity: critical
     category: Business Logic
-    owner: Saksteam
+    owner: IT
 
   # ---------------------------------------------------------------------------
   # Orphaned (stop-without-start) checks
   # ---------------------------------------------------------------------------
 
-  - rule_id: MIL-006
+  - rule_id: MIL-005
     name: Stop milestone without start milestone is invalid
     description: >
-      A stop-type milestone (e.g. Stoppbehandling) cannot exist for a process
-      that has no corresponding start-type milestone (e.g. Startbehandling).
-      This represents a broken lifecycle record that must be corrected.
+      A stop-type milestone cannot exist for a process that has no
+      corresponding start-type milestone. This represents a broken lifecycle
+      record that must be corrected.
     expectation: validate_no_orphan
     parameters:
-      value_column: Milepel              # <-- column holding value names
-      group_column: prosess_id           # <-- column that identifies the group
-      pairs:                             # <-- [start_type, stop_type] pairs to check
+      value_column: Milepel
+      group_column: prosess_id
+      pairs:
         - [Startbehandling, Stoppbehandling]
     severity: high
     category: Business Logic
-    owner: Saksteam
+    owner: IT
 
   # ---------------------------------------------------------------------------
   # SQL fallback validations (sql_validation)
   # Write the query so that every returned row represents a violation.
   # ---------------------------------------------------------------------------
 
-  - rule_id: MIL-007
+  - rule_id: MIL-006
     name: No milestone with EndDate before StartDate (SQL)
     description: >
       SQL fallback: detects milestone rows where EndDate is earlier than
-      StartDate.  Groups by milestone type so the Power BI drill-through
-      shows the affected milestone categories.
+      StartDate. Groups by milestone type so Power BI drill-through shows the
+      affected milestone categories.
     expectation: sql_validation
     parameters:
       sql: |
@@ -176,13 +175,13 @@ rules:
       pk_column: Milepel
     severity: critical
     category: Business Logic
-    owner: Saksteam
+    owner: IT
 
   # ---------------------------------------------------------------------------
   # Cross-table / referential integrity validations
   # ---------------------------------------------------------------------------
 
-  - rule_id: MIL-008
+  - rule_id: MIL-007
     name: prosess_id must exist in Prosesser table
     description: >
       Every prosess_id value in Milepel must reference an existing process in
@@ -194,16 +193,16 @@ rules:
       pk_column: prosess_id
       reference:
         table: Saksbehandling.Prosesser
-        column: Saksnummer
+        column: prosess_id
     severity: critical
     category: Referential Integrity
-    owner: Saksteam
+      owner: IT
 
   # ---------------------------------------------------------------------------
   # Aggregate validations
   # ---------------------------------------------------------------------------
 
-  - rule_id: MIL-009
+  - rule_id: MIL-008
     name: Unique combination of prosess_id and Milepel type
     description: >
       The combination of (prosess_id, Milepel) must be unique — i.e. no
@@ -218,4 +217,4 @@ rules:
       pk_column: prosess_id
     severity: high
     category: Uniqueness
-    owner: Saksteam
+    owner: IT

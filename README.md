@@ -8,8 +8,12 @@ YAML-driven data quality framework for the PBE case management platform, built o
 
 ```
 PBE-QualityCatalog/
+├── config/
+│   ├── QualityCatalogConfig.py
+│   └── QualityCatalogRuntime.py
 ├── engine/
 │   ├── expectations.py          # All custom expectation classes (consolidated)
+│   ├── runtime.py               # Config/runtime/target resolution helpers
 │   └── validation_runner.py     # Core engine — discovers and runs all rule files
 ├── rules/
 │   ├── process_rules.yaml       # Rules for Saksbehandling.Prosesser
@@ -20,7 +24,8 @@ PBE-QualityCatalog/
 ├── tests/
 │   └── test_expectations.py     # Unit tests for expectation classes
 ├── nb_dq_00_setup.py            # One-time Delta table setup (run before first validation)
-├── nb_01_setup.py               # General environment setup
+├── nb_dq_01_preflight.py        # Preflight checks before scheduled runs
+├── DEPLOY.md
 ├── dq_powerbi_measures.md       # Power BI DAX measure reference
 └── README.md
 ```
@@ -41,9 +46,14 @@ Run `nb_dq_00_setup.py` once to create the Delta output tables:
 ```
 dq_run_results   – one row per rule per run (summary / scorecard)
 dq_violations    – one row per offending record per rule per run (drill-through)
+dq_execution_metrics – one row per runner execution (operational evidence)
 ```
 
-### 3. Running validations
+### 3. Preflight
+
+Run `nb_dq_01_preflight.py` before scheduled execution or after config promotion.
+
+### 4. Running validations
 
 Execute `engine/validation_runner.py`.  The engine will:
 
@@ -55,6 +65,19 @@ Execute `engine/validation_runner.py`.  The engine will:
    - **GX native** expectations (via the GX Core validator on a Pandas sample), or
    - **Custom PySpark** expectations (via `CUSTOM_EXPECTATION_REGISTRY`).
 5. Write results to `dq_run_results` and `dq_violations`.
+6. Append execution evidence to `default.dq_execution_metrics`.
+
+## Runtime Model
+
+`config/QualityCatalogConfig.py` holds rules directory, sample size, target tables, and version markers.
+
+`config/QualityCatalogRuntime.py` controls runtime behavior:
+
+- `DRY_RUN` writes to `_tmp` target tables.
+- `FAIL_ON_EMPTY_RULES` fails if the rules directory is empty.
+- `FAIL_ON_EMPTY_SOURCE` fails when a configured source table is empty.
+
+Runtime files are loaded from `/lakehouse/default/Files/Configs` first and fall back to the repo-local `config/` directory unless `REQUIRE_LAKEHOUSE_CONFIG=1` is set.
 
 ---
 
@@ -224,13 +247,4 @@ pytest tests/ -v
 
 Tests in `tests/test_expectations.py` cover the core expectation classes and the resolution-tracking helpers without requiring a real Spark cluster (runs in local mode).
 
----
-
-## Phase Roadmap
-
-| Phase | Status | Focus |
-|---|---|---|
-| **Phase 1** | ✅ Complete | Consolidated expectations, modular YAML rules, dynamic engine, FK + aggregate validations |
-| **Phase 2** | ✅ Complete | Removed backward-compatible aliases; added `validate_column_exclusions` for negative/forbidden-state validations |
-| **Phase 3** | ✅ Complete | Automated resolution tracking (`issue_status`, `resolution_timestamp`) via Delta MERGE |
-| **Phase 4** | ✅ Complete | Removed all remaining backward-compat aliases; enriched `dq_violations` with `failure_type` for Power BI categorisation; bug fixes |
+Deployment guidance is documented in `DEPLOY.md`.
