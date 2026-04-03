@@ -22,6 +22,7 @@ print("Spark ready.")
 #   expectation   – the expectation type applied
 #   table_name    – the source table validated
 #   severity      – critical | high | medium | low
+#   category      – Completeness | Ordering | Validation
 #   status        – PASSED | FAILED | ERROR
 # -----------------------------------------------------------------------------
 spark.sql("""
@@ -35,6 +36,7 @@ CREATE TABLE IF NOT EXISTS dq_run_results (
     table_name      STRING,
     expectation     STRING,
     severity        STRING,
+    category        STRING,
     owner           STRING,
     total_rows      BIGINT,
     passed_rows     BIGINT,
@@ -55,7 +57,7 @@ print("dq_run_results ready.")
 #   prosess_id          – links the violation back to Saksbehandling.Prosesser
 #   primary_key_value   – the PK value of the offending row in its own table
 #   violated_column     – which column caused the violation
-#   severity / owner    – copied from the rule definition for easy filtering
+#   severity / category / owner – copied from the rule definition for easy filtering
 # -----------------------------------------------------------------------------
 spark.sql("""
 CREATE TABLE IF NOT EXISTS dq_violations (
@@ -67,6 +69,7 @@ CREATE TABLE IF NOT EXISTS dq_violations (
     rule_name           STRING,
     table_name          STRING,
     severity            STRING,
+    category            STRING,
     owner               STRING,
     prosess_id          STRING,
     primary_key_value   STRING,

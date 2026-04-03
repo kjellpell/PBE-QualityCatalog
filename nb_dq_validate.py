@@ -246,6 +246,7 @@ RESULT_SCHEMA = StructType([
     StructField("table_name",     StringType(),    False),
     StructField("expectation",    StringType(),    False),
     StructField("severity",       StringType(),    False),
+    StructField("category",       StringType(),    True),
     StructField("owner",          StringType(),    False),
     StructField("total_rows",     LongType(),      True),
     StructField("passed_rows",    LongType(),      True),
@@ -264,6 +265,7 @@ VIOLATION_SCHEMA = StructType([
     StructField("rule_name",          StringType(),    False),
     StructField("table_name",         StringType(),    False),
     StructField("severity",           StringType(),    False),
+    StructField("category",           StringType(),    True),
     StructField("owner",              StringType(),    False),
     StructField("prosess_id",         StringType(),    True),
     StructField("primary_key_value",  StringType(),    True),
@@ -328,6 +330,7 @@ def run_validation(
         rule_name = rule["name"]
         exp_name  = rule["expectation"]
         severity  = rule.get("severity", "medium")
+        category  = rule.get("category", "")
         owner     = rule.get("owner", "")
 
         print(f"  → [{rule_id}] {rule_name} ({exp_name}) ... ", end="")
@@ -384,6 +387,7 @@ def run_validation(
             table_name,
             exp_name,
             severity,
+            category,
             owner,
             result["total_rows"],
             result["passed_rows"],
@@ -442,6 +446,7 @@ def run_validation(
                 F.lit(rule_name).alias("rule_name"),
                 F.lit(table_name).alias("table_name"),
                 F.lit(severity).alias("severity"),
+                F.lit(category).alias("category"),
                 F.lit(owner).alias("owner"),
                 prosess_id_expr.cast("string").alias("prosess_id"),
                 F.col("primary_key_value"),

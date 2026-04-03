@@ -129,7 +129,31 @@ CALCULATE(
 
 ---
 
-### 2.3 Violation Rate (per 1 000 rows)
+### 2.3 Violations by Category
+
+```dax
+Completeness Violations =
+CALCULATE(
+    COUNTROWS( dq_violations ),
+    dq_violations[category] = "Completeness"
+)
+
+Ordering Violations =
+CALCULATE(
+    COUNTROWS( dq_violations ),
+    dq_violations[category] = "Ordering"
+)
+
+Validation Violations =
+CALCULATE(
+    COUNTROWS( dq_violations ),
+    dq_violations[category] = "Validation"
+)
+```
+
+---
+
+### 2.4 Violation Rate (per 1 000 rows)
 
 ```dax
 Violation Rate per 1k =
@@ -251,8 +275,8 @@ TOPN(
 - **Line chart**: `DQ Score % Latest Run` over `batch_date` (trend)
 
 ### Page 2 — Case Rules Detail
-- **Slicer**: `batch_date`, `severity`, `rule_id`
-- **Table**: `rule_id`, `rule_name`, `severity`, `total_rows`, `failed_rows`,
+- **Slicer**: `batch_date`, `severity`, `category`, `rule_id`
+- **Table**: `rule_id`, `rule_name`, `severity`, `category`, `total_rows`, `failed_rows`,
   `success_pct`, `status`, `details`  filtered to `rule_group = "Case"`
 - **Bar chart**: `failed_rows` by `rule_id`
 
@@ -261,8 +285,15 @@ TOPN(
 
 ### Page 4 — Violation Drill-Through
 - **Table**: `violation_detail`, `primary_key_value`, `rule_name`,
-  `severity`, `saksbehandler_kode`, `batch_date`
+  `severity`, `category`, `saksbehandler_kode`, `batch_date`
 - **Enable drill-through** from Pages 2 & 3 on `rule_id`
+
+### Page 5 — Category Analysis
+- **Slicer**: `batch_date`, `rule_group`, `severity`
+- **Bar chart**: `Completeness Violations`, `Ordering Violations`,
+  `Validation Violations` side-by-side
+- **Table**: `category`, `rule_group`, total rules, failed rules, `failed_rows`
+  grouped by `category`
 
 ---
 

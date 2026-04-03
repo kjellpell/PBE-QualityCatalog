@@ -34,6 +34,7 @@ rules:
     expectation: expect_column_values_to_not_be_null
     column: Saksnummer
     severity: critical
+    category: Completeness
     owner: Saksteam
 
   - rule_id: PROC-002
@@ -44,6 +45,7 @@ rules:
     expectation: expect_column_values_to_not_be_null
     column: Indikator
     severity: high
+    category: Completeness
     owner: Saksteam
 
   - rule_id: PROC-003
@@ -54,4 +56,5 @@ rules:
     expectation: expect_column_values_to_not_be_null
     column: Saksbehandler_kode
     severity: high
+    category: Completeness
     owner: Saksteam

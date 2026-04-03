@@ -41,6 +41,7 @@ rules:
     expectation: expect_column_values_to_not_be_null
     column: Fakturanr
     severity: critical
+    category: Completeness
     owner: Finansteam
 
   - rule_id: INV-002
@@ -51,6 +52,7 @@ rules:
     expectation: expect_column_values_to_not_be_null
     column: linje_belop
     severity: critical
+    category: Completeness
     owner: Finansteam
 
   - rule_id: INV-003
@@ -61,6 +63,7 @@ rules:
     expectation: expect_column_values_to_not_be_null
     column: Faktura_type
     severity: high
+    category: Completeness
     owner: Finansteam
 
   # ---------------------------------------------------------------------------
@@ -79,6 +82,7 @@ rules:
       type_column: Faktura_type
       credit_type: Kreditnota
     severity: high
+    category: Validation
     owner: Finansteam
 
   # ---------------------------------------------------------------------------
@@ -99,4 +103,5 @@ rules:
       header_amount_column: Faktura_belop
       tolerance: 0.01
     severity: high
+    category: Validation
     owner: Finansteam

@@ -43,6 +43,7 @@ rules:
     expectation: expect_column_values_to_not_be_null
     column: Milepel        # <-- change this to target a different column
     severity: critical
+    category: Completeness
     owner: Saksteam
 
   - rule_id: MIL-002
@@ -53,6 +54,7 @@ rules:
     expectation: expect_column_values_to_not_be_null
     column: prosess_id     # <-- change this to target a different column
     severity: critical
+    category: Completeness
     owner: Saksteam
 
   # ---------------------------------------------------------------------------
@@ -70,6 +72,7 @@ rules:
       milestone_column: Milepel     # <-- column holding milestone type names
       group_column: prosess_id      # <-- column that identifies the process
     severity: high
+    category: Validation
     owner: Saksteam
 
   # ---------------------------------------------------------------------------
@@ -93,6 +96,7 @@ rules:
         - Behandling
         - Stoppbehandling
     severity: high
+    category: Ordering
     owner: Saksteam
 
   # ---------------------------------------------------------------------------
@@ -112,6 +116,7 @@ rules:
       required_pairs:                    # <-- list each [start, stop] pair
         - [Startbehandling, Stoppbehandling]
     severity: critical
+    category: Completeness
     owner: Saksteam
 
   # ---------------------------------------------------------------------------
@@ -131,4 +136,5 @@ rules:
       pairs:                             # <-- [start_type, stop_type] pairs to check
         - [Startbehandling, Stoppbehandling]
     severity: high
+    category: Validation
     owner: Saksteam
