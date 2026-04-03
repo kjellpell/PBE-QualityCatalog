@@ -14,11 +14,19 @@
 #        Standard GX: expect_column_values_to_not_be_null
 #                     expect_column_values_to_be_greater_than
 #                     expect_column_values_to_be_in_set
-#        Custom:      expect_refund_validation
-#                     expect_invoice_total_consistency
-#        Aggregate:   expect_column_sum_to_equal
-#                       parameters: column, expected_value, tolerance (default 0.01)
-#                     expect_row_count_to_be_between
+#        Generic:     validate_conditional_column_value
+#                       parameters: condition_column, condition_operator (<,>,<=,>=,==,!=),
+#                                   condition_value, required_column, required_value,
+#                                   pk_column
+#                     validate_group_aggregate_match
+#                       parameters: group_column, aggregate_column, reference_column,
+#                                   aggregate (sum/count/avg/min/max), tolerance
+#                     validate_aggregate_rule
+#                       parameters: column, aggregate (sum/count/avg/min/max),
+#                                   operator (>,<,>=,<=,==,!=), threshold
+#                     validate_column_comparison
+#                       parameters: column_A, column_B, operator, pk_column
+#        Aggregate:   expect_row_count_to_be_between
 #                       parameters: min_value, max_value
 #                     expect_unique_combination_of_columns
 #                       parameters: columns (list), pk_column
@@ -92,11 +100,14 @@ rules:
       A negative linje_belop is only valid when Faktura_type = 'Kreditnota'.
       Negative amounts on other invoice types indicate a data entry error or
       a missing credit-note classification.
-    expectation: expect_refund_validation
+    expectation: validate_conditional_column_value
     parameters:
-      amount_column: linje_belop
-      type_column: Faktura_type
-      credit_type: Kreditnota
+      condition_column: linje_belop      # column to check the trigger condition on
+      condition_operator: "<"            # trigger when value is less than condition_value
+      condition_value: 0                 # trigger on negative amounts
+      required_column: Faktura_type      # column that must equal required_value
+      required_value: Kreditnota         # only this type permits negative amounts
+      pk_column: Fakturanr
     severity: high
     category: Business Logic
     owner: Finansteam
@@ -112,11 +123,12 @@ rules:
       Faktura_belop recorded on the invoice header (within a small tolerance).
       A mismatch indicates either missing lines or a header update that was
       not reflected in the detail lines.
-    expectation: expect_invoice_total_consistency
+    expectation: validate_group_aggregate_match
     parameters:
-      invoice_id_column: Fakturanr
-      line_amount_column: linje_belop
-      header_amount_column: Faktura_belop
+      group_column: Fakturanr            # column identifying each group (invoice)
+      aggregate_column: linje_belop      # numeric column to aggregate per group
+      reference_column: Faktura_belop    # column holding the expected group total
+      aggregate: sum                     # aggregation function to apply
       tolerance: 0.01
     severity: high
     category: Aggregate

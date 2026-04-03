@@ -14,20 +14,32 @@
 #        Standard GX:  expect_column_values_to_not_be_null
 #                      expect_column_values_to_be_greater_than
 #                      expect_column_values_to_be_in_set
-#        Custom:       expect_no_duplicate_milestones
-#                      expect_milestone_sequence
-#                      expect_milestone_pairs_complete
-#                      expect_no_orphan_milestones
-#        Cross-column: validate_column_comparison
+#        Generic:      validate_column_comparison
 #                        parameters: column_A, column_B,
 #                                    operator (>, <, >=, <=, ==, !=),
-#                                    pk_column (default: Saksnummer)
+#                                    pk_column
+#                      validate_sequence_order
+#                        parameters: value_column, group_column, date_column,
+#                                    expected_sequence (ordered list)
+#                      validate_paired_presence
+#                        parameters: value_column, group_column,
+#                                    required_pairs ([[start, stop], ...])
+#                      validate_no_orphan
+#                        parameters: value_column, group_column,
+#                                    pairs ([[start_type, stop_type], ...])
+#                      validate_not_null_when
+#                        parameters: condition_column, condition_operator (== or IS NOT NULL),
+#                                    condition_value, check_columns (list), pk_column
 #        SQL fallback: sql_validation / sql (shorthand)
 #                        parameters: sql (multiline query),
 #                                    pk_column (optional column in result)
-#        Aggregate:    expect_column_sum_to_equal
+#        Aggregate:    validate_aggregate_rule
+#                        parameters: column, aggregate (sum/count/avg/min/max),
+#                                    operator (>, <, >=, <=, ==, !=), threshold
 #                      expect_row_count_to_be_between
+#                        parameters: min_value, max_value
 #                      expect_unique_combination_of_columns
+#                        parameters: columns (list), pk_column
 #        Cross-table:  validate_foreign_key
 #                        parameters: column, pk_column,
 #                                    reference: {table, column}
@@ -77,24 +89,6 @@ rules:
     owner: Saksteam
 
   # ---------------------------------------------------------------------------
-  # Duplicate milestone checks
-  # ---------------------------------------------------------------------------
-
-  - rule_id: MIL-003
-    name: No duplicate milestone types per process
-    description: >
-      Within a single process (prosess_id), each milestone type (Milepel)
-      should appear at most once.  Duplicate milestone records indicate
-      data entry errors or failed idempotency in the source system.
-    expectation: expect_no_duplicate_milestones
-    parameters:
-      milestone_column: Milepel     # <-- column holding milestone type names
-      group_column: prosess_id      # <-- column that identifies the process
-    severity: high
-    category: Uniqueness
-    owner: Saksteam
-
-  # ---------------------------------------------------------------------------
   # Milestone sequence checks
   # ---------------------------------------------------------------------------
 
@@ -105,10 +99,10 @@ rules:
       same process, they must appear in the correct chronological order
       (determined by date_column).  Out-of-order milestones indicate
       timeline recording errors.
-    expectation: expect_milestone_sequence
+    expectation: validate_sequence_order
     parameters:
-      milestone_column: Milepel          # <-- column holding milestone type names
-      group_column: prosess_id           # <-- column that identifies the process
+      value_column: Milepel              # <-- column holding value names
+      group_column: prosess_id           # <-- column that identifies the group
       date_column: Milepel_dato          # <-- date/timestamp column used for ordering
       expected_sequence:                 # <-- define the required order here
         - Startbehandling
@@ -128,10 +122,10 @@ rules:
       For each required pair, if either milestone type exists for a process
       the partner milestone must also exist.  A half-complete pair means
       the process lifecycle is unresolved.
-    expectation: expect_milestone_pairs_complete
+    expectation: validate_paired_presence
     parameters:
-      milestone_column: Milepel          # <-- column holding milestone type names
-      group_column: prosess_id           # <-- column that identifies the process
+      value_column: Milepel              # <-- column holding value names
+      group_column: prosess_id           # <-- column that identifies the group
       required_pairs:                    # <-- list each [start, stop] pair
         - [Startbehandling, Stoppbehandling]
     severity: critical
@@ -148,10 +142,10 @@ rules:
       A stop-type milestone (e.g. Stoppbehandling) cannot exist for a process
       that has no corresponding start-type milestone (e.g. Startbehandling).
       This represents a broken lifecycle record that must be corrected.
-    expectation: expect_no_orphan_milestones
+    expectation: validate_no_orphan
     parameters:
-      milestone_column: Milepel          # <-- column holding milestone type names
-      group_column: prosess_id           # <-- column that identifies the process
+      value_column: Milepel              # <-- column holding value names
+      group_column: prosess_id           # <-- column that identifies the group
       pairs:                             # <-- [start_type, stop_type] pairs to check
         - [Startbehandling, Stoppbehandling]
     severity: high
@@ -215,6 +209,7 @@ rules:
       The combination of (prosess_id, Milepel) must be unique — i.e. no
       process can have the same milestone type recorded more than once.
       Duplicates indicate data entry errors or failed idempotency.
+      This is the canonical uniqueness check for milestone records.
     expectation: expect_unique_combination_of_columns
     parameters:
       columns:

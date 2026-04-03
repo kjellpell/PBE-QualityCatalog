@@ -50,7 +50,7 @@ def spark():
 class TestColumnComparisonExpectation:
     def _make_df(self, spark, rows):
         schema = StructType([
-            StructField("id",  StringType(),  True),
+            StructField("id",    StringType(),  True),
             StructField("col_a", IntegerType(), True),
             StructField("col_b", IntegerType(), True),
         ])
@@ -265,108 +265,501 @@ class TestColumnSumExpectation:
 
 
 # ---------------------------------------------------------------------------
-# MilestoneNoDuplicatesExpectation
+# ValidateAggregateRuleExpectation  (new generic expectation)
 # ---------------------------------------------------------------------------
 
-class TestMilestoneNoDuplicatesExpectation:
-    def _make_df(self, spark, rows):
-        schema = StructType([
-            StructField("prosess_id", StringType(), True),
-            StructField("Milepel",    StringType(), True),
-        ])
-        return spark.createDataFrame(rows, schema)
+class TestValidateAggregateRuleExpectation:
+    def _make_df(self, spark, values):
+        schema = StructType([StructField("amount", DoubleType(), True)])
+        return spark.createDataFrame([(v,) for v in values], schema)
 
-    def _rule(self):
+    def _rule(self, column, aggregate, operator, threshold):
         return {
-            "rule_id": "T-005",
+            "rule_id": "T-AGG",
             "name": "test",
-            "expectation": "expect_no_duplicate_milestones",
+            "expectation": "validate_aggregate_rule",
             "parameters": {
-                "milestone_column": "Milepel",
-                "group_column": "prosess_id",
+                "column": column,
+                "aggregate": aggregate,
+                "operator": operator,
+                "threshold": threshold,
             },
         }
 
-    def test_no_duplicates(self, spark):
-        from engine.expectations import MilestoneNoDuplicatesExpectation
-        df = self._make_df(spark, [
-            ("P1", "Start"), ("P1", "Stop"), ("P2", "Start"),
+    def test_sum_above_threshold_passes(self, spark):
+        from engine.expectations import ValidateAggregateRuleExpectation
+        df = self._make_df(spark, [5.0, 10.0, 15.0])   # sum = 30
+        result, _ = ValidateAggregateRuleExpectation().validate(
+            df, self._rule("amount", "sum", ">=", 20.0), spark
+        )
+        assert result["status"] == "PASSED"
+
+    def test_sum_below_threshold_fails(self, spark):
+        from engine.expectations import ValidateAggregateRuleExpectation
+        df = self._make_df(spark, [1.0, 2.0])            # sum = 3
+        result, _ = ValidateAggregateRuleExpectation().validate(
+            df, self._rule("amount", "sum", ">=", 100.0), spark
+        )
+        assert result["status"] == "FAILED"
+
+    def test_count_aggregate(self, spark):
+        from engine.expectations import ValidateAggregateRuleExpectation
+        df = self._make_df(spark, [1.0, 2.0, 3.0])      # count = 3
+        result, _ = ValidateAggregateRuleExpectation().validate(
+            df, {"rule_id": "T", "name": "t", "expectation": "validate_aggregate_rule",
+                 "parameters": {"aggregate": "count", "operator": "==", "threshold": 3}},
+            spark,
+        )
+        assert result["status"] == "PASSED"
+
+    def test_avg_operator(self, spark):
+        from engine.expectations import ValidateAggregateRuleExpectation
+        df = self._make_df(spark, [10.0, 20.0, 30.0])   # avg = 20
+        result, _ = ValidateAggregateRuleExpectation().validate(
+            df, self._rule("amount", "avg", "<=", 25.0), spark
+        )
+        assert result["status"] == "PASSED"
+
+    def test_missing_threshold_errors(self, spark):
+        from engine.expectations import ValidateAggregateRuleExpectation
+        df = self._make_df(spark, [1.0])
+        rule = {"rule_id": "T", "name": "t", "expectation": "x",
+                "parameters": {"column": "amount", "aggregate": "sum", "operator": ">="}}
+        result, _ = ValidateAggregateRuleExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR"
+
+    def test_unsupported_aggregate_errors(self, spark):
+        from engine.expectations import ValidateAggregateRuleExpectation
+        df = self._make_df(spark, [1.0])
+        rule = {"rule_id": "T", "name": "t", "expectation": "x",
+                "parameters": {"column": "amount", "aggregate": "median",
+                               "operator": ">=", "threshold": 0}}
+        result, _ = ValidateAggregateRuleExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR"
+
+    def test_missing_column_errors(self, spark):
+        from engine.expectations import ValidateAggregateRuleExpectation
+        df = self._make_df(spark, [1.0])
+        rule = {"rule_id": "T", "name": "t", "expectation": "x",
+                "parameters": {"column": "nonexistent", "aggregate": "sum",
+                               "operator": ">=", "threshold": 0}}
+        result, _ = ValidateAggregateRuleExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR"
+
+
+# ---------------------------------------------------------------------------
+# ValidateNotNullWhenExpectation  (new generic expectation)
+# ---------------------------------------------------------------------------
+
+class TestValidateNotNullWhenExpectation:
+    def _make_df(self, spark, rows):
+        schema = StructType([
+            StructField("id",       StringType(), True),
+            StructField("status",   StringType(), True),
+            StructField("start_dt", StringType(), True),
+            StructField("stop_dt",  StringType(), True),
         ])
-        result, viols = MilestoneNoDuplicatesExpectation().validate(df, self._rule(), spark)
+        return spark.createDataFrame(rows, schema)
+
+    def test_equality_condition_all_pass(self, spark):
+        from engine.expectations import ValidateNotNullWhenExpectation
+        # When status == "Closed", start_dt and stop_dt must not be null
+        df = self._make_df(spark, [
+            ("1", "Closed", "2024-01-01", "2024-06-01"),
+            ("2", "Open",   None,         None),
+        ])
+        rule = {
+            "rule_id": "T-NNW",
+            "name": "test",
+            "expectation": "validate_not_null_when",
+            "parameters": {
+                "condition_column":   "status",
+                "condition_operator": "==",
+                "condition_value":    "Closed",
+                "check_columns":      ["start_dt", "stop_dt"],
+                "pk_column":          "id",
+            },
+        }
+        result, viols = ValidateNotNullWhenExpectation().validate(df, rule, spark)
         assert result["status"] == "PASSED"
         assert viols.count() == 0
 
-    def test_duplicates_detected(self, spark):
-        from engine.expectations import MilestoneNoDuplicatesExpectation
+    def test_equality_condition_violation(self, spark):
+        from engine.expectations import ValidateNotNullWhenExpectation
         df = self._make_df(spark, [
-            ("P1", "Start"), ("P1", "Start"), ("P1", "Stop"),
+            ("1", "Closed", None, "2024-06-01"),   # start_dt is null but closed
+            ("2", "Closed", "2024-01-01", "2024-06-01"),
         ])
-        result, viols = MilestoneNoDuplicatesExpectation().validate(df, self._rule(), spark)
+        rule = {
+            "rule_id": "T-NNW",
+            "name": "test",
+            "expectation": "validate_not_null_when",
+            "parameters": {
+                "condition_column":   "status",
+                "condition_operator": "==",
+                "condition_value":    "Closed",
+                "check_columns":      ["start_dt", "stop_dt"],
+                "pk_column":          "id",
+            },
+        }
+        result, viols = ValidateNotNullWhenExpectation().validate(df, rule, spark)
+        assert result["status"] == "FAILED"
+        assert result["failed_rows"] == 1
+
+    def test_is_not_null_condition(self, spark):
+        from engine.expectations import ValidateNotNullWhenExpectation
+        # When stop_dt IS NOT NULL, start_dt must not be null
+        df = self._make_df(spark, [
+            ("1", "X", None, "2024-06-01"),   # stop set but start missing - violation
+            ("2", "X", "2024-01-01", "2024-06-01"),
+        ])
+        rule = {
+            "rule_id": "T-NNW",
+            "name": "test",
+            "expectation": "validate_not_null_when",
+            "parameters": {
+                "condition_column":   "stop_dt",
+                "condition_operator": "IS NOT NULL",
+                "check_columns":      ["start_dt"],
+                "pk_column":          "id",
+            },
+        }
+        result, viols = ValidateNotNullWhenExpectation().validate(df, rule, spark)
         assert result["status"] == "FAILED"
         assert viols.count() == 1
 
-    def test_empty_df(self, spark):
-        from engine.expectations import MilestoneNoDuplicatesExpectation
-        schema = StructType([
-            StructField("prosess_id", StringType(), True),
-            StructField("Milepel",    StringType(), True),
-        ])
-        df = spark.createDataFrame([], schema)
-        result, viols = MilestoneNoDuplicatesExpectation().validate(df, self._rule(), spark)
-        assert result["status"] == "PASSED"
+    def test_missing_required_params_errors(self, spark):
+        from engine.expectations import ValidateNotNullWhenExpectation
+        df = spark.range(1).toDF("id")
+        rule = {"rule_id": "T", "name": "t", "expectation": "x",
+                "parameters": {"condition_column": "status"}}   # check_columns missing
+        result, _ = ValidateNotNullWhenExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR"
 
 
 # ---------------------------------------------------------------------------
-# InvoiceRefundValidationExpectation
+# ValidateSequenceOrderExpectation  (renamed from MilestoneSequenceExpectation)
 # ---------------------------------------------------------------------------
 
-class TestInvoiceRefundValidationExpectation:
+class TestValidateSequenceOrderExpectation:
     def _make_df(self, spark, rows):
         schema = StructType([
-            StructField("Fakturanr",    StringType(), True),
-            StructField("linje_belop",  DoubleType(), True),
-            StructField("Faktura_type", StringType(), True),
+            StructField("group_id",   StringType(), True),
+            StructField("step",       StringType(), True),
+            StructField("event_date", StringType(), True),
         ])
         return spark.createDataFrame(rows, schema)
 
     def _rule(self):
         return {
-            "rule_id": "T-006",
+            "rule_id": "T-SEQ",
             "name": "test",
-            "expectation": "expect_refund_validation",
+            "expectation": "validate_sequence_order",
             "parameters": {
-                "amount_column": "linje_belop",
-                "type_column": "Faktura_type",
-                "credit_type": "Kreditnota",
-                "pk_column": "Fakturanr",
+                "value_column":      "step",
+                "group_column":      "group_id",
+                "date_column":       "event_date",
+                "expected_sequence": ["Start", "Middle", "End"],
             },
         }
 
-    def test_negative_on_credit_note_passes(self, spark):
-        from engine.expectations import InvoiceRefundValidationExpectation
-        df = self._make_df(spark, [("INV1", -100.0, "Kreditnota")])
-        result, viols = InvoiceRefundValidationExpectation().validate(
-            df, self._rule(), spark
+    def test_correct_order_passes(self, spark):
+        from engine.expectations import ValidateSequenceOrderExpectation
+        df = self._make_df(spark, [
+            ("G1", "Start",  "2024-01-01"),
+            ("G1", "Middle", "2024-03-01"),
+            ("G1", "End",    "2024-06-01"),
+        ])
+        result, viols = ValidateSequenceOrderExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "PASSED"
+
+    def test_wrong_order_fails(self, spark):
+        from engine.expectations import ValidateSequenceOrderExpectation
+        df = self._make_df(spark, [
+            ("G1", "End",    "2024-01-01"),   # End appears before Start (wrong)
+            ("G1", "Start",  "2024-06-01"),
+        ])
+        result, viols = ValidateSequenceOrderExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "FAILED"
+
+    def test_old_milestone_column_param_still_works(self, spark):
+        # Backward compat: milestone_column alias should still work
+        from engine.expectations import ValidateSequenceOrderExpectation
+        df = self._make_df(spark, [
+            ("G1", "Start", "2024-01-01"),
+            ("G1", "End",   "2024-06-01"),
+        ])
+        rule = {
+            "rule_id": "T-SEQ-COMPAT",
+            "name": "test",
+            "expectation": "validate_sequence_order",
+            "parameters": {
+                "milestone_column":  "step",     # old param name
+                "group_column":      "group_id",
+                "date_column":       "event_date",
+                "expected_sequence": ["Start", "End"],
+            },
+        }
+        result, _ = ValidateSequenceOrderExpectation().validate(df, rule, spark)
+        assert result["status"] == "PASSED"
+
+
+# ---------------------------------------------------------------------------
+# ValidatePairedPresenceExpectation  (renamed from MilestonePairsCompleteExpectation)
+# ---------------------------------------------------------------------------
+
+class TestValidatePairedPresenceExpectation:
+    def _make_df(self, spark, rows):
+        schema = StructType([
+            StructField("group_id", StringType(), True),
+            StructField("step",     StringType(), True),
+        ])
+        return spark.createDataFrame(rows, schema)
+
+    def _rule(self):
+        return {
+            "rule_id": "T-PAIR",
+            "name": "test",
+            "expectation": "validate_paired_presence",
+            "parameters": {
+                "value_column":   "step",
+                "group_column":   "group_id",
+                "required_pairs": [["Start", "Stop"]],
+            },
+        }
+
+    def test_both_present_passes(self, spark):
+        from engine.expectations import ValidatePairedPresenceExpectation
+        df = self._make_df(spark, [("G1", "Start"), ("G1", "Stop")])
+        result, viols = ValidatePairedPresenceExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "PASSED"
+
+    def test_start_without_stop_fails(self, spark):
+        from engine.expectations import ValidatePairedPresenceExpectation
+        df = self._make_df(spark, [("G1", "Start")])   # no Stop
+        result, viols = ValidatePairedPresenceExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+
+
+# ---------------------------------------------------------------------------
+# ValidateNoOrphanExpectation  (renamed from MilestoneNoOrphanExpectation)
+# ---------------------------------------------------------------------------
+
+class TestValidateNoOrphanExpectation:
+    def _make_df(self, spark, rows):
+        schema = StructType([
+            StructField("group_id", StringType(), True),
+            StructField("step",     StringType(), True),
+        ])
+        return spark.createDataFrame(rows, schema)
+
+    def _rule(self):
+        return {
+            "rule_id": "T-ORPHAN",
+            "name": "test",
+            "expectation": "validate_no_orphan",
+            "parameters": {
+                "value_column": "step",
+                "group_column": "group_id",
+                "pairs":        [["Start", "Stop"]],
+            },
+        }
+
+    def test_no_orphan_passes(self, spark):
+        from engine.expectations import ValidateNoOrphanExpectation
+        df = self._make_df(spark, [("G1", "Start"), ("G1", "Stop")])
+        result, viols = ValidateNoOrphanExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "PASSED"
+
+    def test_stop_without_start_fails(self, spark):
+        from engine.expectations import ValidateNoOrphanExpectation
+        df = self._make_df(spark, [("G1", "Stop")])   # no Start - orphan
+        result, viols = ValidateNoOrphanExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "FAILED"
+
+    def test_start_without_stop_passes(self, spark):
+        # Only stop-without-start is an orphan; start-without-stop is valid
+        from engine.expectations import ValidateNoOrphanExpectation
+        df = self._make_df(spark, [("G1", "Start")])
+        result, viols = ValidateNoOrphanExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "PASSED"
+
+
+# ---------------------------------------------------------------------------
+# ValidateConditionalColumnValueExpectation
+# (renamed from InvoiceRefundValidationExpectation; more generic params)
+# ---------------------------------------------------------------------------
+
+class TestValidateConditionalColumnValueExpectation:
+    def _make_df(self, spark, rows):
+        schema = StructType([
+            StructField("id",          StringType(), True),
+            StructField("amount",      DoubleType(), True),
+            StructField("record_type", StringType(), True),
+        ])
+        return spark.createDataFrame(rows, schema)
+
+    def _rule_generic(self):
+        return {
+            "rule_id": "T-COND",
+            "name": "test",
+            "expectation": "validate_conditional_column_value",
+            "parameters": {
+                "condition_column":   "amount",
+                "condition_operator": "<",
+                "condition_value":    0,
+                "required_column":    "record_type",
+                "required_value":     "Credit",
+                "pk_column":          "id",
+            },
+        }
+
+    def _rule_backward_compat(self):
+        # Old parameter names (expect_refund_validation style)
+        return {
+            "rule_id": "T-COND-COMPAT",
+            "name": "test",
+            "expectation": "expect_refund_validation",
+            "parameters": {
+                "amount_column": "amount",
+                "type_column":   "record_type",
+                "credit_type":   "Credit",
+                "pk_column":     "id",
+            },
+        }
+
+    def test_negative_on_credit_passes(self, spark):
+        from engine.expectations import ValidateConditionalColumnValueExpectation
+        df = self._make_df(spark, [("1", -100.0, "Credit")])
+        result, viols = ValidateConditionalColumnValueExpectation().validate(
+            df, self._rule_generic(), spark
         )
         assert result["status"] == "PASSED"
         assert viols.count() == 0
 
     def test_negative_on_non_credit_fails(self, spark):
-        from engine.expectations import InvoiceRefundValidationExpectation
-        df = self._make_df(spark, [("INV1", -100.0, "Standard")])
-        result, viols = InvoiceRefundValidationExpectation().validate(
-            df, self._rule(), spark
+        from engine.expectations import ValidateConditionalColumnValueExpectation
+        df = self._make_df(spark, [("1", -100.0, "Standard")])
+        result, viols = ValidateConditionalColumnValueExpectation().validate(
+            df, self._rule_generic(), spark
         )
         assert result["status"] == "FAILED"
         assert viols.count() == 1
 
     def test_no_negatives_passes(self, spark):
-        from engine.expectations import InvoiceRefundValidationExpectation
-        df = self._make_df(spark, [("INV1", 100.0, "Standard")])
-        result, viols = InvoiceRefundValidationExpectation().validate(
-            df, self._rule(), spark
+        from engine.expectations import ValidateConditionalColumnValueExpectation
+        df = self._make_df(spark, [("1", 100.0, "Standard")])
+        result, viols = ValidateConditionalColumnValueExpectation().validate(
+            df, self._rule_generic(), spark
         )
         assert result["status"] == "PASSED"
+
+    def test_backward_compat_old_params(self, spark):
+        # Verify old parameter names (via expect_refund_validation alias) still work
+        from engine.expectations import ValidateConditionalColumnValueExpectation
+        df = self._make_df(spark, [("1", -50.0, "Standard")])
+        result, viols = ValidateConditionalColumnValueExpectation().validate(
+            df, self._rule_backward_compat(), spark
+        )
+        assert result["status"] == "FAILED"
+
+    def test_missing_params_errors(self, spark):
+        from engine.expectations import ValidateConditionalColumnValueExpectation
+        df = self._make_df(spark, [("1", -50.0, "Standard")])
+        rule = {"rule_id": "T", "name": "t", "expectation": "x",
+                "parameters": {"condition_column": "amount"}}  # missing required params
+        result, _ = ValidateConditionalColumnValueExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR"
+
+
+# ---------------------------------------------------------------------------
+# ValidateGroupAggregateMatchExpectation
+# (renamed from InvoiceTotalConsistencyExpectation; more generic params)
+# ---------------------------------------------------------------------------
+
+class TestValidateGroupAggregateMatchExpectation:
+    def _make_df(self, spark, rows):
+        schema = StructType([
+            StructField("invoice_id",    StringType(), True),
+            StructField("line_amount",   DoubleType(), True),
+            StructField("header_amount", DoubleType(), True),
+        ])
+        return spark.createDataFrame(rows, schema)
+
+    def _rule_generic(self):
+        return {
+            "rule_id": "T-GRP",
+            "name": "test",
+            "expectation": "validate_group_aggregate_match",
+            "parameters": {
+                "group_column":     "invoice_id",
+                "aggregate_column": "line_amount",
+                "reference_column": "header_amount",
+                "aggregate":        "sum",
+                "tolerance":        0.01,
+            },
+        }
+
+    def test_totals_match_passes(self, spark):
+        from engine.expectations import ValidateGroupAggregateMatchExpectation
+        df = self._make_df(spark, [
+            ("INV1", 100.0, 300.0),
+            ("INV1", 200.0, 300.0),
+        ])
+        result, viols = ValidateGroupAggregateMatchExpectation().validate(
+            df, self._rule_generic(), spark
+        )
+        assert result["status"] == "PASSED"
+
+    def test_totals_mismatch_fails(self, spark):
+        from engine.expectations import ValidateGroupAggregateMatchExpectation
+        df = self._make_df(spark, [
+            ("INV1", 100.0, 500.0),   # sum = 100, header = 500 -> mismatch
+        ])
+        result, viols = ValidateGroupAggregateMatchExpectation().validate(
+            df, self._rule_generic(), spark
+        )
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+
+    def test_backward_compat_old_params(self, spark):
+        from engine.expectations import ValidateGroupAggregateMatchExpectation
+        df = self._make_df(spark, [
+            ("INV1", 50.0, 100.0),
+            ("INV1", 50.0, 100.0),
+        ])
+        rule = {
+            "rule_id": "T-GRP-COMPAT",
+            "name": "test",
+            "expectation": "expect_invoice_total_consistency",
+            "parameters": {
+                "invoice_id_column":    "invoice_id",     # old param name
+                "line_amount_column":   "line_amount",    # old param name
+                "header_amount_column": "header_amount",  # old param name
+                "tolerance":            0.01,
+            },
+        }
+        result, _ = ValidateGroupAggregateMatchExpectation().validate(df, rule, spark)
+        assert result["status"] == "PASSED"
+
+    def test_missing_reference_column_skips(self, spark):
+        from engine.expectations import ValidateGroupAggregateMatchExpectation
+        df = self._make_df(spark, [("INV1", 100.0, None)])
+        rule = {
+            "rule_id": "T-GRP",
+            "name": "test",
+            "expectation": "validate_group_aggregate_match",
+            "parameters": {
+                "group_column":     "invoice_id",
+                "aggregate_column": "line_amount",
+                "reference_column": "no_such_column",
+                "aggregate":        "sum",
+                "tolerance":        0.01,
+            },
+        }
+        result, _ = ValidateGroupAggregateMatchExpectation().validate(df, rule, spark)
+        assert result["status"] == "PASSED"   # skips when column missing
 
 
 # ---------------------------------------------------------------------------
@@ -376,26 +769,66 @@ class TestInvoiceRefundValidationExpectation:
 class TestRegistry:
     def test_all_expected_keys_present(self):
         from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
-        expected_keys = [
+
+        # New generic canonical names
+        generic_keys = [
             "validate_column_comparison",
-            "sql_validation",
-            "sql",
-            "expect_column_sum_to_equal",
-            "expect_row_count_to_be_between",
-            "expect_unique_combination_of_columns",
+            "validate_aggregate_rule",
             "validate_foreign_key",
-            "expect_milestone_order",
-            "expect_milestone_pairs",
-            "expect_no_open_milestone_pairs",
-            "expect_no_duplicate_milestones",
+            "validate_not_null_when",
+            "validate_sequence_order",
+            "validate_paired_presence",
+            "validate_no_orphan",
+            "validate_conditional_column_value",
+            "validate_group_aggregate_match",
+        ]
+        for key in generic_keys:
+            assert key in CUSTOM_EXPECTATION_REGISTRY, f"Missing generic key: {key}"
+
+        # SQL and aggregate helpers
+        for key in ["sql_validation", "sql", "expect_column_sum_to_equal",
+                    "expect_row_count_to_be_between",
+                    "expect_unique_combination_of_columns"]:
+            assert key in CUSTOM_EXPECTATION_REGISTRY, f"Missing key: {key}"
+
+        # Backward-compatible aliases
+        alias_keys = [
             "expect_milestone_sequence",
             "expect_milestone_pairs_complete",
             "expect_no_orphan_milestones",
             "expect_refund_validation",
             "expect_invoice_total_consistency",
         ]
-        for key in expected_keys:
-            assert key in CUSTOM_EXPECTATION_REGISTRY, f"Missing key: {key}"
+        for key in alias_keys:
+            assert key in CUSTOM_EXPECTATION_REGISTRY, f"Missing alias: {key}"
+
+    def test_removed_table_specific_keys_are_gone(self):
+        """Verify that removed table-specific expectations no longer exist."""
+        from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
+        removed_keys = [
+            "expect_milestone_order",
+            "expect_milestone_pairs",
+            "expect_no_open_milestone_pairs",
+            "expect_no_duplicate_milestones",
+        ]
+        for key in removed_keys:
+            assert key not in CUSTOM_EXPECTATION_REGISTRY, (
+                f"Expected removed key still present: {key}"
+            )
+
+    def test_aliases_point_to_same_class_as_generic_name(self):
+        from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
+        alias_pairs = [
+            ("validate_sequence_order",           "expect_milestone_sequence"),
+            ("validate_paired_presence",          "expect_milestone_pairs_complete"),
+            ("validate_no_orphan",                "expect_no_orphan_milestones"),
+            ("validate_conditional_column_value", "expect_refund_validation"),
+            ("validate_group_aggregate_match",    "expect_invoice_total_consistency"),
+        ]
+        for generic, alias in alias_pairs:
+            assert CUSTOM_EXPECTATION_REGISTRY[generic] is CUSTOM_EXPECTATION_REGISTRY[alias], (
+                f"Alias '{alias}' does not point to same class as '{generic}'"
+            )
 
     def test_all_registry_classes_are_instantiable(self):
         from engine.expectations import CUSTOM_EXPECTATION_REGISTRY

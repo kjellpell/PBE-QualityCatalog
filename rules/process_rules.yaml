@@ -8,19 +8,21 @@
 #        Standard GX:  expect_column_values_to_not_be_null
 #                      expect_column_values_to_be_greater_than
 #                      expect_column_values_to_be_in_set
-#        Custom:       expect_milestone_order, expect_milestone_pairs,
-#                      expect_no_open_milestone_pairs
-#        Cross-column: validate_column_comparison
+#        Generic:      validate_column_comparison
 #                        parameters: column_A, column_B,
 #                                    operator (>, <, >=, <=, ==, !=),
-#                                    pk_column (default: Saksnummer)
+#                                    pk_column
+#                      validate_not_null_when
+#                        parameters: condition_column, condition_operator (== or IS NOT NULL),
+#                                    condition_value, check_columns (list), pk_column
+#                      validate_aggregate_rule
+#                        parameters: column, aggregate (sum/count/avg/min/max),
+#                                    operator (>,<,>=,<=,==,!=), threshold
 #        SQL fallback: sql_validation
 #                        parameters: sql (multiline query),
 #                                    pk_column (optional column in result)
 #                      sql (shorthand — top-level sql: key, no parameters wrapper)
-#        Aggregate:    expect_column_sum_to_equal
-#                        parameters: column, expected_value, tolerance (default 0.01)
-#                      expect_row_count_to_be_between
+#        Aggregate:    expect_row_count_to_be_between
 #                        parameters: min_value, max_value
 #                      expect_unique_combination_of_columns
 #                        parameters: columns (list), pk_column
