@@ -20,6 +20,13 @@
 # All validation rules (columns, thresholds, sequences, pairs) are defined in
 # YAML files under dq_rules/.  No rule logic is hardcoded in this script.
 #
+# Phase 1 additions (unified processing framework):
+#   - Aggregate expectations: expect_column_sum_to_equal,
+#     expect_row_count_to_be_between, expect_unique_combination_of_columns
+#   - Cross-table FK validation: validate_foreign_key
+#   - SQL shorthand: expectation: sql + top-level sql: key (alias for sql_validation)
+#   - New result fields: rule_category, reference_table, reference_column
+#
 # Schedule: nightly (after source tables are refreshed).
 # Prerequisites: nb_dq_00_setup.py must have been run at least once.
 # =============================================================================
@@ -254,11 +261,15 @@ RESULT_SCHEMA = StructType([
     StructField("status",         StringType(),    False),
     StructField("details",        StringType(),    True),
     # Cross-column comparison metadata (populated for validate_column_comparison)
-    StructField("column_a",       StringType(),    True),
-    StructField("column_b",       StringType(),    True),
-    StructField("operator",       StringType(),    True),
-    # SQL fallback metadata (populated for sql_validation)
-    StructField("sql_query",      StringType(),    True),
+    StructField("column_a",          StringType(),    True),
+    StructField("column_b",          StringType(),    True),
+    StructField("operator",          StringType(),    True),
+    # SQL fallback metadata (populated for sql / sql_validation)
+    StructField("sql_query",         StringType(),    True),
+    # Phase 1 metadata fields
+    StructField("rule_category",     StringType(),    True),
+    StructField("reference_table",   StringType(),    True),
+    StructField("reference_column",  StringType(),    True),
 ])
 
 VIOLATION_SCHEMA = StructType([
@@ -341,7 +352,17 @@ def run_validation(
         column_a  = params.get("column_A") if exp_name == "validate_column_comparison" else None
         column_b  = params.get("column_B") if exp_name == "validate_column_comparison" else None
         operator  = params.get("operator")  if exp_name == "validate_column_comparison" else None
-        sql_query = params.get("sql")       if exp_name == "sql_validation"             else None
+        sql_query = (
+            params.get("sql") or rule.get("sql")
+            if exp_name in ("sql_validation", "sql")
+            else None
+        )
+
+        # Phase 1 metadata
+        rule_category    = rule.get("category") or rule.get("rule_category")
+        ref_block        = params.get("reference", {})
+        reference_table  = ref_block.get("table")  if exp_name == "validate_foreign_key" else None
+        reference_column = ref_block.get("column") if exp_name == "validate_foreign_key" else None
 
         print(f"  → [{rule_id}] {rule_name} ({exp_name}) ... ", end="")
 
@@ -408,6 +429,9 @@ def run_validation(
             column_b,
             operator,
             sql_query,
+            rule_category,
+            reference_table,
+            reference_column,
         ))
 
         # Attach run metadata and prosess_id to violation rows

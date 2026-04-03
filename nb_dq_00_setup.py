@@ -20,15 +20,18 @@ print("Spark ready.")
 # One row per rule per validation run.
 # Used by Power BI for the summary / scorecard view.
 # Key fields for the semantic model:
-#   rule_group    – Process | Milestone | Invoice
-#   expectation   – the expectation type applied
-#   table_name    – the source table validated
-#   severity      – critical | high | medium | low
-#   status        – PASSED | FAILED | ERROR
-#   column_a      – left-hand column (validate_column_comparison only)
-#   column_b      – right-hand column (validate_column_comparison only)
-#   operator      – comparison operator (validate_column_comparison only)
-#   sql_query     – the SQL string executed (sql_validation only)
+#   rule_group       – Process | Milestone | Invoice
+#   expectation      – the expectation type applied
+#   table_name       – the source table validated
+#   severity         – critical | high | medium | low
+#   status           – PASSED | FAILED | ERROR
+#   column_a         – left-hand column (validate_column_comparison only)
+#   column_b         – right-hand column (validate_column_comparison only)
+#   operator         – comparison operator (validate_column_comparison only)
+#   sql_query        – the SQL string executed (sql / sql_validation only)
+#   rule_category    – business category of the rule (e.g. "Referential Integrity")
+#   reference_table  – reference table name (validate_foreign_key only)
+#   reference_column – reference column name (validate_foreign_key only)
 # -----------------------------------------------------------------------------
 spark.sql("""
 CREATE TABLE IF NOT EXISTS dq_run_results (
@@ -51,7 +54,10 @@ CREATE TABLE IF NOT EXISTS dq_run_results (
     column_a        STRING,
     column_b        STRING,
     operator        STRING,
-    sql_query       STRING
+    sql_query       STRING,
+    rule_category   STRING,
+    reference_table STRING,
+    reference_column STRING
 )
 USING DELTA
 """)
@@ -59,10 +65,13 @@ USING DELTA
 # Add new columns to the existing table if this script is re-run against an
 # older deployment that pre-dates these fields.
 for _col_def in [
-    "column_a  STRING",
-    "column_b  STRING",
-    "operator  STRING",
-    "sql_query STRING",
+    "column_a        STRING",
+    "column_b        STRING",
+    "operator        STRING",
+    "sql_query       STRING",
+    "rule_category   STRING",
+    "reference_table STRING",
+    "reference_column STRING",
 ]:
     try:
         spark.sql(
