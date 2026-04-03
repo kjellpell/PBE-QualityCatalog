@@ -22,13 +22,21 @@
 #                        parameters: column_A, column_B,
 #                                    operator (>, <, >=, <=, ==, !=),
 #                                    pk_column (default: Saksnummer)
-#        SQL fallback: sql_validation
+#        SQL fallback: sql_validation / sql (shorthand)
 #                        parameters: sql (multiline query),
 #                                    pk_column (optional column in result)
+#        Aggregate:    expect_column_sum_to_equal
+#                      expect_row_count_to_be_between
+#                      expect_unique_combination_of_columns
+#        Cross-table:  validate_foreign_key
+#                        parameters: column, pk_column,
+#                                    reference: {table, column}
 #   3. All column references are dynamic — edit the "column" or "parameters"
 #      block to target a different column without touching Python.
-#   4. Add the rule block below and save this file.
-#   5. The next validation run will pick it up automatically.
+#   4. Optionally set "category" for grouping (e.g. "Completeness",
+#      "Business Logic", "Referential Integrity", "Aggregate").
+#   5. Add the rule block below and save this file.
+#   6. The next validation run will pick it up automatically.
 # =============================================================================
 
 rule_group: Milestone
@@ -50,6 +58,7 @@ rules:
     expectation: expect_column_values_to_not_be_null
     column: Milepel        # <-- change this to target a different column
     severity: critical
+    category: Completeness
     owner: Saksteam
 
   - rule_id: MIL-002
@@ -60,6 +69,7 @@ rules:
     expectation: expect_column_values_to_not_be_null
     column: prosess_id     # <-- change this to target a different column
     severity: critical
+    category: Completeness
     owner: Saksteam
 
   # ---------------------------------------------------------------------------
@@ -77,6 +87,7 @@ rules:
       milestone_column: Milepel     # <-- column holding milestone type names
       group_column: prosess_id      # <-- column that identifies the process
     severity: high
+    category: Uniqueness
     owner: Saksteam
 
   # ---------------------------------------------------------------------------
@@ -100,6 +111,7 @@ rules:
         - Behandling
         - Stoppbehandling
     severity: high
+    category: Business Logic
     owner: Saksteam
 
   # ---------------------------------------------------------------------------
@@ -119,6 +131,7 @@ rules:
       required_pairs:                    # <-- list each [start, stop] pair
         - [Startbehandling, Stoppbehandling]
     severity: critical
+    category: Business Logic
     owner: Saksteam
 
   # ---------------------------------------------------------------------------
@@ -138,6 +151,7 @@ rules:
       pairs:                             # <-- [start_type, stop_type] pairs to check
         - [Startbehandling, Stoppbehandling]
     severity: high
+    category: Business Logic
     owner: Saksteam
 
   # ---------------------------------------------------------------------------
@@ -163,5 +177,47 @@ rules:
         HAVING COUNT(1) > 0
       pk_column: Milepel
     severity: critical
+    category: Business Logic
+    owner: Saksteam
+
+  # ---------------------------------------------------------------------------
+  # Cross-table / referential integrity validations (Phase 1)
+  # ---------------------------------------------------------------------------
+
+  - rule_id: MIL-008
+    name: prosess_id must exist in Prosesser table
+    description: >
+      Every prosess_id value in Milepel must reference an existing process in
+      Saksbehandling.Prosesser.  Orphaned milestones (where the parent process
+      has been deleted or never existed) break the process lifecycle model.
+    expectation: validate_foreign_key
+    parameters:
+      column: prosess_id
+      pk_column: prosess_id
+      reference:
+        table: Saksbehandling.Prosesser
+        column: Saksnummer
+    severity: critical
+    category: Referential Integrity
+    owner: Saksteam
+
+  # ---------------------------------------------------------------------------
+  # Aggregate validations (Phase 1)
+  # ---------------------------------------------------------------------------
+
+  - rule_id: MIL-009
+    name: Unique combination of prosess_id and Milepel type
+    description: >
+      The combination of (prosess_id, Milepel) must be unique — i.e. no
+      process can have the same milestone type recorded more than once.
+      Duplicates indicate data entry errors or failed idempotency.
+    expectation: expect_unique_combination_of_columns
+    parameters:
+      columns:
+        - prosess_id
+        - Milepel
+      pk_column: prosess_id
+    severity: high
+    category: Uniqueness
     owner: Saksteam
 

@@ -22,6 +22,10 @@ from dq_expectations.milestone_expectations import (
 from dq_expectations.common_expectations import (
     ColumnComparisonExpectation,
     SqlValidationExpectation,
+    ColumnSumExpectation,
+    RowCountExpectation,
+    UniqueColumnCombinationExpectation,
+    ForeignKeyExpectation,
 )
 
 # Map YAML expectation names to validator classes.
@@ -42,6 +46,14 @@ CUSTOM_EXPECTATION_REGISTRY = {
     # Generic cross-table validators (any table)
     "validate_column_comparison":          ColumnComparisonExpectation,
     "sql_validation":                      SqlValidationExpectation,
+    # sql is a shorthand alias for sql_validation (top-level sql: key)
+    "sql":                                 SqlValidationExpectation,
+    # Aggregate-level validators
+    "expect_column_sum_to_equal":          ColumnSumExpectation,
+    "expect_row_count_to_be_between":      RowCountExpectation,
+    "expect_unique_combination_of_columns": UniqueColumnCombinationExpectation,
+    # Cross-table / referential integrity validators
+    "validate_foreign_key":                ForeignKeyExpectation,
 }
 
 __all__ = [
@@ -56,5 +68,9 @@ __all__ = [
     "MilestoneNoOrphanExpectation",
     "ColumnComparisonExpectation",
     "SqlValidationExpectation",
+    "ColumnSumExpectation",
+    "RowCountExpectation",
+    "UniqueColumnCombinationExpectation",
+    "ForeignKeyExpectation",
     "CUSTOM_EXPECTATION_REGISTRY",
 ]
