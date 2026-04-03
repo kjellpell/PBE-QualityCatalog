@@ -5,10 +5,18 @@
 # How to add a rule:
 #   1. Pick the next rule_id (PROC-NNN).
 #   2. Choose an expectation:
-#        Standard GX: expect_column_values_to_not_be_null
-#                     expect_column_values_to_be_greater_than
-#                     expect_column_values_to_be_in_set
-#        Custom:      (register new expectations in dq_expectations/__init__.py)
+#        Standard GX:  expect_column_values_to_not_be_null
+#                      expect_column_values_to_be_greater_than
+#                      expect_column_values_to_be_in_set
+#        Custom:       expect_milestone_order, expect_milestone_pairs,
+#                      expect_no_open_milestone_pairs
+#        Cross-column: validate_column_comparison
+#                        parameters: column_A, column_B,
+#                                    operator (>, <, >=, <=, ==, !=),
+#                                    pk_column (default: Saksnummer)
+#        SQL fallback: sql_validation
+#                        parameters: sql (multiline query),
+#                                    pk_column (optional column in result)
 #   3. For rules that target a specific column, set the top-level "column" field.
 #      For multi-column or parameterised rules, use a "parameters" block.
 #   4. Add the rule block below and save this file.
@@ -53,5 +61,64 @@ rules:
       Unassigned open cases represent a governance gap.
     expectation: expect_column_values_to_not_be_null
     column: Saksbehandler_kode
+    severity: high
+    owner: Saksteam
+
+  # ---------------------------------------------------------------------------
+  # Cross-column comparison checks (validate_column_comparison)
+  # Compares two columns using an operator.  Rows where either column is null
+  # are excluded.  Supported operators: >, <, >=, <=, ==, !=
+  # ---------------------------------------------------------------------------
+
+  - rule_id: PROC-004
+    name: ExpectedEndDate must be greater than or equal to StartDate
+    description: >
+      For every process where both dates are set, the expected end date must
+      not precede the start date.  A reversed date range indicates a data
+      entry error that will cause incorrect duration reporting.
+    expectation: validate_column_comparison
+    parameters:
+      column_A: ExpectedEndDate
+      column_B: StartDate
+      operator: ">="
+      pk_column: Saksnummer
+    severity: critical
+    owner: Saksteam
+
+  - rule_id: PROC-005
+    name: ActualEndDate must be greater than or equal to StartDate
+    description: >
+      For completed processes, the actual end date must not precede the start
+      date.  This guards against transposed or incorrect date recording.
+    expectation: validate_column_comparison
+    parameters:
+      column_A: ActualEndDate
+      column_B: StartDate
+      operator: ">="
+      pk_column: Saksnummer
+    severity: high
+    owner: Saksteam
+
+  # ---------------------------------------------------------------------------
+  # SQL fallback validations (sql_validation)
+  # Write the query so that every returned row represents a violation.
+  # The validation fails if the query returns one or more rows.
+  # ---------------------------------------------------------------------------
+
+  - rule_id: PROC-006
+    name: No process with ActualEndDate before StartDate (SQL)
+    description: >
+      SQL fallback rule: directly queries the database for process rows where
+      ActualEndDate is earlier than StartDate.  Provides a fast, index-backed
+      check for date-order integrity without loading data into memory.
+    expectation: sql_validation
+    parameters:
+      sql: |
+        SELECT Saksnummer, StartDate, ActualEndDate
+        FROM Saksbehandling.Prosesser
+        WHERE ActualEndDate IS NOT NULL
+          AND StartDate IS NOT NULL
+          AND ActualEndDate < StartDate
+      pk_column: Saksnummer
     severity: high
     owner: Saksteam

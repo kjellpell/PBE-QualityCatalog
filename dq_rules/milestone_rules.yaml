@@ -11,13 +11,20 @@
 # How to add a rule:
 #   1. Pick the next rule_id (MIL-NNN).
 #   2. Choose an expectation:
-#        Standard GX: expect_column_values_to_not_be_null
-#                     expect_column_values_to_be_greater_than
-#                     expect_column_values_to_be_in_set
-#        Custom:      expect_no_duplicate_milestones
-#                     expect_milestone_sequence
-#                     expect_milestone_pairs_complete
-#                     expect_no_orphan_milestones
+#        Standard GX:  expect_column_values_to_not_be_null
+#                      expect_column_values_to_be_greater_than
+#                      expect_column_values_to_be_in_set
+#        Custom:       expect_no_duplicate_milestones
+#                      expect_milestone_sequence
+#                      expect_milestone_pairs_complete
+#                      expect_no_orphan_milestones
+#        Cross-column: validate_column_comparison
+#                        parameters: column_A, column_B,
+#                                    operator (>, <, >=, <=, ==, !=),
+#                                    pk_column (default: Saksnummer)
+#        SQL fallback: sql_validation
+#                        parameters: sql (multiline query),
+#                                    pk_column (optional column in result)
 #   3. All column references are dynamic — edit the "column" or "parameters"
 #      block to target a different column without touching Python.
 #   4. Add the rule block below and save this file.
@@ -132,3 +139,29 @@ rules:
         - [Startbehandling, Stoppbehandling]
     severity: high
     owner: Saksteam
+
+  # ---------------------------------------------------------------------------
+  # SQL fallback validations (sql_validation)
+  # Write the query so that every returned row represents a violation.
+  # ---------------------------------------------------------------------------
+
+  - rule_id: MIL-007
+    name: No milestone with EndDate before StartDate (SQL)
+    description: >
+      SQL fallback: detects milestone rows where EndDate is earlier than
+      StartDate.  Groups by milestone type so the Power BI drill-through
+      shows the affected milestone categories.
+    expectation: sql_validation
+    parameters:
+      sql: |
+        SELECT Milepel, COUNT(1) AS violation_count
+        FROM Saksbehandling.Milepel
+        WHERE EndDate IS NOT NULL
+          AND StartDate IS NOT NULL
+          AND EndDate < StartDate
+        GROUP BY Milepel
+        HAVING COUNT(1) > 0
+      pk_column: Milepel
+    severity: critical
+    owner: Saksteam
+
