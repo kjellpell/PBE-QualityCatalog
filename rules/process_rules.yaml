@@ -32,13 +32,31 @@
 #   4. Optionally set "category" for grouping (e.g. "Completeness",
 #      "Business Logic", "Referential Integrity", "Aggregate").
 #   5. Add the rule block below and save this file.
-#   6. The next validation run will pick it up automatically.
+#   6. The next validation run will pick it up automatically — no code changes
+#      required.
 # =============================================================================
 
 rule_group: Process
 table: Prosesser
 database: Saksbehandling
 description: Data quality rules for the main process / case records (Prosesser)
+
+# Table configuration used by validation_runner.py to load the source table
+# and pass the correct key columns to run_validation().
+pk_column: Saksnummer
+prosess_id_column: Saksnummer        # PK and prosess_id are both Saksnummer for the Process table
+saksbehandler_column: Saksbehandler_kode
+
+# Optional pre-joins applied before validation.
+# Each entry specifies a table to join, the join key, join strategy, and
+# (optionally) a list of columns to select from the joined table.
+joins:
+  - table: Saksbehandling.Saker
+    on: Saksnummer
+    how: left
+    select:
+      - Saksnummer
+      - Status
 
 rules:
 
@@ -142,7 +160,7 @@ rules:
     owner: Saksteam
 
   # ---------------------------------------------------------------------------
-  # Aggregate validations (Phase 1)
+  # Aggregate validations
   # ---------------------------------------------------------------------------
 
   - rule_id: PROC-007
