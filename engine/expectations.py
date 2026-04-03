@@ -767,10 +767,18 @@ class ValidateSequenceOrderExpectation:
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params            = rule.get("parameters", {})
-        value_col         = params.get("value_column") or params.get("milestone_column")
+        value_col         = params.get("value_column")
         group_col         = params.get("group_column")
         date_col          = params.get("date_column")
         expected_sequence = params.get("expected_sequence", [])
+
+        if not value_col:
+            return (
+                _error_result(
+                    "Parameter 'value_column' is required for validate_sequence_order."
+                ),
+                _empty_violations(spark),
+            )
 
         total = df.count()
         if total == 0 or len(expected_sequence) < 2:
@@ -1079,18 +1087,13 @@ class ValidateConditionalColumnValueExpectation:
     Validates that required_column equals required_value on all rows where
     condition_column satisfies the configured condition.
 
-    YAML parameters (generic form):
+    YAML parameters:
       condition_column   - column checked for the trigger condition
       condition_operator - comparison operator: <, >, <=, >=, ==, !=
       condition_value    - threshold value for the trigger condition
       required_column    - column that must equal required_value when triggered
       required_value     - the required value for required_column
       pk_column          - primary key column
-
-    Backward-compatible aliases (old expect_refund_validation form):
-      amount_column -> condition_column  (condition_operator defaults to "<")
-      type_column   -> required_column
-      credit_type   -> required_value
     """
 
     _CONDITIONS = {
@@ -1105,11 +1108,11 @@ class ValidateConditionalColumnValueExpectation:
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params = rule.get("parameters", {})
 
-        condition_col = params.get("condition_column") or params.get("amount_column")
+        condition_col = params.get("condition_column")
         condition_op  = params.get("condition_operator", "<")
         condition_val = params.get("condition_value", 0)
-        required_col  = params.get("required_column") or params.get("type_column")
-        required_val  = params.get("required_value") or params.get("credit_type")
+        required_col  = params.get("required_column")
+        required_val  = params.get("required_value")
         pk_col        = params.get("pk_column", "id")
 
         if not condition_col or not required_col or required_val is None:
@@ -1199,17 +1202,12 @@ class ValidateGroupAggregateMatchExpectation:
     Validates that the aggregate of aggregate_column per group equals the value
     in reference_column (within tolerance).
 
-    YAML parameters (generic form):
+    YAML parameters:
       group_column     - column identifying each group
       aggregate_column - numeric column to aggregate within each group
       reference_column - column holding the expected group total
       aggregate        - aggregation function: sum, count, avg, min, max (default: sum)
       tolerance        - maximum allowed absolute difference (default: 0.01)
-
-    Backward-compatible aliases (old expect_invoice_total_consistency form):
-      invoice_id_column    -> group_column
-      line_amount_column   -> aggregate_column
-      header_amount_column -> reference_column
     """
 
     _AGGREGATES = {
@@ -1223,9 +1221,9 @@ class ValidateGroupAggregateMatchExpectation:
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params = rule.get("parameters", {})
 
-        group_col = params.get("group_column") or params.get("invoice_id_column")
-        agg_col   = params.get("aggregate_column") or params.get("line_amount_column")
-        ref_col   = params.get("reference_column") or params.get("header_amount_column")
+        group_col = params.get("group_column")
+        agg_col   = params.get("aggregate_column")
+        ref_col   = params.get("reference_column")
         aggregate = str(params.get("aggregate", "sum")).lower()
         tolerance = float(params.get("tolerance", 0.01))
 

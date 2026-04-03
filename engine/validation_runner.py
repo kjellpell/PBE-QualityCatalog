@@ -452,6 +452,7 @@ def run_validation(
                 F.lit(table_name).alias("table_name"),
                 F.lit(severity).alias("severity"),
                 F.lit(owner).alias("owner"),
+                F.lit(rule_category).alias("failure_type"),
                 prosess_id_expr.cast("string").alias("prosess_id"),
                 F.col("primary_key_value"),
                 F.col("violated_column"),
