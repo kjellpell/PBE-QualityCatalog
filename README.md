@@ -127,19 +127,38 @@ violation_detail    STRING
 | `expect_column_values_to_be_in_set` | GX native | Allowed value set |
 | `validate_column_comparison` | Custom | Column A `<op>` Column B per row |
 | `sql_validation` / `sql` | Custom | SQL query — any returned row = violation |
+| `validate_aggregate_rule` | Custom | Aggregate (SUM/COUNT/AVG/MIN/MAX) satisfies `<op>` threshold |
 | `expect_column_sum_to_equal` | Custom | SUM(column) == expected ± tolerance |
 | `expect_row_count_to_be_between` | Custom | Row count within [min, max] |
 | `expect_unique_combination_of_columns` | Custom | Composite uniqueness check |
 | `validate_foreign_key` | Custom | Referential integrity across tables |
-| `expect_milestone_order` | Custom | Start date ≤ stop date |
-| `expect_milestone_pairs` | Custom | Closed cases have complete milestone pairs |
-| `expect_no_open_milestone_pairs` | Custom | Stop milestone without start is invalid |
-| `expect_no_duplicate_milestones` | Custom | No duplicate milestone types per process |
-| `expect_milestone_sequence` | Custom | Milestones in correct chronological order |
-| `expect_milestone_pairs_complete` | Custom | Both sides of a pair must be present |
-| `expect_no_orphan_milestones` | Custom | Stop without corresponding start |
-| `expect_refund_validation` | Custom | Negative amounts only on credit notes |
-| `expect_invoice_total_consistency` | Custom | Line sum matches invoice header total |
+| `validate_not_null_when` | Custom | check_columns must be NOT NULL when condition_column matches |
+| `validate_column_exclusions` | Custom | Forbidden-state check — no row may satisfy the given condition |
+| `validate_sequence_order` | Custom | Values appear in the specified chronological order per group |
+| `validate_paired_presence` | Custom | Both sides of each required pair must be present per group |
+| `validate_no_orphan` | Custom | Stop event without a corresponding start event |
+| `validate_conditional_column_value` | Custom | Column value must satisfy a condition when another column matches |
+| `validate_group_aggregate_match` | Custom | Aggregate per group matches a reference column within tolerance |
+
+### `validate_column_exclusions` — Negative / Forbidden-State Validation
+
+Use this expectation to assert that a particular combination of column values is **never** allowed.  Any row matching the `condition` is treated as a violation.
+
+```yaml
+- rule: "Columns A and B cannot both be NULL"
+  expectation: "validate_column_exclusions"
+  parameters:
+    condition: "ColumnA IS NULL AND ColumnB IS NULL"
+    pk_column: "Saksnummer"
+    severity:  "Critical"
+```
+
+**Parameters**
+
+| Parameter | Required | Description |
+|---|---|---|
+| `condition` | ✅ | Spark SQL expression that identifies forbidden rows. Any row matching this filter is a violation. |
+| `pk_column` | ❌ | Primary key column used to identify violating rows (default: `"id"`). |
 
 ---
 
@@ -189,5 +208,5 @@ without requiring a real Spark cluster (runs in local mode).
 | Phase | Status | Focus |
 |---|---|---|
 | **Phase 1** | ✅ Complete | Consolidated expectations, modular YAML rules, dynamic engine, FK + aggregate validations |
-| **Phase 2** | Planned | Negative/forbidden state validations, statistical anomaly detection |
+| **Phase 2** | ✅ Complete | Removed backward-compatible aliases; added `validate_column_exclusions` for negative/forbidden-state validations |
 | **Phase 3** | Planned | Rule dependencies, enhanced Delta logging for Power BI |

@@ -1318,11 +1318,109 @@ class ValidateGroupAggregateMatchExpectation:
 
 
 # =============================================================================
+# Negative / forbidden-state expectations
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# validate_column_exclusions
+# Enforces forbidden states by asserting that a given combination of column
+# values must NEVER occur together.  Any row that satisfies the condition is
+# treated as a violation.
+#
+# This is the negation counterpart to conditional validators: instead of
+# "column X must be set when Y is true", this says
+# "it must NEVER be the case that (condition)".
+# -----------------------------------------------------------------------------
+class ValidateColumnExclusionsExpectation:
+    """
+    Asserts that no row satisfies the given forbidden-state condition.
+    A violation is recorded for every row where the condition holds true.
+
+    YAML parameters:
+      condition   - Spark SQL expression that identifies forbidden rows.
+                    Any row matching this filter is a violation.
+                    Example: "ColumnA IS NULL AND ColumnB IS NULL"
+      pk_column   - primary key column used to identify violating rows
+                    (default: "id")
+
+    Example YAML rule:
+      - rule: "Columns A and B cannot both be NULL"
+        expectation: "validate_column_exclusions"
+        parameters:
+          condition: "ColumnA IS NULL AND ColumnB IS NULL"
+          pk_column: "Saksnummer"
+          severity:  "Critical"
+    """
+
+    def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
+        params    = rule.get("parameters", {})
+        condition = params.get("condition")
+        pk_col    = params.get("pk_column", "id")
+
+        if not condition:
+            return (
+                _error_result("Parameter 'condition' is required."),
+                _empty_violations(spark),
+            )
+
+        total = df.count()
+        if total == 0:
+            return _passed_result(0), _empty_violations(spark)
+
+        try:
+            violations_df = df.filter(condition)
+        except Exception as exc:
+            return (
+                _error_result(f"Invalid condition expression: {exc}"),
+                _empty_violations(spark),
+            )
+
+        failed = violations_df.count()
+        passed = total - failed
+
+        pk_in_df      = pk_col in df.columns
+        pk_expr       = (
+            F.col(pk_col).cast("string")
+            if pk_in_df
+            else F.lit(None).cast("string")
+        )
+        expected_cond = f"NOT ({condition})"
+        detail_expr   = F.concat(
+            F.lit("Forbidden condition satisfied: "),
+            F.lit(condition),
+        )
+
+        violations_out = violations_df.select(
+            pk_expr.alias("primary_key_value"),
+            F.lit("forbidden_state").alias("violated_column"),
+            F.lit(condition).alias("actual_value"),
+            F.lit(expected_cond).alias("expected_condition"),
+            detail_expr.alias("violation_detail"),
+        )
+
+        result = {
+            "total_rows":  total,
+            "passed_rows": passed,
+            "failed_rows": failed,
+            "success_pct": round(passed / total * 100, 2),
+            "status":      "PASSED" if failed == 0 else "FAILED",
+            "details": (
+                f"{failed} row(s) satisfy the forbidden condition: {condition}."
+                if failed > 0
+                else (
+                    f"No rows satisfy the forbidden condition. "
+                    f"All {total} rows are valid."
+                )
+            ),
+        }
+        return result, violations_out
+
+
+# =============================================================================
 # Registry — maps YAML expectation names to validator classes.
 #
-# Generic names are the canonical forms.  Old table-specific names are kept
-# as backward-compatible aliases so existing YAML files continue to work
-# without modification.
+# Only generic canonical names are registered here.  No table-specific
+# aliases are retained; all YAML rule files must use the generic names.
 # =============================================================================
 CUSTOM_EXPECTATION_REGISTRY = {
 
@@ -1335,8 +1433,6 @@ CUSTOM_EXPECTATION_REGISTRY = {
 
     # -------------------------------------------------------------------------
     # Aggregate validators
-    # validate_aggregate_rule is the new generic form;
-    # expect_column_sum_to_equal is kept for backward compatibility.
     # -------------------------------------------------------------------------
     "validate_aggregate_rule":              ValidateAggregateRuleExpectation,
     "expect_column_sum_to_equal":           ColumnSumExpectation,
@@ -1354,45 +1450,32 @@ CUSTOM_EXPECTATION_REGISTRY = {
     "validate_not_null_when":               ValidateNotNullWhenExpectation,
 
     # -------------------------------------------------------------------------
+    # Negative / forbidden-state validators
+    # -------------------------------------------------------------------------
+    "validate_column_exclusions":           ValidateColumnExclusionsExpectation,
+
+    # -------------------------------------------------------------------------
     # Sequence / ordering validators
-    # validate_sequence_order is the generic name;
-    # expect_milestone_sequence is kept as a backward-compatible alias.
     # -------------------------------------------------------------------------
     "validate_sequence_order":              ValidateSequenceOrderExpectation,
-    "expect_milestone_sequence":            ValidateSequenceOrderExpectation,
 
     # -------------------------------------------------------------------------
     # Paired-presence validators
-    # validate_paired_presence is the generic name;
-    # expect_milestone_pairs_complete is kept as a backward-compatible alias.
     # -------------------------------------------------------------------------
     "validate_paired_presence":             ValidatePairedPresenceExpectation,
-    "expect_milestone_pairs_complete":      ValidatePairedPresenceExpectation,
 
     # -------------------------------------------------------------------------
     # Orphan / stop-without-start validators
-    # validate_no_orphan is the generic name;
-    # expect_no_orphan_milestones is kept as a backward-compatible alias.
     # -------------------------------------------------------------------------
     "validate_no_orphan":                   ValidateNoOrphanExpectation,
-    "expect_no_orphan_milestones":          ValidateNoOrphanExpectation,
 
     # -------------------------------------------------------------------------
     # Conditional column-value validators
-    # validate_conditional_column_value is the generic name;
-    # expect_refund_validation is kept as a backward-compatible alias
-    # (also supports old parameter names: amount_column, type_column, credit_type).
     # -------------------------------------------------------------------------
     "validate_conditional_column_value":    ValidateConditionalColumnValueExpectation,
-    "expect_refund_validation":             ValidateConditionalColumnValueExpectation,
 
     # -------------------------------------------------------------------------
     # Group aggregate match validators
-    # validate_group_aggregate_match is the generic name;
-    # expect_invoice_total_consistency is kept as a backward-compatible alias
-    # (also supports old parameter names: invoice_id_column, line_amount_column,
-    # header_amount_column).
     # -------------------------------------------------------------------------
     "validate_group_aggregate_match":       ValidateGroupAggregateMatchExpectation,
-    "expect_invoice_total_consistency":     ValidateGroupAggregateMatchExpectation,
 }

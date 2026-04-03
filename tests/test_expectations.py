@@ -763,6 +763,142 @@ class TestValidateGroupAggregateMatchExpectation:
 
 
 # ---------------------------------------------------------------------------
+# ValidateColumnExclusionsExpectation  (negative / forbidden-state validator)
+# ---------------------------------------------------------------------------
+
+class TestValidateColumnExclusionsExpectation:
+    def _make_df(self, spark, rows):
+        schema = StructType([
+            StructField("id",      StringType(), True),
+            StructField("col_a",   StringType(), True),
+            StructField("col_b",   StringType(), True),
+        ])
+        return spark.createDataFrame(rows, schema)
+
+    def _rule(self, condition):
+        return {
+            "rule_id": "T-EXCL",
+            "name": "test exclusion",
+            "expectation": "validate_column_exclusions",
+            "parameters": {
+                "condition": condition,
+                "pk_column":  "id",
+            },
+        }
+
+    def test_no_forbidden_rows_passes(self, spark):
+        """All rows are valid — neither column is NULL simultaneously."""
+        from engine.expectations import ValidateColumnExclusionsExpectation
+        df = self._make_df(spark, [
+            ("R1", "A",   "B"),
+            ("R2", "A",   None),   # only col_b is null — not forbidden
+            ("R3", None,  "B"),    # only col_a is null — not forbidden
+        ])
+        result, viols = ValidateColumnExclusionsExpectation().validate(
+            df, self._rule("col_a IS NULL AND col_b IS NULL"), spark
+        )
+        assert result["status"] == "PASSED"
+        assert result["failed_rows"] == 0
+        assert viols.count() == 0
+
+    def test_forbidden_rows_fail(self, spark):
+        """Rows where both columns are NULL violate the rule."""
+        from engine.expectations import ValidateColumnExclusionsExpectation
+        df = self._make_df(spark, [
+            ("R1", "A",   "B"),
+            ("R2", None,  None),   # forbidden: both NULL
+            ("R3", None,  None),   # forbidden: both NULL
+        ])
+        result, viols = ValidateColumnExclusionsExpectation().validate(
+            df, self._rule("col_a IS NULL AND col_b IS NULL"), spark
+        )
+        assert result["status"] == "FAILED"
+        assert result["failed_rows"] == 2
+        assert result["passed_rows"] == 1
+        assert viols.count() == 2
+
+    def test_all_rows_forbidden_fails(self, spark):
+        """Every row violates the condition."""
+        from engine.expectations import ValidateColumnExclusionsExpectation
+        df = self._make_df(spark, [
+            ("R1", None, None),
+            ("R2", None, None),
+        ])
+        result, viols = ValidateColumnExclusionsExpectation().validate(
+            df, self._rule("col_a IS NULL AND col_b IS NULL"), spark
+        )
+        assert result["status"] == "FAILED"
+        assert result["failed_rows"] == 2
+        assert result["success_pct"] == 0.0
+
+    def test_empty_dataframe_passes(self, spark):
+        """Empty DataFrame should pass (no rows to violate)."""
+        from engine.expectations import ValidateColumnExclusionsExpectation
+        df = self._make_df(spark, [])
+        result, viols = ValidateColumnExclusionsExpectation().validate(
+            df, self._rule("col_a IS NULL AND col_b IS NULL"), spark
+        )
+        assert result["status"] == "PASSED"
+        assert result["total_rows"] == 0
+
+    def test_missing_condition_errors(self, spark):
+        """Missing condition parameter should return ERROR status."""
+        from engine.expectations import ValidateColumnExclusionsExpectation
+        df = self._make_df(spark, [("R1", "A", "B")])
+        rule = {
+            "rule_id": "T-EXCL-ERR",
+            "name": "test",
+            "expectation": "validate_column_exclusions",
+            "parameters": {"pk_column": "id"},
+        }
+        result, _ = ValidateColumnExclusionsExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR"
+        assert "condition" in result["details"].lower()
+
+    def test_invalid_condition_expression_errors(self, spark):
+        """An invalid SQL expression in condition should return ERROR status."""
+        from engine.expectations import ValidateColumnExclusionsExpectation
+        df = self._make_df(spark, [("R1", "A", "B")])
+        result, _ = ValidateColumnExclusionsExpectation().validate(
+            df, self._rule("THIS IS NOT VALID SQL !!!@#"), spark
+        )
+        assert result["status"] == "ERROR"
+
+    def test_violations_have_correct_schema(self, spark):
+        """Violations DataFrame must have the canonical five-column schema."""
+        from engine.expectations import ValidateColumnExclusionsExpectation
+        df = self._make_df(spark, [
+            ("R1", None, None),
+        ])
+        _, viols = ValidateColumnExclusionsExpectation().validate(
+            df, self._rule("col_a IS NULL AND col_b IS NULL"), spark
+        )
+        col_names = viols.columns
+        for expected in [
+            "primary_key_value", "violated_column",
+            "actual_value", "expected_condition", "violation_detail",
+        ]:
+            assert expected in col_names, f"Missing violations column: {expected}"
+
+    def test_success_pct_calculated_correctly(self, spark):
+        """success_pct should reflect the fraction of non-violating rows."""
+        from engine.expectations import ValidateColumnExclusionsExpectation
+        df = self._make_df(spark, [
+            ("R1", "A",  "B"),    # valid
+            ("R2", "A",  "B"),    # valid
+            ("R3", "A",  "B"),    # valid
+            ("R4", None, None),   # violation
+        ])
+        result, _ = ValidateColumnExclusionsExpectation().validate(
+            df, self._rule("col_a IS NULL AND col_b IS NULL"), spark
+        )
+        assert result["total_rows"] == 4
+        assert result["passed_rows"] == 3
+        assert result["failed_rows"] == 1
+        assert result["success_pct"] == 75.0
+
+
+# ---------------------------------------------------------------------------
 # Registry completeness
 # ---------------------------------------------------------------------------
 
@@ -770,12 +906,13 @@ class TestRegistry:
     def test_all_expected_keys_present(self):
         from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
 
-        # New generic canonical names
+        # Generic canonical names (the only names supported)
         generic_keys = [
             "validate_column_comparison",
             "validate_aggregate_rule",
             "validate_foreign_key",
             "validate_not_null_when",
+            "validate_column_exclusions",
             "validate_sequence_order",
             "validate_paired_presence",
             "validate_no_orphan",
@@ -791,43 +928,25 @@ class TestRegistry:
                     "expect_unique_combination_of_columns"]:
             assert key in CUSTOM_EXPECTATION_REGISTRY, f"Missing key: {key}"
 
-        # Backward-compatible aliases
-        alias_keys = [
+    def test_legacy_aliases_are_removed(self):
+        """Verify that all table-specific backward-compatible aliases have been removed."""
+        from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
+        removed_keys = [
+            # Original table-specific names (removed in earlier refactor)
+            "expect_milestone_order",
+            "expect_milestone_pairs",
+            "expect_no_open_milestone_pairs",
+            "expect_no_duplicate_milestones",
+            # Backward-compatible aliases (removed in this refactor)
             "expect_milestone_sequence",
             "expect_milestone_pairs_complete",
             "expect_no_orphan_milestones",
             "expect_refund_validation",
             "expect_invoice_total_consistency",
         ]
-        for key in alias_keys:
-            assert key in CUSTOM_EXPECTATION_REGISTRY, f"Missing alias: {key}"
-
-    def test_removed_table_specific_keys_are_gone(self):
-        """Verify that removed table-specific expectations no longer exist."""
-        from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
-        removed_keys = [
-            "expect_milestone_order",
-            "expect_milestone_pairs",
-            "expect_no_open_milestone_pairs",
-            "expect_no_duplicate_milestones",
-        ]
         for key in removed_keys:
             assert key not in CUSTOM_EXPECTATION_REGISTRY, (
-                f"Expected removed key still present: {key}"
-            )
-
-    def test_aliases_point_to_same_class_as_generic_name(self):
-        from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
-        alias_pairs = [
-            ("validate_sequence_order",           "expect_milestone_sequence"),
-            ("validate_paired_presence",          "expect_milestone_pairs_complete"),
-            ("validate_no_orphan",                "expect_no_orphan_milestones"),
-            ("validate_conditional_column_value", "expect_refund_validation"),
-            ("validate_group_aggregate_match",    "expect_invoice_total_consistency"),
-        ]
-        for generic, alias in alias_pairs:
-            assert CUSTOM_EXPECTATION_REGISTRY[generic] is CUSTOM_EXPECTATION_REGISTRY[alias], (
-                f"Alias '{alias}' does not point to same class as '{generic}'"
+                f"Legacy alias still present in registry: {key}"
             )
 
     def test_all_registry_classes_are_instantiable(self):
