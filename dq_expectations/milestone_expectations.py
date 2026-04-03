@@ -182,8 +182,11 @@ class MilestoneSequenceExpectation:
         seq_map = {m: i for i, m in enumerate(expected_sequence)}
 
         # Build a mapping expression: CASE WHEN milestone = v THEN rank ELSE NULL
-        rank_expr = F.when(F.lit(False), F.lit(None).cast("int"))
-        for milestone_val, rank in seq_map.items():
+        seq_items = list(seq_map.items())
+        rank_expr = F.when(
+            F.col(milestone_col) == seq_items[0][0], F.lit(seq_items[0][1])
+        )
+        for milestone_val, rank in seq_items[1:]:
             rank_expr = rank_expr.when(
                 F.col(milestone_col) == milestone_val, F.lit(rank)
             )
@@ -262,9 +265,9 @@ class MilestoneSequenceExpectation:
                 F.col("_first_milestone").cast("string"),
                 F.lit(f"' ({date_col}="),
                 F.col("_first_date").cast("string"),
-                F.lit(") which comes after '"),
+                F.lit(") which in the expected sequence comes after '"),
                 F.col("_last_milestone").cast("string"),
-                F.lit(") in the expected sequence"),
+                F.lit("'"),
             ).alias("violation_detail"),
         )
 

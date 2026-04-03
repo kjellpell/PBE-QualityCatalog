@@ -427,11 +427,11 @@ def run_validation(
                     how="left",
                 ).withColumn(
                     "_resolved_prosess_id",
-                    F.coalesce(F.col("_prosess_id"), F.col("primary_key_value")),
+                    F.col("_prosess_id"),
                 )
                 prosess_id_expr = F.col("_resolved_prosess_id")
             else:
-                prosess_id_expr = F.col("primary_key_value")
+                prosess_id_expr = F.lit(None).cast("string")
 
             viols_spark = viols_spark.select(
                 F.lit(RUN_ID).alias("run_id"),
