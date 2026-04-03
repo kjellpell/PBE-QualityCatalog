@@ -179,15 +179,36 @@ Use this expectation to assert that a particular combination of column values is
 | `success_pct` | % of rows that passed |
 | `rule_category` | Completeness / Business Logic / etc. |
 
-### `dq_violations` — one row per offending record per rule per run
+### `dq_violations` — current-state violation tracking (one row per unique issue)
+
+Each row tracks the **current state** of a single data quality issue identified by `(rule_id, primary_key_value)`.  On every run the engine automatically updates the status using a Delta MERGE so there is never more than one active record per unique issue.
 
 | Column | Description |
 |---|---|
 | `rule_id` | Links back to `dq_run_results` |
 | `prosess_id` | Process ID for drill-through |
-| `primary_key_value` | PK of the offending row |
+| `primary_key_value` | PK of the offending row — use this to locate the responsible owner outside the framework |
 | `violated_column` | Column that caused the violation |
 | `violation_detail` | Human-readable description of the issue |
+| `issue_status` | `Active` while the violation persists; `Resolved` once the underlying data is fixed |
+| `resolution_timestamp` | ISO-8601 timestamp of when the issue was automatically resolved (NULL while still Active) |
+| `run_timestamp` | Timestamp of the most recent validation run that confirmed this violation |
+
+---
+
+## Automated Resolution Tracking
+
+Every validation run performs a three-step MERGE against `dq_violations`:
+
+1. **Detect resolved issues** — Any violation that was `Active` in the previous run but whose `(rule_id, primary_key_value)` is **absent** from the current run's violations is automatically marked `Resolved` with a `resolution_timestamp`.
+2. **Refresh still-active violations** — Violations that persist have their `run_timestamp` and `violation_detail` updated so the record always reflects the latest run.
+3. **Insert new violations** — Brand-new violations are inserted with `issue_status = 'Active'` and `resolution_timestamp = NULL`.
+
+This means Power BI / Excel dashboards can filter on `issue_status = 'Active'` to see **only open issues**, and on `issue_status = 'Resolved'` to track how quickly issues are fixed.
+
+### Backward compatibility
+
+If the MERGE fails (e.g. the table does not yet exist in the metastore), the engine falls back to a plain append and prints a warning.  Re-running `nb_dq_00_setup.py` creates or upgrades the table (using `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE … ADD COLUMNS IF NOT EXISTS`) so the full MERGE-based tracking is enabled without data loss.
 
 ---
 
@@ -198,8 +219,7 @@ pip install pytest pyspark
 pytest tests/ -v
 ```
 
-Tests in `tests/test_expectations.py` cover the core expectation classes
-without requiring a real Spark cluster (runs in local mode).
+Tests in `tests/test_expectations.py` cover the core expectation classes and the resolution-tracking helpers without requiring a real Spark cluster (runs in local mode).
 
 ---
 
@@ -209,4 +229,5 @@ without requiring a real Spark cluster (runs in local mode).
 |---|---|---|
 | **Phase 1** | ✅ Complete | Consolidated expectations, modular YAML rules, dynamic engine, FK + aggregate validations |
 | **Phase 2** | ✅ Complete | Removed backward-compatible aliases; added `validate_column_exclusions` for negative/forbidden-state validations |
-| **Phase 3** | Planned | Rule dependencies, enhanced Delta logging for Power BI |
+| **Phase 3** | ✅ Complete | Automated resolution tracking (`issue_status`, `resolution_timestamp`) via Delta MERGE |
+| **Phase 4** | Planned | Rule dependencies, enhanced Power BI measures |
