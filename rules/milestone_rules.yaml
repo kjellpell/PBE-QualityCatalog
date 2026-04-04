@@ -107,6 +107,10 @@ rules:
         - Startbehandling
         - Behandling
         - Stoppbehandling
+      completion_gate:
+        value_column: Milepel
+        value: Stoppbehandling
+        date_column: EndDate
     severity: high
     category: Business Logic
     owner: IT
@@ -127,6 +131,10 @@ rules:
       group_column: prosess_id
       required_pairs:
         - [Startbehandling, Stoppbehandling]
+      completion_gate:
+        value_column: Milepel
+        value: Stoppbehandling
+        date_column: EndDate
     severity: critical
     category: Business Logic
     owner: IT

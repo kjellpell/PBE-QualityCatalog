@@ -73,6 +73,45 @@ def _error_result(message: str) -> dict:
     }
 
 
+def _resolve_gate_groups(df: DataFrame, gate: dict, group_col: str):
+    """
+    Return the subset of *df* whose group_col values belong to groups that
+    have passed the completion gate.
+
+    A group passes the gate when at least one of its rows satisfies:
+      - value_column == value  (the designated completion marker)
+      - date_column  IS NOT NULL (the marker has a recorded date, i.e. it is done)
+
+    Parameters (from the YAML ``completion_gate`` block):
+      value_column - column holding the marker value
+      value        - the value that signals group completion
+      date_column  - date/timestamp column that must be non-null on the marker row
+
+    If the gate block is absent or empty, the original DataFrame is returned
+    unchanged so that the caller validates all groups — preserving backward
+    compatibility with rules that do not specify a gate.
+    """
+    if not gate:
+        return df
+
+    gate_value_col = gate.get("value_column")
+    gate_value     = gate.get("value")
+    gate_date_col  = gate.get("date_column")
+
+    if not gate_value_col or gate_value is None or not gate_date_col:
+        return df
+
+    completed_groups = (
+        df.filter(
+            (F.col(gate_value_col) == gate_value)
+            & F.col(gate_date_col).isNotNull()
+        )
+        .select(group_col)
+        .distinct()
+    )
+    return df.join(completed_groups, on=group_col, how="inner")
+
+
 # =============================================================================
 # Generic / cross-table expectations
 # =============================================================================
@@ -763,6 +802,10 @@ class ValidateSequenceOrderExpectation:
       group_column      - column that identifies the group
       date_column       - date/timestamp column used to determine order
       expected_sequence - ordered list of value names
+      completion_gate   - (optional) only evaluate groups that are "done":
+          value_column  - column holding the completion marker value
+          value         - the value that signals the group is closed
+          date_column   - date column that must be non-null on the marker row
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
@@ -771,6 +814,9 @@ class ValidateSequenceOrderExpectation:
         group_col         = params.get("group_column")
         date_col          = params.get("date_column")
         expected_sequence = params.get("expected_sequence", [])
+        gate              = params.get("completion_gate", {})
+
+        df = _resolve_gate_groups(df, gate, group_col)
 
         if not value_col:
             return (
@@ -899,9 +945,13 @@ class ValidatePairedPresenceExpectation:
     Validates that each required pair of values both exist within the same group.
 
     YAML parameters:
-      value_column   - column holding the values to check
-      group_column   - column that identifies the group
-      required_pairs - list of [start_value, stop_value] pairs
+      value_column    - column holding the values to check
+      group_column    - column that identifies the group
+      required_pairs  - list of [start_value, stop_value] pairs
+      completion_gate - (optional) only evaluate groups that are "done":
+          value_column  - column holding the completion marker value
+          value         - the value that signals the group is closed
+          date_column   - date column that must be non-null on the marker row
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
@@ -909,6 +959,9 @@ class ValidatePairedPresenceExpectation:
         value_col      = params.get("value_column") or params.get("milestone_column")
         group_col      = params.get("group_column")
         required_pairs = params.get("required_pairs", [])
+        gate           = params.get("completion_gate", {})
+
+        df = _resolve_gate_groups(df, gate, group_col)
 
         total = df.count()
         if total == 0 or not required_pairs:

@@ -508,6 +508,78 @@ class TestValidateSequenceOrderExpectation:
             "got: " + result["status"]
         )
 
+    def test_gate_skips_open_groups(self, spark):
+        # G1 has both Start and End, but EndDate is NULL — group not yet closed.
+        # G2 has both Start and End with EndDate set — gate passes, order is correct.
+        # With a gate, G1 must be silently skipped (PASSED overall).
+        from engine.expectations import ValidateSequenceOrderExpectation
+        schema = StructType([
+            StructField("group_id",   StringType(), True),
+            StructField("step",       StringType(), True),
+            StructField("event_date", StringType(), True),
+            StructField("end_date",   StringType(), True),
+        ])
+        df = spark.createDataFrame([
+            ("G1", "Start", "2024-01-01", None),         # open — no end_date on End row
+            ("G1", "End",   "2024-06-01", None),
+            ("G2", "Start", "2024-01-01", None),
+            ("G2", "End",   "2024-06-01", "2024-06-02"), # closed
+        ], schema)
+        rule = {
+            "rule_id": "T-SEQ-GATE",
+            "name": "test",
+            "expectation": "validate_sequence_order",
+            "parameters": {
+                "value_column":      "step",
+                "group_column":      "group_id",
+                "date_column":       "event_date",
+                "expected_sequence": ["Start", "End"],
+                "completion_gate": {
+                    "value_column": "step",
+                    "value":        "End",
+                    "date_column":  "end_date",
+                },
+            },
+        }
+        result, viols = ValidateSequenceOrderExpectation().validate(df, rule, spark)
+        assert result["status"] == "PASSED", (
+            "Open groups must be skipped by the gate; expected PASSED got "
+            + result["status"]
+        )
+
+    def test_gate_catches_bad_order_in_closed_groups(self, spark):
+        # G1 is closed (End has end_date) but order is wrong — must FAIL.
+        from engine.expectations import ValidateSequenceOrderExpectation
+        schema = StructType([
+            StructField("group_id",   StringType(), True),
+            StructField("step",       StringType(), True),
+            StructField("event_date", StringType(), True),
+            StructField("end_date",   StringType(), True),
+        ])
+        df = spark.createDataFrame([
+            ("G1", "End",   "2024-01-01", "2024-06-02"), # End before Start — wrong
+            ("G1", "Start", "2024-06-01", None),
+        ], schema)
+        rule = {
+            "rule_id": "T-SEQ-GATE-FAIL",
+            "name": "test",
+            "expectation": "validate_sequence_order",
+            "parameters": {
+                "value_column":      "step",
+                "group_column":      "group_id",
+                "date_column":       "event_date",
+                "expected_sequence": ["Start", "End"],
+                "completion_gate": {
+                    "value_column": "step",
+                    "value":        "End",
+                    "date_column":  "end_date",
+                },
+            },
+        }
+        result, viols = ValidateSequenceOrderExpectation().validate(df, rule, spark)
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+
 
 # ---------------------------------------------------------------------------
 # ValidatePairedPresenceExpectation  (renamed from MilestonePairsCompleteExpectation)
@@ -543,6 +615,69 @@ class TestValidatePairedPresenceExpectation:
         from engine.expectations import ValidatePairedPresenceExpectation
         df = self._make_df(spark, [("G1", "Start")])   # no Stop
         result, viols = ValidatePairedPresenceExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+
+    def test_gate_skips_open_groups(self, spark):
+        # G1 has only Start — pair incomplete. But it is open (no Stop with end_date).
+        # With a gate, G1 must be silently skipped (PASSED overall).
+        from engine.expectations import ValidatePairedPresenceExpectation
+        schema = StructType([
+            StructField("group_id", StringType(), True),
+            StructField("step",     StringType(), True),
+            StructField("end_date", StringType(), True),
+        ])
+        df = spark.createDataFrame([
+            ("G1", "Start", None),  # open — no Stop with end_date
+        ], schema)
+        rule = {
+            "rule_id": "T-PAIR-GATE",
+            "name": "test",
+            "expectation": "validate_paired_presence",
+            "parameters": {
+                "value_column":   "step",
+                "group_column":   "group_id",
+                "required_pairs": [["Start", "Stop"]],
+                "completion_gate": {
+                    "value_column": "step",
+                    "value":        "Stop",
+                    "date_column":  "end_date",
+                },
+            },
+        }
+        result, viols = ValidatePairedPresenceExpectation().validate(df, rule, spark)
+        assert result["status"] == "PASSED", (
+            "Open groups must be skipped by the gate; expected PASSED got "
+            + result["status"]
+        )
+
+    def test_gate_catches_missing_pair_in_closed_groups(self, spark):
+        # G1 has Stop with end_date set — it is closed — but Start is missing.
+        from engine.expectations import ValidatePairedPresenceExpectation
+        schema = StructType([
+            StructField("group_id", StringType(), True),
+            StructField("step",     StringType(), True),
+            StructField("end_date", StringType(), True),
+        ])
+        df = spark.createDataFrame([
+            ("G1", "Stop", "2024-06-01"),  # closed — missing Start
+        ], schema)
+        rule = {
+            "rule_id": "T-PAIR-GATE-FAIL",
+            "name": "test",
+            "expectation": "validate_paired_presence",
+            "parameters": {
+                "value_column":   "step",
+                "group_column":   "group_id",
+                "required_pairs": [["Start", "Stop"]],
+                "completion_gate": {
+                    "value_column": "step",
+                    "value":        "Stop",
+                    "date_column":  "end_date",
+                },
+            },
+        }
+        result, viols = ValidatePairedPresenceExpectation().validate(df, rule, spark)
         assert result["status"] == "FAILED"
         assert viols.count() == 1
 
