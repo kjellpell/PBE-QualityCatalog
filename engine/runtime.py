@@ -31,6 +31,12 @@ def load_config_module(module_name: str):
     return module, module_path
 
 
+def require_config_keys(config_module, required_keys: list[str], module_name: str) -> None:
+    missing = sorted(key for key in required_keys if not hasattr(config_module, key))
+    if missing:
+        raise RuntimeError(f"Missing required {module_name} keys: {', '.join(missing)}")
+
+
 def resolve_targets(config_module, runtime_module) -> dict[str, str]:
     metrics_table = f"{config_module.DEFAULT_SCHEMA}.{config_module.DQ_EXECUTION_METRICS_TABLE}"
     if runtime_module.DRY_RUN:
@@ -47,7 +53,7 @@ def resolve_targets(config_module, runtime_module) -> dict[str, str]:
 
 
 def resolve_rules_dir(config_module, repo_root: Path) -> Path:
-    rules_dir = Path(getattr(config_module, "RULES_DIR", "rules"))
+    rules_dir = Path(config_module.RULES_DIR)
     if not rules_dir.is_absolute():
         rules_dir = repo_root / rules_dir
     return rules_dir

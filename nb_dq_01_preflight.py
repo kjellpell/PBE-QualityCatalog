@@ -13,12 +13,37 @@ REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from engine.runtime import load_config_module, resolve_rules_dir, resolve_targets
+from engine.runtime import load_config_module, require_config_keys, resolve_rules_dir, resolve_targets
 
 
 def main() -> None:
     config_module, config_path = load_config_module("QualityCatalogConfig")
     runtime_module, runtime_path = load_config_module("QualityCatalogRuntime")
+    require_config_keys(
+        config_module,
+        [
+            "DEFAULT_SCHEMA",
+            "CONFIG_VERSION",
+            "PIPELINE_VERSION",
+            "RULES_DIR",
+            "GX_SAMPLE_SIZE",
+            "DQ_RESULTS_TABLE",
+            "DQ_VIOLATIONS_TABLE",
+            "DQ_EXECUTION_METRICS_TABLE",
+        ],
+        "QualityCatalogConfig",
+    )
+    require_config_keys(
+        runtime_module,
+        [
+            "DRY_RUN",
+            "FAIL_ON_EMPTY_RULES",
+            "FAIL_ON_EMPTY_SOURCE",
+            "MAX_RETRIES",
+            "RETRYABLE_ERROR_MARKERS",
+        ],
+        "QualityCatalogRuntime",
+    )
     targets = resolve_targets(config_module, runtime_module)
     rules_dir = resolve_rules_dir(config_module, REPO_ROOT)
 

@@ -78,6 +78,7 @@ from engine.resolution import (                                # noqa: E402
 from engine.runtime import (                                   # noqa: E402
     classify_retryable_error,
     load_config_module,
+    require_config_keys,
     resolve_rules_dir,
     resolve_targets,
     write_execution_metric,
@@ -87,6 +88,31 @@ print("Custom expectation registry loaded:", list(CUSTOM_EXPECTATION_REGISTRY))
 
 CONFIG, CONFIG_PATH = load_config_module("QualityCatalogConfig")
 RUNTIME, RUNTIME_PATH = load_config_module("QualityCatalogRuntime")
+require_config_keys(
+    CONFIG,
+    [
+        "DEFAULT_SCHEMA",
+        "CONFIG_VERSION",
+        "PIPELINE_VERSION",
+        "RULES_DIR",
+        "GX_SAMPLE_SIZE",
+        "DQ_RESULTS_TABLE",
+        "DQ_VIOLATIONS_TABLE",
+        "DQ_EXECUTION_METRICS_TABLE",
+    ],
+    "QualityCatalogConfig",
+)
+require_config_keys(
+    RUNTIME,
+    [
+        "DRY_RUN",
+        "FAIL_ON_EMPTY_RULES",
+        "FAIL_ON_EMPTY_SOURCE",
+        "MAX_RETRIES",
+        "RETRYABLE_ERROR_MARKERS",
+    ],
+    "QualityCatalogRuntime",
+)
 TARGETS = resolve_targets(CONFIG, RUNTIME)
 
 RUN_ID = str(uuid.uuid4())
