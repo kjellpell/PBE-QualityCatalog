@@ -14,6 +14,7 @@ from engine.yaml_rules import (
     load_simplified_yaml,
     parse_simplified_rules,
     _apply_yaml_defaults,
+    _format_dry_run_summary,
     _format_validation_table,
     DEFAULT_SORT_COLUMN,
     DEFAULT_GATE_TRIGGER,
@@ -572,4 +573,466 @@ class TestLoadSimplifiedYaml:
         captured = capsys.readouterr()
         assert "Validation Summary" in captured.out
         assert "PASSED" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# _format_dry_run_summary
+# ---------------------------------------------------------------------------
+
+class TestFormatDryRunSummary:
+
+    def test_header_line_present(self):
+        summary = _format_dry_run_summary([])
+        assert "Dry Run Validation Summary:" in summary
+
+    def test_passed_rule_bullet(self):
+        summary = _format_dry_run_summary([("sequence_order", 1, [])])
+        assert "- Rule 1 [sequence_order]: PASSED" in summary
+
+    def test_failed_rule_bullet_with_reason(self):
+        summary = _format_dry_run_summary([
+            ("pair_validation", 2, ["Missing pair [\"Start\", \"Stop\"]"])
+        ])
+        assert "FAILED" in summary
+        assert "Reason:" in summary
+        assert "Missing pair" in summary
+
+    def test_mixed_pass_fail(self):
+        results = [
+            ("sequence_order", 1, []),
+            ("pair_validation", 2, ["Empty pairs list"]),
+            ("gate", 3, []),
+        ]
+        summary = _format_dry_run_summary(results)
+        assert "PASSED" in summary
+        assert "FAILED" in summary
+        assert "Rule 1 [sequence_order]: PASSED" in summary
+        assert "Rule 3 [gate]: PASSED" in summary
+
+    def test_multiple_errors_joined_in_reason(self):
+        summary = _format_dry_run_summary([
+            ("gate", 1, ["Missing 'group'", "Missing 'column'"])
+        ])
+        assert "Missing 'group'" in summary
+        assert "Missing 'column'" in summary
+
+
+# ---------------------------------------------------------------------------
+# Dry-run mode: parse_simplified_rules(dry_run=True)
+# ---------------------------------------------------------------------------
+
+class TestDryRunMode:
+
+    def test_dry_run_does_not_raise_on_validation_error(self):
+        raw = [{"sequence_order": {"column": "col", "values": ["A", "B"]}}]  # missing group
+        # Should NOT raise even though the rule is invalid
+        result = parse_simplified_rules(raw, dry_run=True)
+        # The invalid rule is excluded from the output
+        assert result == []
+
+    def test_dry_run_prints_dry_run_summary(self, capsys):
+        raw = [{"sequence_order": {"column": "col", "values": ["A", "B"]}}]
+        parse_simplified_rules(raw, dry_run=True)
+        captured = capsys.readouterr()
+        assert "Dry Run Validation Summary:" in captured.out
+
+    def test_dry_run_prints_failed_rule(self, capsys):
+        raw = [{"sequence_order": {"column": "col", "values": ["A", "B"]}}]
+        parse_simplified_rules(raw, dry_run=True)
+        captured = capsys.readouterr()
+        assert "FAILED" in captured.out
+
+    def test_dry_run_returns_only_valid_rules(self):
+        raw = [
+            _make_seq_rule(),                                          # valid
+            {"sequence_order": {"column": "col", "values": ["A"]}},   # invalid: 1 value, missing group
+        ]
+        result = parse_simplified_rules(raw, dry_run=True)
+        assert len(result) == 1
+        assert result[0]["expectation"] == "validate_sequence_order"
+
+    def test_dry_run_all_valid_returns_all_rules(self):
+        raw = [_make_seq_rule(), _make_pair_rule(), _make_gate_rule()]
+        result = parse_simplified_rules(raw, dry_run=True)
+        assert len(result) == 3
+
+    def test_dry_run_all_invalid_returns_empty_list(self):
+        raw = [
+            {"sequence_order": {"column": "col", "values": []}},   # invalid
+            {"pair_validation": {"group": "g", "column": "c"}},    # missing pairs
+        ]
+        result = parse_simplified_rules(raw, dry_run=True)
+        assert result == []
+
+    def test_normal_mode_raises_on_error(self):
+        raw = [{"sequence_order": {"column": "col", "values": ["A", "B"]}}]
+        with pytest.raises(ValueError):
+            parse_simplified_rules(raw, dry_run=False)
+
+    def test_dry_run_summary_passes_shown_correctly(self, capsys):
+        raw = [_make_seq_rule(), _make_pair_rule()]
+        parse_simplified_rules(raw, dry_run=True)
+        captured = capsys.readouterr()
+        assert "PASSED" in captured.out
+
+    # load_simplified_yaml also forwards dry_run
+
+    def test_load_simplified_yaml_dry_run_does_not_raise(self):
+        doc = {
+            "defaults": {"group_column": "bu"},
+            "rules": [
+                {"sequence_order": {"column": "c"}},  # missing values
+            ],
+        }
+        result = load_simplified_yaml(doc, dry_run=True)
+        assert result == []
+
+    def test_load_simplified_yaml_dry_run_prints_summary(self, capsys):
+        doc = {
+            "defaults": {"group_column": "bu"},
+            "rules": [
+                {"sequence_order": {"column": "c"}},  # missing values
+                _make_gate_rule(),                     # valid
+            ],
+        }
+        load_simplified_yaml(doc, dry_run=True)
+        captured = capsys.readouterr()
+        assert "Dry Run Validation Summary:" in captured.out
+
+    def test_load_simplified_yaml_dry_run_returns_valid_rules_only(self):
+        doc = {
+            "defaults": {"group_column": "bu"},
+            "rules": [
+                {"sequence_order": {"column": "c"}},  # missing values — invalid
+                _make_gate_rule(),                     # valid
+            ],
+        }
+        result = load_simplified_yaml(doc, dry_run=True)
+        assert len(result) == 1
+        assert result[0]["expectation"] == "validate_gate"
+
+    def test_load_simplified_yaml_legacy_format_dry_run(self):
+        raw = [
+            _make_seq_rule(),                                         # valid
+            {"pair_validation": {"group": "g", "column": "c"}},      # missing pairs
+        ]
+        result = load_simplified_yaml(raw, dry_run=True)
+        assert len(result) == 1
+        assert result[0]["expectation"] == "validate_sequence_order"
+
+
+# ---------------------------------------------------------------------------
+# Real-life use case test coverage — invoice and milestone validators
+# ---------------------------------------------------------------------------
+
+class TestRealLifeUseCases:
+    """Realistic YAML configurations derived from known business validator needs."""
+
+    # ---- Invoice validation YAML ----
+
+    def test_invoice_yaml_with_defaults(self):
+        """An invoice YAML file validates status flow per invoice_id."""
+        doc = {
+            "defaults": {
+                "group_column": "invoice_id",
+                "sort_column": "event_date",
+            },
+            "rules": [
+                {
+                    "sequence_order": {
+                        "column": "status",
+                        "values": ["Created", "Approved", "Paid"],
+                    }
+                },
+                {
+                    "pair_validation": {
+                        "column": "action",
+                        "pairs": [["Issued", "Received"]],
+                    }
+                },
+                {
+                    "gate": {
+                        "column": "status",
+                        "value_to_check": "Paid",
+                    }
+                },
+            ],
+        }
+        result = load_simplified_yaml(doc)
+        assert len(result) == 3
+        for r in result:
+            assert r["parameters"]["group_column"] == "invoice_id"
+            assert r["parameters"]["sort_column"] == "event_date"
+
+    def test_invoice_yaml_override_sort_column_per_rule(self):
+        """One rule in an invoice YAML uses a different sort column."""
+        doc = {
+            "defaults": {
+                "group_column": "invoice_id",
+                "sort_column": "event_date",
+            },
+            "rules": [
+                {
+                    "sequence_order": {
+                        "column": "status",
+                        "values": ["Created", "Approved"],
+                        "sort_column": "processing_timestamp",  # override
+                    }
+                },
+                {
+                    "gate": {
+                        "column": "status",
+                        "value_to_check": "Approved",
+                    }
+                },
+            ],
+        }
+        result = load_simplified_yaml(doc)
+        assert result[0]["parameters"]["sort_column"] == "processing_timestamp"
+        assert result[1]["parameters"]["sort_column"] == "event_date"
+
+    # ---- Milestone validation YAML ----
+
+    def test_milestone_yaml_with_defaults(self):
+        """A milestone YAML validates that each project reaches key milestones."""
+        doc = {
+            "defaults": {
+                "group_column": "project_id",
+                "sort_column": "milestone_date",
+            },
+            "rules": [
+                {
+                    "sequence_order": {
+                        "column": "phase",
+                        "values": ["Initiation", "Planning", "Execution", "Closure"],
+                    }
+                },
+                {
+                    "pair_validation": {
+                        "column": "event",
+                        "pairs": [
+                            ["Start", "Stop"],
+                            ["Open", "Close"],
+                        ],
+                    }
+                },
+                {
+                    "gate": {
+                        "column": "phase",
+                        "value_to_check": "Closure",
+                    }
+                },
+            ],
+        }
+        result = load_simplified_yaml(doc)
+        assert len(result) == 3
+        # sequence_order
+        assert result[0]["parameters"]["expected_sequence"] == [
+            "Initiation", "Planning", "Execution", "Closure"
+        ]
+        # pair_validation — two pairs
+        assert result[1]["parameters"]["required_pairs"] == [
+            ["Start", "Stop"],
+            ["Open", "Close"],
+        ]
+        # gate
+        assert result[2]["parameters"]["value_to_check"] == "Closure"
+
+    def test_milestone_yaml_partial_group_override(self):
+        """One milestone rule targets a sub-group (task_id) instead of project_id."""
+        doc = {
+            "defaults": {
+                "group_column": "project_id",
+                "sort_column": "milestone_date",
+            },
+            "rules": [
+                {
+                    "sequence_order": {
+                        "column": "phase",
+                        "values": ["Initiation", "Closure"],
+                    }
+                },
+                {
+                    "gate": {
+                        "group": "task_id",   # per-rule override
+                        "column": "status",
+                        "value_to_check": "Done",
+                    }
+                },
+            ],
+        }
+        result = load_simplified_yaml(doc)
+        assert result[0]["parameters"]["group_column"] == "project_id"
+        assert result[1]["parameters"]["group_column"] == "task_id"
+
+    # ---- Large number of rules ----
+
+    def test_large_rule_set_all_valid(self):
+        """Simulate a YAML file with many (50) rules — all should parse correctly."""
+        rules = []
+        for i in range(50):
+            rules.append({
+                "sequence_order": {
+                    "group": f"group_{i}",
+                    "column": f"col_{i}",
+                    "values": ["A", "B", "C"],
+                }
+            })
+        result = parse_simplified_rules(rules)
+        assert len(result) == 50
+
+    def test_large_rule_set_with_mixed_types(self):
+        """50-rule YAML with a mix of all three rule types."""
+        rules = []
+        for i in range(17):
+            rules.append(_make_seq_rule({"group": f"g_seq_{i}"}))
+        for i in range(17):
+            rules.append(_make_pair_rule({"group": f"g_pair_{i}"}))
+        for i in range(16):
+            rules.append(_make_gate_rule({"group": f"g_gate_{i}"}))
+        result = parse_simplified_rules(rules)
+        assert len(result) == 50
+
+    def test_large_rule_set_dry_run_partial_failures(self):
+        """50 rules where every 5th is invalid — dry_run returns the 40 valid ones."""
+        rules = []
+        for i in range(50):
+            if i % 5 == 0:
+                # Invalid: missing values list (10 rules at indices 0,5,10,...,45)
+                rules.append({"sequence_order": {"group": f"g_{i}", "column": "col"}})
+            else:
+                rules.append(_make_seq_rule({"group": f"g_{i}"}))
+        result = parse_simplified_rules(rules, dry_run=True)
+        assert len(result) == 40  # 50 total - 10 invalid = 40 valid
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
+
+class TestEdgeCases:
+    """Edge cases: mismatched group IDs, duplicate entries, whitespace, etc."""
+
+    def test_group_id_whitespace_only_rejected(self):
+        raw = [{"sequence_order": {"group": "   ", "column": "c", "values": ["A", "B"]}}]
+        with pytest.raises(ValueError) as exc_info:
+            parse_simplified_rules(raw)
+        assert "'group' field cannot be empty" in str(exc_info.value)
+
+    def test_column_whitespace_only_rejected(self):
+        raw = [{"sequence_order": {"group": "g", "column": "  ", "values": ["A", "B"]}}]
+        with pytest.raises(ValueError) as exc_info:
+            parse_simplified_rules(raw)
+        assert "'column' field cannot be empty" in str(exc_info.value)
+
+    def test_value_to_check_whitespace_only_rejected(self):
+        raw = [{"gate": {"group": "g", "column": "c", "value_to_check": "   "}}]
+        with pytest.raises(ValueError) as exc_info:
+            parse_simplified_rules(raw)
+        assert "'value_to_check' field is required" in str(exc_info.value)
+
+    def test_values_list_with_duplicate_entries_accepted(self):
+        """Duplicate sequence values are a data concern, not a parse error."""
+        raw = [{"sequence_order": {
+            "group": "g", "column": "c", "values": ["A", "A", "B"],
+        }}]
+        result = parse_simplified_rules(raw)
+        assert result[0]["parameters"]["expected_sequence"] == ["A", "A", "B"]
+
+    def test_pairs_with_identical_start_stop_accepted(self):
+        """Pairs where start == stop are unusual but not a parse-level error."""
+        raw = [{"pair_validation": {
+            "group": "g", "column": "c", "pairs": [["X", "X"]],
+        }}]
+        result = parse_simplified_rules(raw)
+        assert result[0]["parameters"]["required_pairs"] == [["X", "X"]]
+
+    def test_sequence_order_two_item_minimum_accepted(self):
+        raw = [{"sequence_order": {"group": "g", "column": "c", "values": ["Start", "End"]}}]
+        result = parse_simplified_rules(raw)
+        assert result[0]["parameters"]["expected_sequence"] == ["Start", "End"]
+
+    def test_empty_rules_list_produces_empty_output(self):
+        result = parse_simplified_rules([])
+        assert result == []
+
+    def test_empty_rules_via_load_simplified_yaml(self):
+        doc = {"rules": []}
+        result = load_simplified_yaml(doc)
+        assert result == []
+
+    def test_rule_with_none_group_rejected(self):
+        """Explicit None value for 'group' must be rejected with a clear error."""
+        raw = [{"sequence_order": {"group": None, "column": "c", "values": ["A", "B"]}}]
+        with pytest.raises(ValueError) as exc_info:
+            parse_simplified_rules(raw)
+        assert "'group' field cannot be empty" in str(exc_info.value)
+
+    def test_rule_with_none_column_rejected(self):
+        raw = [{"sequence_order": {"group": "g", "column": None, "values": ["A", "B"]}}]
+        with pytest.raises(ValueError) as exc_info:
+            parse_simplified_rules(raw)
+        assert "'column' field cannot be empty" in str(exc_info.value)
+
+    def test_defaults_group_column_none_not_applied(self):
+        """A None group_column default is not applied — rule still needs own group."""
+        rules = [{"sequence_order": {"column": "c", "values": ["A", "B"]}}]
+        result = _apply_yaml_defaults(rules, {"group_column": None})
+        # group becomes None, which should then fail validation
+        with pytest.raises(ValueError):
+            parse_simplified_rules(result)
+
+    def test_rule_index_in_error_message_is_one_based(self):
+        """Error messages should reference rules starting at 1, not 0."""
+        raw = [
+            _make_seq_rule(),                                          # Rule 1 — valid
+            {"pair_validation": {"group": "g", "column": "c"}},       # Rule 2 — invalid
+        ]
+        with pytest.raises(ValueError) as exc_info:
+            parse_simplified_rules(raw)
+        assert "Rule 2" in str(exc_info.value)
+
+    def test_multiline_defaults_applied_to_all_rule_types(self):
+        """Defaults propagate correctly to each of the three rule types."""
+        doc = {
+            "defaults": {
+                "group_column": "shared_group",
+                "sort_column": "SharedDate",
+            },
+            "rules": [
+                _make_seq_rule(),
+                _make_pair_rule(),
+                _make_gate_rule(),
+            ],
+        }
+        # Remove any existing 'group' so defaults kick in for all three
+        for item in doc["rules"]:
+            rule_type = next(iter(item))
+            item[rule_type].pop("group", None)
+
+        result = load_simplified_yaml(doc)
+        assert len(result) == 3
+        for r in result:
+            assert r["parameters"]["group_column"] == "shared_group"
+            assert r["parameters"]["sort_column"] == "SharedDate"
+
+    def test_dry_run_with_entirely_invalid_yaml_returns_empty(self):
+        """Dry run on a totally broken rule set silently returns []."""
+        raw = [
+            {"sequence_order": {}},        # missing group, column, values
+            {"pair_validation": {}},       # missing group, column, pairs
+            {"gate": {}},                  # missing group, column, value_to_check
+        ]
+        result = parse_simplified_rules(raw, dry_run=True)
+        assert result == []
+
+    def test_numeric_group_value_accepted(self):
+        """Group values that are integers (e.g. from YAML unquoted) are accepted."""
+        raw = [{"sequence_order": {
+            "group": 12345,   # numeric group id, as YAML would parse an unquoted integer
+            "column": "status",
+            "values": ["A", "B"],
+        }}]
+        result = parse_simplified_rules(raw)
+        assert result[0]["parameters"]["group_column"] == 12345
 
