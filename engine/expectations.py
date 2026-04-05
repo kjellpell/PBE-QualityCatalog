@@ -981,7 +981,7 @@ class ValidateSequenceOrderExpectation:
                 F.lit(f"', {value_col} sequence order violated"),
                 F.lit(f" (first seen: '"),
                 F.col("_first_val").cast("string"),
-                F.lit(f"' at {sort_col}="),
+                F.lit(f"' ({sort_col}="),
                 F.col("_first_sort").cast("string"),
                 F.lit(f", last seen: '"),
                 F.col("_last_val").cast("string"),
