@@ -1599,3 +1599,153 @@ class TestDeltaLogEnrichment:
         }
         missing = required_for_pbi - field_names
         assert not missing, f"Missing required Power BI fields: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# ValidateGateExpectation
+# ---------------------------------------------------------------------------
+
+class TestValidateGateExpectation:
+    """Tests for the validate_gate expectation."""
+
+    def _make_df(self, spark, rows, include_sort_column=False):
+        from pyspark.sql.types import StructType, StructField, StringType
+        if include_sort_column:
+            schema = StructType([
+                StructField("group_id",   StringType(), True),
+                StructField("step",       StringType(), True),
+                StructField("event_date", StringType(), True),
+            ])
+        else:
+            schema = StructType([
+                StructField("group_id", StringType(), True),
+                StructField("step",     StringType(), True),
+            ])
+        return spark.createDataFrame(rows, schema)
+
+    def _rule(self, value_to_check="Approved", sort_col=None, trigger=None):
+        params = {
+            "value_column":   "step",
+            "group_column":   "group_id",
+            "value_to_check": value_to_check,
+        }
+        if sort_col:
+            params["sort_column"] = sort_col
+        if trigger:
+            params["trigger"] = trigger
+        return {
+            "rule_id":     "T-GATE",
+            "name":        "test gate",
+            "expectation": "validate_gate",
+            "parameters":  params,
+        }
+
+    def test_group_with_required_value_passes(self, spark):
+        from engine.expectations import ValidateGateExpectation
+        df = self._make_df(spark, [("G1", "Approved"), ("G1", "Pending")])
+        result, viols = ValidateGateExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "PASSED"
+        assert viols.count() == 0
+
+    def test_group_without_required_value_fails(self, spark):
+        from engine.expectations import ValidateGateExpectation
+        df = self._make_df(spark, [("G1", "Pending"), ("G1", "Review")])
+        result, viols = ValidateGateExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+        rows = viols.collect()
+        assert rows[0]["primary_key_value"] == "G1"
+
+    def test_mixed_groups_only_failed_reported(self, spark):
+        from engine.expectations import ValidateGateExpectation
+        df = self._make_df(spark, [
+            ("G1", "Approved"),  # passes
+            ("G2", "Pending"),   # fails
+        ])
+        result, viols = ValidateGateExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+        pk_values = [r["primary_key_value"] for r in viols.collect()]
+        assert "G2" in pk_values
+        assert "G1" not in pk_values
+
+    def test_empty_dataframe_passes(self, spark):
+        from engine.expectations import ValidateGateExpectation
+        df = self._make_df(spark, [])
+        result, viols = ValidateGateExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "PASSED"
+
+    def test_sort_column_filters_null_rows(self, spark):
+        # G1 has Approved but with null event_date — not counted with sort_column check.
+        from engine.expectations import ValidateGateExpectation
+        df = self._make_df(spark, [
+            ("G1", "Approved", None),   # null sort_col — excluded
+            ("G1", "Pending",  "2024-01-01"),
+        ], include_sort_column=True)
+        result, viols = ValidateGateExpectation().validate(
+            df, self._rule(sort_col="event_date"), spark
+        )
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+
+    def test_sort_column_non_null_row_passes(self, spark):
+        # G1 has Approved with a non-null event_date — group passes.
+        from engine.expectations import ValidateGateExpectation
+        df = self._make_df(spark, [
+            ("G1", "Approved", "2024-06-01"),
+            ("G1", "Pending",  "2024-01-01"),
+        ], include_sort_column=True)
+        result, viols = ValidateGateExpectation().validate(
+            df, self._rule(sort_col="event_date"), spark
+        )
+        assert result["status"] == "PASSED"
+
+    def test_custom_trigger_label_in_violation_detail(self, spark):
+        from engine.expectations import ValidateGateExpectation
+        df = self._make_df(spark, [("G1", "Pending")])
+        result, viols = ValidateGateExpectation().validate(
+            df, self._rule(trigger="Final Approval"), spark
+        )
+        detail = viols.collect()[0]["violation_detail"]
+        assert "Final Approval" in detail
+
+    def test_missing_value_column_returns_error(self, spark):
+        from engine.expectations import ValidateGateExpectation
+        df = self._make_df(spark, [("G1", "Approved")])
+        rule = {
+            "rule_id": "T-GATE-ERR",
+            "name": "test",
+            "expectation": "validate_gate",
+            "parameters": {"group_column": "group_id", "value_to_check": "X"},
+        }
+        result, viols = ValidateGateExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR"
+
+    def test_missing_group_column_returns_error(self, spark):
+        from engine.expectations import ValidateGateExpectation
+        df = self._make_df(spark, [("G1", "Approved")])
+        rule = {
+            "rule_id": "T-GATE-ERR2",
+            "name": "test",
+            "expectation": "validate_gate",
+            "parameters": {"value_column": "step", "value_to_check": "X"},
+        }
+        result, viols = ValidateGateExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR"
+
+    def test_missing_value_to_check_returns_error(self, spark):
+        from engine.expectations import ValidateGateExpectation
+        df = self._make_df(spark, [("G1", "Approved")])
+        rule = {
+            "rule_id": "T-GATE-ERR3",
+            "name": "test",
+            "expectation": "validate_gate",
+            "parameters": {"value_column": "step", "group_column": "group_id"},
+        }
+        result, viols = ValidateGateExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR"
+
+    def test_validate_gate_registered_in_registry(self, spark):
+        from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
+        assert "validate_gate" in CUSTOM_EXPECTATION_REGISTRY
+        assert CUSTOM_EXPECTATION_REGISTRY["validate_gate"].__name__ == "ValidateGateExpectation"
