@@ -21,7 +21,7 @@ from engine.yaml_rules import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _seq_rule(overrides=None):
+def _make_seq_rule(overrides=None):
     """Return a minimal valid sequence_order rule item."""
     cfg = {
         "group":  "order_id",
@@ -33,7 +33,7 @@ def _seq_rule(overrides=None):
     return {"sequence_order": cfg}
 
 
-def _pair_rule(overrides=None):
+def _make_pair_rule(overrides=None):
     """Return a minimal valid pair_validation rule item."""
     cfg = {
         "group":  "process_id",
@@ -45,7 +45,7 @@ def _pair_rule(overrides=None):
     return {"pair_validation": cfg}
 
 
-def _gate_rule(overrides=None):
+def _make_gate_rule(overrides=None):
     """Return a minimal valid gate rule item."""
     cfg = {
         "group":          "process_id",
@@ -64,7 +64,7 @@ def _gate_rule(overrides=None):
 class TestParseSimplifiedRulesHappyPath:
 
     def test_sequence_order_minimal_produces_verbose_rule(self):
-        rules = parse_simplified_rules([_seq_rule()])
+        rules = parse_simplified_rules([_make_seq_rule()])
         assert len(rules) == 1
         r = rules[0]
         assert r["expectation"] == "validate_sequence_order"
@@ -74,15 +74,15 @@ class TestParseSimplifiedRulesHappyPath:
         assert p["expected_sequence"] == ["Draft", "Review", "Approve"]
 
     def test_sequence_order_default_sort_column_applied(self):
-        rules = parse_simplified_rules([_seq_rule()])
+        rules = parse_simplified_rules([_make_seq_rule()])
         assert rules[0]["parameters"]["sort_column"] == DEFAULT_SORT_COLUMN
 
     def test_sequence_order_explicit_sort_column_kept(self):
-        rules = parse_simplified_rules([_seq_rule({"sort_column": "EventDate"})])
+        rules = parse_simplified_rules([_make_seq_rule({"sort_column": "EventDate"})])
         assert rules[0]["parameters"]["sort_column"] == "EventDate"
 
     def test_pair_validation_minimal_produces_verbose_rule(self):
-        rules = parse_simplified_rules([_pair_rule()])
+        rules = parse_simplified_rules([_make_pair_rule()])
         assert len(rules) == 1
         r = rules[0]
         assert r["expectation"] == "validate_paired_presence"
@@ -92,15 +92,15 @@ class TestParseSimplifiedRulesHappyPath:
         assert p["required_pairs"] == [["Start", "Stop"]]
 
     def test_pair_validation_default_sort_column_applied(self):
-        rules = parse_simplified_rules([_pair_rule()])
+        rules = parse_simplified_rules([_make_pair_rule()])
         assert rules[0]["parameters"]["sort_column"] == DEFAULT_SORT_COLUMN
 
     def test_pair_validation_explicit_sort_column_kept(self):
-        rules = parse_simplified_rules([_pair_rule({"sort_column": "Rank"})])
+        rules = parse_simplified_rules([_make_pair_rule({"sort_column": "Rank"})])
         assert rules[0]["parameters"]["sort_column"] == "Rank"
 
     def test_gate_minimal_produces_verbose_rule(self):
-        rules = parse_simplified_rules([_gate_rule()])
+        rules = parse_simplified_rules([_make_gate_rule()])
         assert len(rules) == 1
         r = rules[0]
         assert r["expectation"] == "validate_gate"
@@ -110,30 +110,30 @@ class TestParseSimplifiedRulesHappyPath:
         assert p["value_to_check"] == "Approved"
 
     def test_gate_default_trigger_applied(self):
-        rules = parse_simplified_rules([_gate_rule()])
+        rules = parse_simplified_rules([_make_gate_rule()])
         assert rules[0]["parameters"]["trigger"] == DEFAULT_GATE_TRIGGER
 
     def test_gate_explicit_trigger_kept(self):
-        rules = parse_simplified_rules([_gate_rule({"trigger": "Signed off"})])
+        rules = parse_simplified_rules([_make_gate_rule({"trigger": "Signed off"})])
         assert rules[0]["parameters"]["trigger"] == "Signed off"
 
     def test_gate_default_sort_column_applied(self):
-        rules = parse_simplified_rules([_gate_rule()])
+        rules = parse_simplified_rules([_make_gate_rule()])
         assert rules[0]["parameters"]["sort_column"] == DEFAULT_SORT_COLUMN
 
     def test_gate_explicit_sort_column_kept(self):
-        rules = parse_simplified_rules([_gate_rule({"sort_column": "ClosedDate"})])
+        rules = parse_simplified_rules([_make_gate_rule({"sort_column": "ClosedDate"})])
         assert rules[0]["parameters"]["sort_column"] == "ClosedDate"
 
     def test_multiple_rules_of_different_types(self):
-        rules = parse_simplified_rules([_seq_rule(), _pair_rule(), _gate_rule()])
+        rules = parse_simplified_rules([_make_seq_rule(), _make_pair_rule(), _make_gate_rule()])
         assert len(rules) == 3
         assert rules[0]["expectation"] == "validate_sequence_order"
         assert rules[1]["expectation"] == "validate_paired_presence"
         assert rules[2]["expectation"] == "validate_gate"
 
     def test_rule_ids_are_unique_per_type(self):
-        rules = parse_simplified_rules([_seq_rule(), _seq_rule({"group": "g2"})])
+        rules = parse_simplified_rules([_make_seq_rule(), _make_seq_rule({"group": "g2"})])
         ids = [r["rule_id"] for r in rules]
         assert ids[0] != ids[1]
 

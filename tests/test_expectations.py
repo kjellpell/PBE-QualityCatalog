@@ -1608,9 +1608,9 @@ class TestDeltaLogEnrichment:
 class TestValidateGateExpectation:
     """Tests for the validate_gate expectation."""
 
-    def _make_df(self, spark, rows, with_sort=False):
+    def _make_df(self, spark, rows, include_sort_column=False):
         from pyspark.sql.types import StructType, StructField, StringType
-        if with_sort:
+        if include_sort_column:
             schema = StructType([
                 StructField("group_id",   StringType(), True),
                 StructField("step",       StringType(), True),
@@ -1681,7 +1681,7 @@ class TestValidateGateExpectation:
         df = self._make_df(spark, [
             ("G1", "Approved", None),   # null sort_col — excluded
             ("G1", "Pending",  "2024-01-01"),
-        ], with_sort=True)
+        ], include_sort_column=True)
         result, viols = ValidateGateExpectation().validate(
             df, self._rule(sort_col="event_date"), spark
         )
@@ -1694,7 +1694,7 @@ class TestValidateGateExpectation:
         df = self._make_df(spark, [
             ("G1", "Approved", "2024-06-01"),
             ("G1", "Pending",  "2024-01-01"),
-        ], with_sort=True)
+        ], include_sort_column=True)
         result, viols = ValidateGateExpectation().validate(
             df, self._rule(sort_col="event_date"), spark
         )
