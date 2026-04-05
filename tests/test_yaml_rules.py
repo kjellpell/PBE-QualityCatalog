@@ -11,7 +11,10 @@
 
 import pytest
 from engine.yaml_rules import (
+    load_simplified_yaml,
     parse_simplified_rules,
+    _apply_yaml_defaults,
+    _format_validation_table,
     DEFAULT_SORT_COLUMN,
     DEFAULT_GATE_TRIGGER,
 )
@@ -296,3 +299,277 @@ class TestParseSimplifiedRulesValidation:
             parse_simplified_rules(raw)
         msg = str(exc_info.value)
         assert "Total errors:" in msg
+
+
+# ---------------------------------------------------------------------------
+# _apply_yaml_defaults
+# ---------------------------------------------------------------------------
+
+class TestApplyYamlDefaults:
+
+    def _seq_item(self, cfg):
+        return {"sequence_order": cfg}
+
+    def test_no_defaults_returns_rules_unchanged(self):
+        rules = [self._seq_item({"group": "g", "column": "c", "values": ["A", "B"]})]
+        result = _apply_yaml_defaults(rules, {})
+        assert result == rules
+
+    def test_group_column_default_applied_as_group(self):
+        rules = [self._seq_item({"column": "c", "values": ["A", "B"]})]
+        result = _apply_yaml_defaults(rules, {"group_column": "bu"})
+        assert result[0]["sequence_order"]["group"] == "bu"
+
+    def test_sort_column_default_applied(self):
+        rules = [self._seq_item({"group": "g", "column": "c", "values": ["A", "B"]})]
+        result = _apply_yaml_defaults(rules, {"sort_column": "MyDate"})
+        assert result[0]["sequence_order"]["sort_column"] == "MyDate"
+
+    def test_rule_group_overrides_group_column_default(self):
+        rules = [self._seq_item({"group": "explicit", "column": "c", "values": ["A", "B"]})]
+        result = _apply_yaml_defaults(rules, {"group_column": "default_bu"})
+        assert result[0]["sequence_order"]["group"] == "explicit"
+
+    def test_rule_sort_column_overrides_default(self):
+        rules = [self._seq_item({"group": "g", "column": "c", "values": ["A", "B"], "sort_column": "EventDate"})]
+        result = _apply_yaml_defaults(rules, {"sort_column": "Sluttdato"})
+        assert result[0]["sequence_order"]["sort_column"] == "EventDate"
+
+    def test_multiple_defaults_applied_across_rules(self):
+        rules = [
+            {"sequence_order": {"column": "c", "values": ["A", "B"]}},
+            {"pair_validation": {"column": "c", "pairs": [["A", "B"]]}},
+        ]
+        defaults = {"group_column": "bu", "sort_column": "MyDate"}
+        result = _apply_yaml_defaults(rules, defaults)
+        assert result[0]["sequence_order"]["group"] == "bu"
+        assert result[0]["sequence_order"]["sort_column"] == "MyDate"
+        assert result[1]["pair_validation"]["group"] == "bu"
+        assert result[1]["pair_validation"]["sort_column"] == "MyDate"
+
+    def test_non_dict_item_passed_through_unchanged(self):
+        rules = ["not a dict"]
+        result = _apply_yaml_defaults(rules, {"group_column": "bu"})
+        assert result == ["not a dict"]
+
+    def test_multi_key_item_passed_through_unchanged(self):
+        item = {"sequence_order": {}, "gate": {}}
+        result = _apply_yaml_defaults([item], {"group_column": "bu"})
+        assert result == [item]
+
+    def test_non_dict_cfg_passed_through_unchanged(self):
+        item = {"sequence_order": "not a dict"}
+        result = _apply_yaml_defaults([item], {"group_column": "bu"})
+        assert result == [item]
+
+
+# ---------------------------------------------------------------------------
+# _format_validation_table
+# ---------------------------------------------------------------------------
+
+class TestFormatValidationTable:
+
+    def test_table_contains_headers(self):
+        table = _format_validation_table([])
+        assert "Rule Type" in table
+        assert "Rule #" in table
+        assert "Status" in table
+        assert "Error" in table
+
+    def test_passed_rule_shows_passed_status(self):
+        table = _format_validation_table([("sequence_order", 1, [])])
+        assert "PASSED" in table
+        assert "No issues detected" in table
+
+    def test_failed_rule_shows_failed_status(self):
+        table = _format_validation_table([("gate", 2, ["Missing 'group'"])])
+        assert "FAILED" in table
+        assert "Missing 'group'" in table
+
+    def test_mixed_rules_in_table(self):
+        results = [
+            ("sequence_order", 1, []),
+            ("pair_validation", 2, ["Empty pairs"]),
+            ("gate", 3, []),
+        ]
+        table = _format_validation_table(results)
+        assert "sequence_order" in table
+        assert "pair_validation" in table
+        assert "gate" in table
+        assert "PASSED" in table
+        assert "FAILED" in table
+
+    def test_table_has_separator_lines(self):
+        table = _format_validation_table([("gate", 1, [])])
+        assert "+-" in table
+        assert "-+" in table
+
+    def test_multiple_errors_joined_with_semicolon(self):
+        table = _format_validation_table([("sequence_order", 1, ["err1", "err2"])])
+        assert "err1; err2" in table
+
+
+# ---------------------------------------------------------------------------
+# load_simplified_yaml — new-format dict with defaults
+# ---------------------------------------------------------------------------
+
+class TestLoadSimplifiedYaml:
+
+    def _make_doc(self, defaults=None, rules=None):
+        doc = {}
+        if defaults is not None:
+            doc["defaults"] = defaults
+        if rules is not None:
+            doc["rules"] = rules
+        return doc
+
+    # ---- backward compat: plain list ----
+
+    def test_plain_list_accepted_as_legacy_format(self):
+        raw = [{"sequence_order": {
+            "group": "g", "column": "c", "values": ["A", "B"],
+        }}]
+        result = load_simplified_yaml(raw)
+        assert len(result) == 1
+        assert result[0]["expectation"] == "validate_sequence_order"
+
+    # ---- new dict format ----
+
+    def test_doc_with_defaults_and_rules(self):
+        doc = self._make_doc(
+            defaults={"sort_column": "Sluttdato", "group_column": "bu"},
+            rules=[{"sequence_order": {"column": "c", "values": ["A", "B"]}}],
+        )
+        result = load_simplified_yaml(doc)
+        assert len(result) == 1
+        p = result[0]["parameters"]
+        assert p["group_column"] == "bu"
+        assert p["sort_column"] == "Sluttdato"
+
+    def test_defaults_group_column_maps_to_group(self):
+        doc = self._make_doc(
+            defaults={"group_column": "business_unit"},
+            rules=[{"gate": {"column": "step", "value_to_check": "Approved"}}],
+        )
+        result = load_simplified_yaml(doc)
+        assert result[0]["parameters"]["group_column"] == "business_unit"
+
+    def test_rule_overrides_default_sort_column(self):
+        doc = self._make_doc(
+            defaults={"sort_column": "Sluttdato", "group_column": "bu"},
+            rules=[{"sequence_order": {
+                "column": "c", "values": ["A", "B"], "sort_column": "EventDate",
+            }}],
+        )
+        result = load_simplified_yaml(doc)
+        assert result[0]["parameters"]["sort_column"] == "EventDate"
+
+    def test_rule_overrides_default_group(self):
+        doc = self._make_doc(
+            defaults={"group_column": "default_bu"},
+            rules=[{"sequence_order": {
+                "group": "override_group", "column": "c", "values": ["A", "B"],
+            }}],
+        )
+        result = load_simplified_yaml(doc)
+        assert result[0]["parameters"]["group_column"] == "override_group"
+
+    def test_no_defaults_section_applies_module_defaults(self):
+        doc = self._make_doc(
+            rules=[{"sequence_order": {
+                "group": "g", "column": "c", "values": ["A", "B"],
+            }}],
+        )
+        result = load_simplified_yaml(doc)
+        assert result[0]["parameters"]["sort_column"] == DEFAULT_SORT_COLUMN
+
+    def test_three_mixed_rules_with_defaults(self):
+        doc = self._make_doc(
+            defaults={"group_column": "bu", "sort_column": "Sluttdato"},
+            rules=[
+                {"sequence_order": {"column": "status", "values": ["Start", "Middle", "End"]}},
+                {"pair_validation": {"column": "step", "pairs": [["Draft", "Finalized"]]}},
+                {"gate": {"column": "step", "value_to_check": "Approved"}},
+            ],
+        )
+        result = load_simplified_yaml(doc)
+        assert len(result) == 3
+        for r in result:
+            assert r["parameters"]["group_column"] == "bu"
+            assert r["parameters"]["sort_column"] == "Sluttdato"
+
+    # ---- validation errors with new format ----
+
+    def test_validation_error_in_new_format_raises(self):
+        doc = self._make_doc(
+            defaults={"group_column": "bu"},
+            rules=[{"sequence_order": {"column": "c"}}],  # missing values
+        )
+        with pytest.raises(ValueError) as exc_info:
+            load_simplified_yaml(doc)
+        assert "values" in str(exc_info.value)
+
+    def test_validation_summary_table_in_error_message(self):
+        doc = self._make_doc(
+            defaults={"group_column": "bu"},
+            rules=[
+                {"sequence_order": {"column": "c", "values": ["A", "B"]}},       # valid
+                {"gate": {"column": "step"}},                                       # missing value_to_check
+            ],
+        )
+        with pytest.raises(ValueError) as exc_info:
+            load_simplified_yaml(doc)
+        msg = str(exc_info.value)
+        assert "Validation Summary" in msg
+        assert "PASSED" in msg
+        assert "FAILED" in msg
+
+    # ---- structural errors ----
+
+    def test_non_dict_non_list_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            load_simplified_yaml("not a doc")
+        assert "mapping" in str(exc_info.value).lower() or "list" in str(exc_info.value).lower()
+
+    def test_missing_rules_key_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            load_simplified_yaml({"defaults": {}})
+        assert "rules" in str(exc_info.value)
+
+    def test_rules_not_a_list_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            load_simplified_yaml({"rules": "not a list"})
+        assert "list" in str(exc_info.value)
+
+    def test_defaults_not_a_dict_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            load_simplified_yaml({"defaults": "bad", "rules": []})
+        assert "defaults" in str(exc_info.value)
+
+    def test_empty_defaults_section_allowed(self):
+        doc = self._make_doc(
+            defaults={},
+            rules=[{"sequence_order": {"group": "g", "column": "c", "values": ["A", "B"]}}],
+        )
+        result = load_simplified_yaml(doc)
+        assert len(result) == 1
+
+    def test_null_defaults_section_allowed(self):
+        doc = {"defaults": None, "rules": [
+            {"sequence_order": {"group": "g", "column": "c", "values": ["A", "B"]}},
+        ]}
+        result = load_simplified_yaml(doc)
+        assert len(result) == 1
+
+    # ---- validation table printed on success ----
+
+    def test_success_prints_validation_summary(self, capsys):
+        doc = self._make_doc(
+            defaults={"group_column": "bu"},
+            rules=[{"sequence_order": {"column": "c", "values": ["A", "B"]}}],
+        )
+        load_simplified_yaml(doc)
+        captured = capsys.readouterr()
+        assert "Validation Summary" in captured.out
+        assert "PASSED" in captured.out
+
