@@ -56,7 +56,7 @@ DEFAULT_SORT_COLUMN = "Sluttdato"
 DEFAULT_GATE_TRIGGER = "Approval completed"
 
 # When dry_run=True is passed to parse_simplified_rules / load_simplified_yaml,
-# validation errors are summarised and printed but do NOT raise ValueError.
+# validation errors are summarized and printed but do NOT raise ValueError.
 # Only structurally valid (error-free) rules are translated and returned.
 
 # Supported simplified rule types and their required fields.
@@ -430,24 +430,21 @@ def parse_simplified_rules(raw_rules: list, *, dry_run: bool = False) -> list:
     if all_errors:
         if dry_run:
             summary = _format_dry_run_summary(rule_results)
-            print(summary)
         else:
             table   = _format_validation_table(rule_results)
             total   = len(all_errors)
-            message = (
+            summary = (
                 f"\nValidation Summary:\n{table}"
                 f"\n\nTotal errors: {total}."
             )
-            print(message)
-            raise ValueError(message)
+        print(summary)
+        if not dry_run:
+            raise ValueError(summary)
     else:
         if dry_run:
-            summary = _format_dry_run_summary(rule_results)
-            print(summary)
+            print(_format_dry_run_summary(rule_results))
         else:
-            table   = _format_validation_table(rule_results)
-            summary = f"\nValidation Summary:\n{table}"
-            print(summary)
+            print(f"\nValidation Summary:\n{_format_validation_table(rule_results)}")
 
     return [_TRANSLATORS[rt](i, cfg) for rt, i, cfg in valid_rules]
 

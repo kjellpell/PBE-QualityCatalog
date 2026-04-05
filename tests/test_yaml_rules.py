@@ -898,12 +898,12 @@ class TestRealLifeUseCases:
         rules = []
         for i in range(50):
             if i % 5 == 0:
-                # Invalid: missing values list
+                # Invalid: missing values list (10 rules at indices 0,5,10,...,45)
                 rules.append({"sequence_order": {"group": f"g_{i}", "column": "col"}})
             else:
                 rules.append(_make_seq_rule({"group": f"g_{i}"}))
         result = parse_simplified_rules(rules, dry_run=True)
-        assert len(result) == 40  # 50 - 10 invalid (indices 0,5,10,15,20,25,30,35,40,45)
+        assert len(result) == 40  # 50 total - 10 invalid = 40 valid
 
 
 # ---------------------------------------------------------------------------
