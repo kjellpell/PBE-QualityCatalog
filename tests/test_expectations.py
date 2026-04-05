@@ -458,7 +458,7 @@ class TestValidateSequenceOrderExpectation:
             "parameters": {
                 "value_column":      "step",
                 "group_column":      "group_id",
-                "date_column":       "event_date",
+                "sort_column":       "event_date",
                 "expected_sequence": ["Start", "Middle", "End"],
             },
         }
@@ -498,7 +498,7 @@ class TestValidateSequenceOrderExpectation:
             "parameters": {
                 "milestone_column":  "step",     # old param name — no longer supported
                 "group_column":      "group_id",
-                "date_column":       "event_date",
+                "sort_column":       "event_date",
                 "expected_sequence": ["Start", "End"],
             },
         }
@@ -508,10 +508,109 @@ class TestValidateSequenceOrderExpectation:
             "got: " + result["status"]
         )
 
+    def test_missing_sort_column_returns_error(self, spark):
+        # sort_column is required; omitting it must return ERROR.
+        from engine.expectations import ValidateSequenceOrderExpectation
+        df = self._make_df(spark, [
+            ("G1", "Start", "2024-01-01"),
+            ("G1", "End",   "2024-06-01"),
+        ])
+        rule = {
+            "rule_id": "T-SEQ-NO-SORT",
+            "name": "test",
+            "expectation": "validate_sequence_order",
+            "parameters": {
+                "value_column":      "step",
+                "group_column":      "group_id",
+                # sort_column intentionally omitted
+                "expected_sequence": ["Start", "End"],
+            },
+        }
+        result, _ = ValidateSequenceOrderExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR", (
+            "Missing sort_column must return ERROR; got: " + result["status"]
+        )
+
+    def test_nonexistent_sort_column_returns_error(self, spark):
+        # sort_column pointing to a column not in the DataFrame must return ERROR.
+        from engine.expectations import ValidateSequenceOrderExpectation
+        df = self._make_df(spark, [
+            ("G1", "Start", "2024-01-01"),
+            ("G1", "End",   "2024-06-01"),
+        ])
+        rule = {
+            "rule_id": "T-SEQ-BAD-SORT",
+            "name": "test",
+            "expectation": "validate_sequence_order",
+            "parameters": {
+                "value_column":      "step",
+                "group_column":      "group_id",
+                "sort_column":       "nonexistent_col",
+                "expected_sequence": ["Start", "End"],
+            },
+        }
+        result, _ = ValidateSequenceOrderExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR", (
+            "Nonexistent sort_column must return ERROR; got: " + result["status"]
+        )
+
+    def test_numeric_sort_column_correct_order_passes(self, spark):
+        # Sort by a numeric rank column instead of a date string.
+        from engine.expectations import ValidateSequenceOrderExpectation
+        schema = StructType([
+            StructField("group_id", StringType(),  True),
+            StructField("step",     StringType(),  True),
+            StructField("rank",     IntegerType(), True),
+        ])
+        df = spark.createDataFrame([
+            ("G1", "Start",  1),
+            ("G1", "Middle", 2),
+            ("G1", "End",    3),
+        ], schema)
+        rule = {
+            "rule_id": "T-SEQ-NUMERIC",
+            "name": "test numeric sort",
+            "expectation": "validate_sequence_order",
+            "parameters": {
+                "value_column":      "step",
+                "group_column":      "group_id",
+                "sort_column":       "rank",
+                "expected_sequence": ["Start", "Middle", "End"],
+            },
+        }
+        result, viols = ValidateSequenceOrderExpectation().validate(df, rule, spark)
+        assert result["status"] == "PASSED"
+
+    def test_numeric_sort_column_wrong_order_fails(self, spark):
+        # Sort by numeric rank; End ranked lower than Start → violation.
+        from engine.expectations import ValidateSequenceOrderExpectation
+        schema = StructType([
+            StructField("group_id", StringType(),  True),
+            StructField("step",     StringType(),  True),
+            StructField("rank",     IntegerType(), True),
+        ])
+        df = spark.createDataFrame([
+            ("G1", "End",   1),
+            ("G1", "Start", 2),
+        ], schema)
+        rule = {
+            "rule_id": "T-SEQ-NUMERIC-FAIL",
+            "name": "test numeric sort failure",
+            "expectation": "validate_sequence_order",
+            "parameters": {
+                "value_column":      "step",
+                "group_column":      "group_id",
+                "sort_column":       "rank",
+                "expected_sequence": ["Start", "End"],
+            },
+        }
+        result, viols = ValidateSequenceOrderExpectation().validate(df, rule, spark)
+        assert result["status"] == "FAILED"
+
     def test_gate_skips_open_groups(self, spark):
-        # G1 has both Start and End, but EndDate is NULL — group not yet closed.
-        # G2 has both Start and End with EndDate set — gate passes, order is correct.
-        # With a gate, G1 must be silently skipped (PASSED overall).
+        # G1 has both Start and End, but end_date is NULL — group not yet closed.
+        # G2 has both Start and End with end_date set — gate passes, order is correct.
+        # With a gate using sort_column, G1 must be silently skipped (PASSED overall).
         from engine.expectations import ValidateSequenceOrderExpectation
         schema = StructType([
             StructField("group_id",   StringType(), True),
@@ -532,12 +631,12 @@ class TestValidateSequenceOrderExpectation:
             "parameters": {
                 "value_column":      "step",
                 "group_column":      "group_id",
-                "date_column":       "event_date",
+                "sort_column":       "event_date",
                 "expected_sequence": ["Start", "End"],
                 "completion_gate": {
                     "value_column": "step",
                     "value":        "End",
-                    "date_column":  "end_date",
+                    "sort_column":  "end_date",
                 },
             },
         }
@@ -546,6 +645,42 @@ class TestValidateSequenceOrderExpectation:
             "Open groups must be skipped by the gate; expected PASSED got "
             + result["status"]
         )
+
+    def test_gate_without_sort_column_includes_all_groups_with_value(self, spark):
+        # Gate with no sort_column: any group with the gate value is considered closed.
+        # Both G1 and G2 have End → both evaluated. G1 has wrong order → FAILED.
+        from engine.expectations import ValidateSequenceOrderExpectation
+        schema = StructType([
+            StructField("group_id",   StringType(), True),
+            StructField("step",       StringType(), True),
+            StructField("event_date", StringType(), True),
+        ])
+        df = spark.createDataFrame([
+            ("G1", "End",   "2024-01-01"),  # End before Start — wrong
+            ("G1", "Start", "2024-06-01"),
+            ("G2", "Start", "2024-01-01"),
+            ("G2", "End",   "2024-06-01"),  # correct order
+        ], schema)
+        rule = {
+            "rule_id": "T-SEQ-GATE-NO-SORT",
+            "name": "test gate no sort_column",
+            "expectation": "validate_sequence_order",
+            "parameters": {
+                "value_column":      "step",
+                "group_column":      "group_id",
+                "sort_column":       "event_date",
+                "expected_sequence": ["Start", "End"],
+                "completion_gate": {
+                    "value_column": "step",
+                    "value":        "End",
+                    # no sort_column — presence check only
+                },
+            },
+        }
+        result, viols = ValidateSequenceOrderExpectation().validate(df, rule, spark)
+        assert result["status"] == "FAILED"
+        pk_values = [r["primary_key_value"] for r in viols.collect()]
+        assert "G1" in pk_values
 
     def test_gate_catches_bad_order_in_closed_groups(self, spark):
         # G1 is closed (End has end_date) but order is wrong — must FAIL.
@@ -567,12 +702,12 @@ class TestValidateSequenceOrderExpectation:
             "parameters": {
                 "value_column":      "step",
                 "group_column":      "group_id",
-                "date_column":       "event_date",
+                "sort_column":       "event_date",
                 "expected_sequence": ["Start", "End"],
                 "completion_gate": {
                     "value_column": "step",
                     "value":        "End",
-                    "date_column":  "end_date",
+                    "sort_column":  "end_date",
                 },
             },
         }
@@ -593,7 +728,7 @@ class TestValidateSequenceOrderExpectation:
             "parameters": {
                 "value_column":      "step",
                 "group_column":      "group_id",
-                "date_column":       "event_date",
+                "sort_column":       "event_date",
                 "expected_sequence": [
                     {"value": "Start"},
                     {"value": "Middle", "flexible": True},
@@ -645,7 +780,7 @@ class TestValidateSequenceOrderExpectation:
             "parameters": {
                 "value_column":      "step",
                 "group_column":      "group_id",
-                "date_column":       "event_date",
+                "sort_column":       "event_date",
                 "expected_sequence": [
                     {"value": "Start"},
                     {"value": "Middle"},
@@ -729,7 +864,7 @@ class TestValidatePairedPresenceExpectation:
 
     def test_gate_skips_open_groups(self, spark):
         # G1 has only Start — pair incomplete. But it is open (no Stop with end_date).
-        # With a gate, G1 must be silently skipped (PASSED overall).
+        # With a gate using sort_column, G1 must be silently skipped (PASSED overall).
         from engine.expectations import ValidatePairedPresenceExpectation
         schema = StructType([
             StructField("group_id", StringType(), True),
@@ -750,7 +885,7 @@ class TestValidatePairedPresenceExpectation:
                 "completion_gate": {
                     "value_column": "step",
                     "value":        "Stop",
-                    "date_column":  "end_date",
+                    "sort_column":  "end_date",
                 },
             },
         }
@@ -782,7 +917,37 @@ class TestValidatePairedPresenceExpectation:
                 "completion_gate": {
                     "value_column": "step",
                     "value":        "Stop",
-                    "date_column":  "end_date",
+                    "sort_column":  "end_date",
+                },
+            },
+        }
+        result, viols = ValidatePairedPresenceExpectation().validate(df, rule, spark)
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+
+    def test_gate_without_sort_column_uses_presence_check(self, spark):
+        # Gate with no sort_column: any group with the gate value is considered closed.
+        # G1 has Stop (no end_date column needed) → evaluated → Start missing → FAILED.
+        from engine.expectations import ValidatePairedPresenceExpectation
+        schema = StructType([
+            StructField("group_id", StringType(), True),
+            StructField("step",     StringType(), True),
+        ])
+        df = spark.createDataFrame([
+            ("G1", "Stop"),  # closed by presence — missing Start
+        ], schema)
+        rule = {
+            "rule_id": "T-PAIR-GATE-NO-SORT",
+            "name": "test gate no sort_column",
+            "expectation": "validate_paired_presence",
+            "parameters": {
+                "value_column":   "step",
+                "group_column":   "group_id",
+                "required_pairs": [["Start", "Stop"]],
+                "completion_gate": {
+                    "value_column": "step",
+                    "value":        "Stop",
+                    # no sort_column — presence check only
                 },
             },
         }
