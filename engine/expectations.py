@@ -1107,6 +1107,118 @@ class ValidatePairedPresenceExpectation:
 
 
 # -----------------------------------------------------------------------------
+# validate_gate
+# Validates that every group contains at least one row where value_column
+# equals value_to_check.  Groups that lack the required value are violations.
+#
+# This is the standalone companion to the completion_gate filter used inside
+# validate_sequence_order and validate_paired_presence.  Use it to assert that
+# every group has completed a gating step (e.g. received an approval).
+# -----------------------------------------------------------------------------
+class ValidateGateExpectation:
+    """
+    Validates that each group has at least one row where value_column equals
+    value_to_check.
+
+    YAML parameters:
+      value_column   - column holding the value to check
+      group_column   - column that identifies the group
+      value_to_check - the required value that must be present in each group
+      sort_column    - (optional) when provided, only rows where sort_column
+                       IS NOT NULL are considered for the check
+      trigger        - (optional) human-readable label for the gate; used in
+                       violation details (default: "Approval completed")
+    """
+
+    def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
+        params         = rule.get("parameters", {})
+        value_col      = params.get("value_column")
+        group_col      = params.get("group_column")
+        value_to_check = params.get("value_to_check")
+        sort_col       = params.get("sort_column")
+        trigger        = params.get("trigger", "Approval completed")
+
+        if not value_col:
+            return (
+                _error_result(
+                    "Parameter 'value_column' is required for validate_gate."
+                ),
+                _empty_violations(spark),
+            )
+        if not group_col:
+            return (
+                _error_result(
+                    "Parameter 'group_column' is required for validate_gate."
+                ),
+                _empty_violations(spark),
+            )
+        if value_to_check is None:
+            return (
+                _error_result(
+                    "Parameter 'value_to_check' is required for validate_gate."
+                ),
+                _empty_violations(spark),
+            )
+
+        total = df.count()
+        if total == 0:
+            return _passed_result(total), _empty_violations(spark)
+
+        # Build the filter for rows that satisfy the gate condition.
+        gate_filter = F.col(value_col) == value_to_check
+        if sort_col:
+            gate_filter = gate_filter & F.col(sort_col).isNotNull()
+
+        # Groups that have at least one qualifying row are considered "passed".
+        passed_groups = (
+            df.filter(gate_filter)
+            .select(group_col)
+            .distinct()
+        )
+
+        # Violation: any group in the dataset that did NOT pass the gate.
+        all_groups = df.select(group_col).distinct()
+        failed_groups = all_groups.join(passed_groups, on=group_col, how="left_anti")
+        failed = failed_groups.count()
+
+        if failed == 0:
+            return _passed_result(total), _empty_violations(spark)
+
+        expected_cond = (
+            f"Group must contain at least one row where "
+            f"{value_col} = '{value_to_check}'"
+            + (f" and {sort_col} IS NOT NULL" if sort_col else "")
+        )
+
+        violations_out = failed_groups.select(
+            F.col(group_col).cast("string").alias("primary_key_value"),
+            F.lit(value_col).alias("violated_column"),
+            F.lit(None).cast("string").alias("actual_value"),
+            F.lit(expected_cond).alias("expected_condition"),
+            F.concat(
+                F.lit(f"Gate '{trigger}': {group_col}='"),
+                F.col(group_col).cast("string"),
+                F.lit(
+                    f"' does not have a row where {value_col} = '{value_to_check}'"
+                ),
+            ).alias("violation_detail"),
+        )
+
+        result = {
+            "total_rows":  total,
+            "passed_rows": total - failed,
+            "failed_rows": failed,
+            "success_pct": round((total - failed) / total * 100, 2),
+            "status":      "FAILED",
+            "details": (
+                f"{failed} group(s) in {group_col} do not have "
+                f"'{value_to_check}' in {value_col} (gate: '{trigger}')."
+            ),
+        }
+        return result, violations_out
+
+
+# -----------------------------------------------------------------------------
 # validate_no_orphan
 # A stop-type value must not exist without the corresponding start-type value.
 # Replaces the former table-specific expect_no_orphan_milestones.
@@ -1577,6 +1689,11 @@ CUSTOM_EXPECTATION_REGISTRY = {
     # Sequence / ordering validators
     # -------------------------------------------------------------------------
     "validate_sequence_order":              ValidateSequenceOrderExpectation,
+
+    # -------------------------------------------------------------------------
+    # Gate / completion validators
+    # -------------------------------------------------------------------------
+    "validate_gate":                        ValidateGateExpectation,
 
     # -------------------------------------------------------------------------
     # Paired-presence validators

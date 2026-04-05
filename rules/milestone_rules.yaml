@@ -19,7 +19,7 @@
 #                                    operator (>, <, >=, <=, ==, !=),
 #                                    pk_column
 #                      validate_sequence_order
-#                        parameters: value_column, group_column, date_column,
+#                        parameters: value_column, group_column, sort_column,
 #                                    expected_sequence (ordered list)
 #                      validate_paired_presence
 #                        parameters: value_column, group_column,
@@ -102,7 +102,7 @@ rules:
     parameters:
       value_column: Milepel
       group_column: prosess_id
-      date_column: StartDate
+      sort_column: StartDate
       expected_sequence:
         - Startbehandling
         - Behandling
@@ -110,7 +110,7 @@ rules:
       completion_gate:
         value_column: Milepel
         value: Stoppbehandling
-        date_column: EndDate
+        sort_column: EndDate
     severity: high
     category: Business Logic
     owner: IT
@@ -134,7 +134,7 @@ rules:
       completion_gate:
         value_column: Milepel
         value: Stoppbehandling
-        date_column: EndDate
+        sort_column: EndDate
     severity: critical
     category: Business Logic
     owner: IT
@@ -204,7 +204,7 @@ rules:
         column: prosess_id
     severity: critical
     category: Referential Integrity
-      owner: IT
+    owner: IT
 
   # ---------------------------------------------------------------------------
   # Aggregate validations
