@@ -148,8 +148,6 @@ CREATE TABLE IF NOT EXISTS dq_execution_metrics (
     script_name        STRING,
     status             STRING,
     dry_run            BOOLEAN,
-    config_version     STRING,
-    pipeline_version   STRING,
     output_target      STRING,
     artifact_target    STRING,
     row_count          BIGINT,

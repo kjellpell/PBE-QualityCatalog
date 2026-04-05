@@ -1,6 +1,38 @@
 # PBE Quality Catalog
 
-YAML-driven data quality framework for the PBE case management platform, built on Apache Spark and [Great Expectations](https://greatexpectations.io/) (GX Core).
+YAML-driven data quality framework for the PBE case management platform, built on Apache Spark, Delta Lake, and Great Expectations (GX Core).
+
+This README is for IT operations and maintainers.
+For business rule authoring, see RULES_GUIDE.md.
+
+---
+
+## What It Does
+
+The Quality Catalog runs data quality checks across Process, Milestone, and Invoice data and stores both summary and row-level outputs in Delta tables.
+
+Core capabilities:
+
+- Single validation pipeline across domains
+- Automatic discovery of YAML rule catalogs
+- Run metrics for observability and support
+- Current-state issue tracking (Active and Resolved)
+- Clear IT/business ownership split
+
+---
+
+## Why IT Uses It
+
+- Reliable operations:
+  preflight catches missing sources and config before schedule time.
+- Maintainable design:
+  stable engine code, changeable YAML rules.
+- Observable runs:
+  each execution logs status, timing, retryability, and targets.
+- Safer rollout:
+  dry-run writes to temporary tables.
+- Backward-safe schema setup:
+  setup is rerunnable and additive.
 
 ---
 
@@ -12,239 +44,193 @@ PBE-QualityCatalog/
 │   ├── QualityCatalogConfig.py
 │   └── QualityCatalogRuntime.py
 ├── engine/
-│   ├── expectations.py          # All custom expectation classes (consolidated)
-│   ├── runtime.py               # Config/runtime/target resolution helpers
-│   └── validation_runner.py     # Core engine — discovers and runs all rule files
+│   ├── expectations.py
+│   ├── resolution.py
+│   ├── runtime.py
+│   └── validation_runner.py
 ├── rules/
-│   ├── process_rules.yaml       # Rules for Saksbehandling.Prosesser
-│   ├── milestone_rules.yaml     # Rules for Saksbehandling.Milepel
-│   └── invoice_rules.yaml       # Rules for Saksbehandling.Fakturalinjer
-├── outputs/
-│   └── validation_results/      # Delta table result logs (dq_run_results, dq_violations)
+│   ├── process_rules.yaml
+│   ├── milestone_rules.yaml
+│   └── invoice_rules.yaml
 ├── tests/
-│   └── test_expectations.py     # Unit tests for expectation classes
-├── nb_dq_00_setup.py            # One-time Delta table setup (run before first validation)
-├── nb_dq_01_preflight.py        # Preflight checks before scheduled runs
+│   └── test_expectations.py
+├── nb_dq_00_setup.py
+├── nb_dq_01_preflight.py
 ├── DEPLOY.md
-├── dq_powerbi_measures.md       # Power BI DAX measure reference
+├── RULES_GUIDE.md
+├── OPERATIONS_QUICK_REF.md
+├── dq_powerbi_measures.md
 └── README.md
 ```
 
 ---
 
-## Quick Start
-
-### 1. Prerequisites
-
-- Microsoft Fabric workspace (or any Spark 3.x + Delta Lake environment)
-- Great Expectations Core: `pip install great-expectations==1.3.10`
-
-### 2. First-time setup
-
-Run `nb_dq_00_setup.py` once to create the Delta output tables:
-
-```
-dq_run_results   – one row per rule per run (summary / scorecard)
-dq_violations    – one row per offending record per rule per run (drill-through)
-dq_execution_metrics – one row per runner execution (operational evidence)
-```
-
-### 3. Preflight
-
-Run `nb_dq_01_preflight.py` before scheduled execution or after config promotion.
-
-### 4. Running validations
-
-Execute `engine/validation_runner.py`.  The engine will:
-
-1. Scan the `rules/` folder and load **all** `*.yaml` files automatically.
-2. For each rule file, load the source table from the Spark metastore using
-   the `database` and `table` fields in the YAML header.
-3. Apply any configured pre-joins (e.g. enriching Prosesser with Status).
-4. Run every rule in the file, dispatching to either:
-   - **GX native** expectations (via the GX Core validator on a Pandas sample), or
-   - **Custom PySpark** expectations (via `CUSTOM_EXPECTATION_REGISTRY`).
-5. Write results to `dq_run_results` and `dq_violations`.
-6. Append execution evidence to `default.dq_execution_metrics`.
-
 ## Runtime Model
 
-`config/QualityCatalogConfig.py` holds rules directory, sample size, target tables, and version markers.
+### Config layers
 
-`config/QualityCatalogRuntime.py` controls runtime behavior:
+- QualityCatalogConfig.py:
+  table names, rules folder, sample size, and execution metadata markers.
+- QualityCatalogRuntime.py:
+  behavior flags and retry markers.
 
-- `DRY_RUN` writes to `_tmp` target tables.
-- `FAIL_ON_EMPTY_RULES` fails if the rules directory is empty.
-- `FAIL_ON_EMPTY_SOURCE` fails when a configured source table is empty.
+### Config loading order
 
-Runtime files are loaded from `/lakehouse/default/Files/Configs` first and fall back to the repo-local `config/` directory unless `REQUIRE_LAKEHOUSE_CONFIG=1` is set.
+1. /lakehouse/default/Files/Configs
+2. repo-local config fallback
 
----
+Set REQUIRE_LAKEHOUSE_CONFIG=1 to require Lakehouse config.
 
-## Adding New Rules
+### Key runtime toggles
 
-No Python changes are needed to add a new rule.
-
-1. Open the appropriate YAML file in `rules/` (or create a new one for a new domain).
-2. Copy an existing rule block as a template and set the new `rule_id`, `name`, `expectation`, and `parameters`.
-3. Save the file.  The next validation run picks it up automatically.
-
-### Adding a new rule file (new domain)
-
-1. Create `rules/my_domain_rules.yaml` with the required header fields:
-
-```yaml
-rule_group: MyDomain
-table: MyTable
-database: MyDatabase
-description: Rules for MyDomain
-
-pk_column: MyPrimaryKey
-prosess_id_column: prosess_id   # or null if not applicable
-
-rules:
-  - rule_id: MY-001
-    ...
-```
-
-2. The runner discovers and processes it on the next run — no code changes required.
+- DRY_RUN:
+  write to temporary targets with _tmp suffix.
+- FAIL_ON_EMPTY_RULES:
+  fail if no YAML rule catalogs are found.
+- FAIL_ON_EMPTY_SOURCE:
+  fail if a configured source table is empty.
+- MAX_RETRIES and RETRYABLE_ERROR_MARKERS:
+  classify retryability in execution metrics.
 
 ---
 
-## Adding New Expectation Classes
+## Execution Flow
 
-All expectation logic lives in `engine/expectations.py`.
-
-1. Create a class with a `validate(df, rule, spark) → (result_dict, violations_df)` method.
-2. Add it to `CUSTOM_EXPECTATION_REGISTRY` at the bottom of `engine/expectations.py`.
-3. Reference it by name in any YAML rule file.
-
-### Contract
-
-```python
-# result_dict
-{
-    "total_rows":  int,    # rows evaluated
-    "passed_rows": int,
-    "failed_rows": int,
-    "success_pct": float,  # 0.0–100.0
-    "status":      str,    # "PASSED" | "FAILED" | "ERROR"
-    "details":     str,    # human-readable summary
-}
-
-# violations_df columns
-primary_key_value   STRING
-violated_column     STRING
-actual_value        STRING
-expected_condition  STRING
-violation_detail    STRING
-```
-
----
-
-## Available Expectation Types
-
-| Expectation | Type | Description |
-|---|---|---|
-| `expect_column_values_to_not_be_null` | GX native | Null check on a column |
-| `expect_column_values_to_be_in_set` | GX native | Allowed value set |
-| `validate_column_comparison` | Custom | Column A `<op>` Column B per row |
-| `sql_validation` / `sql` | Custom | SQL query — any returned row = violation |
-| `validate_aggregate_rule` | Custom | Aggregate (SUM/COUNT/AVG/MIN/MAX) satisfies `<op>` threshold |
-| `expect_column_sum_to_equal` | Custom | SUM(column) == expected ± tolerance |
-| `expect_row_count_to_be_between` | Custom | Row count within [min, max] |
-| `expect_unique_combination_of_columns` | Custom | Composite uniqueness check |
-| `validate_foreign_key` | Custom | Referential integrity across tables |
-| `validate_not_null_when` | Custom | check_columns must be NOT NULL when condition_column matches |
-| `validate_column_exclusions` | Custom | Forbidden-state check — no row may satisfy the given condition |
-| `validate_sequence_order` | Custom | Values appear in the specified chronological order per group |
-| `validate_paired_presence` | Custom | Both sides of each required pair must be present per group |
-| `validate_no_orphan` | Custom | Stop event without a corresponding start event |
-| `validate_conditional_column_value` | Custom | Column value must satisfy a condition when another column matches |
-| `validate_group_aggregate_match` | Custom | Aggregate per group matches a reference column within tolerance |
-
-### `validate_column_exclusions` — Negative / Forbidden-State Validation
-
-Use this expectation to assert that a particular combination of column values is **never** allowed.  Any row matching the `condition` is treated as a violation.
-
-```yaml
-- rule: "Columns A and B cannot both be NULL"
-  expectation: "validate_column_exclusions"
-  parameters:
-    condition: "ColumnA IS NULL AND ColumnB IS NULL"
-    pk_column: "Saksnummer"
-    severity:  "Critical"
-```
-
-**Parameters**
-
-| Parameter | Required | Description |
-|---|---|---|
-| `condition` | ✅ | Spark SQL expression that identifies forbidden rows. Any row matching this filter is a violation. |
-| `pk_column` | ❌ | Primary key column used to identify violating rows (default: `"id"`). |
+1. Load config/runtime modules and validate required keys.
+2. Resolve output targets (production or dry-run).
+3. Discover all rules/*.yaml catalogs automatically.
+4. For each catalog:
+   - Read source table from Spark metastore.
+   - Apply optional pre-joins.
+   - Run each rule via GX native or custom expectation registry.
+5. Append summary rows to dq_run_results.
+6. Apply MERGE-based issue lifecycle updates in dq_violations.
+7. Write execution evidence to default.dq_execution_metrics.
 
 ---
 
 ## Output Tables
 
-### `dq_run_results` — one row per rule per run
+### dq_run_results
 
-| Column | Description |
-|---|---|
-| `run_id` | UUID for this run |
-| `rule_group` | Process / Milestone / Invoice |
-| `rule_id` | e.g. PROC-004 |
-| `rule_name` | Human-readable rule name |
-| `table_name` | Source table validated |
-| `expectation` | Expectation type applied |
-| `severity` | critical / high / medium / low |
-| `status` | PASSED / FAILED / ERROR |
-| `success_pct` | % of rows that passed |
-| `rule_category` | Completeness / Business Logic / etc. |
+One row per rule per run.
 
-### `dq_violations` — current-state violation tracking (one row per unique issue)
+Primary uses:
 
-Each row tracks the **current state** of a single data quality issue identified by `(rule_id, primary_key_value)`.  On every run the engine automatically updates the status using a Delta MERGE so there is never more than one active record per unique issue.
+- Quality score and trend reporting
+- Rule-level pass/fail/error analysis
+- Severity and category slicing
 
-| Column | Description |
-|---|---|
-| `run_id` | UUID for the validation run that last touched this violation |
-| `rule_id` | Links back to `dq_run_results` |
-| `failure_type` | Failure category from the rule definition (e.g. `Completeness`, `Business Logic`, `Referential Integrity`) — use for Power BI slice-and-dice |
-| `prosess_id` | Process ID for drill-through |
-| `primary_key_value` | PK of the offending row — use this to locate the responsible owner outside the framework |
-| `violated_column` | Column that caused the violation |
-| `violation_detail` | Human-readable description of the issue |
-| `severity` | critical / high / medium / low |
-| `issue_status` | `Active` while the violation persists; `Resolved` once the underlying data is fixed |
-| `resolution_timestamp` | ISO-8601 timestamp of when the issue was automatically resolved (NULL while still Active) |
-| `run_timestamp` | Timestamp of the most recent validation run that confirmed this violation |
+### dq_violations
+
+One row per unique rule/key issue, maintained as current state.
+
+Primary uses:
+
+- Record-level remediation queues
+- Active issue monitoring
+- Resolution trend tracking
+
+### default.dq_execution_metrics
+
+One row per runner execution.
+
+Primary uses:
+
+- Run reliability monitoring
+- Failure triage and retry decisions
+- Duration and throughput trends
 
 ---
 
-## Automated Resolution Tracking
+## Resolution Tracking
 
-Every validation run performs a three-step MERGE against `dq_violations`:
+Resolution tracking is MERGE-based:
 
-1. **Detect resolved issues** — Any violation that was `Active` in the previous run but whose `(rule_id, primary_key_value)` is **absent** from the current run's violations is automatically marked `Resolved` with a `resolution_timestamp`.
-2. **Refresh still-active violations** — Violations that persist have their `run_timestamp` and `violation_detail` updated so the record always reflects the latest run.
-3. **Insert new violations** — Brand-new violations are inserted with `issue_status = 'Active'` and `resolution_timestamp = NULL`.
+1. Previously Active issues missing from the current run are marked Resolved.
+2. Still-active issues are refreshed with latest run metadata.
+3. New issues are inserted as Active.
 
-This means Power BI / Excel dashboards can filter on `issue_status = 'Active'` to see **only open issues**, and on `issue_status = 'Resolved'` to track how quickly issues are fixed.
-
-### Backward compatibility
-
-If the MERGE fails (e.g. the table does not yet exist in the metastore), the engine falls back to a plain append and prints a warning.  Re-running `nb_dq_00_setup.py` creates or upgrades the table (using `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE … ADD COLUMNS IF NOT EXISTS`) so the full MERGE-based tracking is enabled without data loss.
+If MERGE is unavailable, the system falls back to append and logs a warning.
+Rerun nb_dq_00_setup.py to ensure required tables and columns exist.
 
 ---
 
-## Running Tests
+## IT Runbook
+
+### First-time setup
+
+1. Install prerequisites in the Spark environment:
+   - great-expectations==1.3.10
+2. Run nb_dq_00_setup.py once.
+
+### Preflight before promotion or scheduling
+
+1. Run nb_dq_01_preflight.py.
+2. Confirm catalogs are discoverable.
+3. Confirm all referenced source tables exist.
+
+### Scheduled execution
+
+1. Run engine/validation_runner.py after source refresh.
+2. Verify summary output and row counts.
+3. Confirm evidence in dq_execution_metrics.
+
+For a one-page checklist, see OPERATIONS_QUICK_REF.md.
+
+---
+
+## Ownership
+
+### IT team
+
+- Runtime, deployment, scheduling
+- Config control and environment hardening
+- Output table lifecycle and schema compatibility
+- Monitoring, alerting, incident response
+- Custom expectation engineering when needed
+
+### Business team
+
+- Rule definition and maintenance in YAML
+- Severity/category/owner governance
+- Interpretation and follow-up of violations
+
+Business authoring guidance is in RULES_GUIDE.md.
+
+---
+
+## Troubleshooting
+
+- No catalogs found:
+  verify RULES_DIR and FAIL_ON_EMPTY_RULES.
+- Missing source tables:
+  run preflight and confirm metastore names.
+- Config loading failures:
+  verify Lakehouse config path and REQUIRE_LAKEHOUSE_CONFIG.
+- Violation MERGE failures:
+  rerun nb_dq_00_setup.py and verify Delta support.
+- Unexpected expectation errors:
+  validate expectation names, parameters, and source columns in YAML.
+
+---
+
+## Testing
+
+Recommended local validation:
 
 ```bash
 pip install pytest pyspark
 pytest tests/ -v
 ```
 
-Tests in `tests/test_expectations.py` cover the core expectation classes and the resolution-tracking helpers without requiring a real Spark cluster (runs in local mode).
+Tests cover core custom expectations and resolution helper behavior in local Spark mode.
 
-Deployment guidance is documented in `DEPLOY.md`.
+---
+
+## Related Documents
+
+- DEPLOY.md: deployment and environment guidance
+- dq_powerbi_measures.md: reporting measures reference
+- RULES_GUIDE.md: business rule authoring guide
+- OPERATIONS_QUICK_REF.md: one-page operations checklist

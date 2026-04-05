@@ -23,8 +23,6 @@ def main() -> None:
         config_module,
         [
             "DEFAULT_SCHEMA",
-            "CONFIG_VERSION",
-            "PIPELINE_VERSION",
             "RULES_DIR",
             "GX_SAMPLE_SIZE",
             "DQ_RESULTS_TABLE",
