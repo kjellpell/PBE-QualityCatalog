@@ -55,6 +55,10 @@
 DEFAULT_SORT_COLUMN = "Sluttdato"
 DEFAULT_GATE_TRIGGER = "Approval completed"
 
+# When dry_run=True is passed to parse_simplified_rules / load_simplified_yaml,
+# validation errors are summarised and printed but do NOT raise ValueError.
+# Only structurally valid (error-free) rules are translated and returned.
+
 # Supported simplified rule types and their required fields.
 _REQUIRED_FIELDS = {
     "sequence_order":  ["group", "column", "values"],
@@ -192,6 +196,34 @@ _TRANSLATORS = {
 }
 
 
+def _format_dry_run_summary(rule_results: list) -> str:
+    """
+    Format per-rule validation results as a dry-run bullet summary.
+
+    Parameters
+    ----------
+    rule_results : list
+        List of ``(rule_type, rule_num, errors)`` tuples where ``errors`` is
+        a list of error strings for that rule (empty means the rule passed).
+
+    Returns
+    -------
+    str
+        A multi-line summary string with one bullet per rule, ready to be
+        printed to pipeline logs.
+    """
+    lines = ["Dry Run Validation Summary:"]
+    for rule_type, rule_num, rule_errors in rule_results:
+        if rule_errors:
+            reason = "; ".join(rule_errors)
+            lines.append(
+                f"- Rule {rule_num} [{rule_type}]: FAILED. Reason: {reason}"
+            )
+        else:
+            lines.append(f"- Rule {rule_num} [{rule_type}]: PASSED")
+    return "\n".join(lines)
+
+
 def _format_validation_table(rule_results: list) -> str:
     """
     Format per-rule validation results as an ASCII table for Fabric pipeline
@@ -293,7 +325,7 @@ def _apply_yaml_defaults(raw_rules: list, defaults: dict) -> list:
     return merged
 
 
-def parse_simplified_rules(raw_rules: list) -> list:
+def parse_simplified_rules(raw_rules: list, *, dry_run: bool = False) -> list:
     """
     Parse a list of simplified YAML rule dicts, validate them, apply defaults,
     and return the equivalent list of verbose rule dicts ready for use with
@@ -303,26 +335,36 @@ def parse_simplified_rules(raw_rules: list) -> list:
     names the rule type (``sequence_order``, ``pair_validation``, or ``gate``).
     The value is a dict of rule configuration fields.
 
-    Validation errors are accumulated across all rules.  If any errors are
-    found they are printed as a structured summary table and a ``ValueError``
-    is raised to stop pipeline execution.
+    Validation errors are accumulated across all rules.  In normal mode, if
+    any errors are found they are printed as a structured summary table and a
+    ``ValueError`` is raised to stop pipeline execution.
+
+    In dry-run mode (``dry_run=True``) validation errors are printed as a
+    bullet summary but the function does **not** raise; only the error-free
+    rules are translated and returned so the pipeline can continue safely.
 
     Parameters
     ----------
     raw_rules : list
         List of simplified rule dicts loaded from YAML (defaults already
         merged in by ``load_simplified_yaml`` if applicable).
+    dry_run : bool, optional
+        When ``True`` the function never raises ``ValueError``; instead it
+        prints a dry-run summary and returns only the rules that passed
+        validation.  Defaults to ``False``.
 
     Returns
     -------
     list
         Verbose rule dicts compatible with ``CUSTOM_EXPECTATION_REGISTRY``.
+        In dry-run mode this list contains only the rules that passed
+        validation.
 
     Raises
     ------
     ValueError
-        If any rule fails validation.  The error message contains a full
-        summary table of all validation results.
+        If any rule fails validation and ``dry_run`` is ``False``.  The
+        error message contains a full summary table of all validation results.
     """
     if not isinstance(raw_rules, list):
         raise ValueError(
@@ -386,23 +428,31 @@ def parse_simplified_rules(raw_rules: list) -> list:
             valid_rules.append((rule_type, idx, cfg))
 
     if all_errors:
-        table   = _format_validation_table(rule_results)
-        total   = len(all_errors)
-        message = (
-            f"\nValidation Summary:\n{table}"
-            f"\n\nTotal errors: {total}."
-        )
-        print(message)
-        raise ValueError(message)
-
-    table   = _format_validation_table(rule_results)
-    summary = f"\nValidation Summary:\n{table}"
-    print(summary)
+        if dry_run:
+            summary = _format_dry_run_summary(rule_results)
+            print(summary)
+        else:
+            table   = _format_validation_table(rule_results)
+            total   = len(all_errors)
+            message = (
+                f"\nValidation Summary:\n{table}"
+                f"\n\nTotal errors: {total}."
+            )
+            print(message)
+            raise ValueError(message)
+    else:
+        if dry_run:
+            summary = _format_dry_run_summary(rule_results)
+            print(summary)
+        else:
+            table   = _format_validation_table(rule_results)
+            summary = f"\nValidation Summary:\n{table}"
+            print(summary)
 
     return [_TRANSLATORS[rt](i, cfg) for rt, i, cfg in valid_rules]
 
 
-def load_simplified_yaml(raw_doc) -> list:
+def load_simplified_yaml(raw_doc, *, dry_run: bool = False) -> list:
     """
     Load a simplified YAML document that may include a top-level ``defaults``
     section and a ``rules`` list, then validate and translate all rules.
@@ -431,19 +481,25 @@ def load_simplified_yaml(raw_doc) -> list:
     ----------
     raw_doc : dict or list
         The Python object produced by ``yaml.safe_load`` on a rules YAML file.
+    dry_run : bool, optional
+        When ``True``, validation errors are reported via a bullet summary but
+        do **not** cause a ``ValueError``; only error-free rules are returned.
+        Defaults to ``False``.
 
     Returns
     -------
     list
         Verbose rule dicts compatible with ``CUSTOM_EXPECTATION_REGISTRY``.
+        In dry-run mode only the rules that passed validation are included.
 
     Raises
     ------
     ValueError
-        If the document structure is invalid or any rule fails validation.
+        If the document structure is invalid or any rule fails validation and
+        ``dry_run`` is ``False``.
     """
     if isinstance(raw_doc, list):
-        return parse_simplified_rules(raw_doc)
+        return parse_simplified_rules(raw_doc, dry_run=dry_run)
 
     if not isinstance(raw_doc, dict):
         raise ValueError(
@@ -473,4 +529,4 @@ def load_simplified_yaml(raw_doc) -> list:
         )
 
     merged_rules = _apply_yaml_defaults(raw_rules, defaults)
-    return parse_simplified_rules(merged_rules)
+    return parse_simplified_rules(merged_rules, dry_run=dry_run)
