@@ -801,7 +801,22 @@ class ValidateSequenceOrderExpectation:
       value_column      - column holding the sequence value names
       group_column      - column that identifies the group
       date_column       - date/timestamp column used to determine order
-      expected_sequence - ordered list of value names
+      expected_sequence - ordered list of sequence steps; two formats supported:
+
+          Simple string list (all steps are strict):
+              expected_sequence: ["Start", "Middle", "End"]
+
+          Dict list with optional flexible flag (allows repetition of a step):
+              expected_sequence:
+                - value: "Start"
+                - value: "Middle"
+                  flexible: true   # consecutive repeats of this step are allowed
+                - value: "End"
+
+          When a step is marked flexible: true, consecutive rows with that value
+          are permitted before the sequence advances to the next step.  Strict
+          steps (flexible omitted or false) must not repeat.
+
       completion_gate   - (optional) only evaluate groups that are "done":
           value_column  - column holding the completion marker value
           value         - the value that signals the group is closed
@@ -809,12 +824,12 @@ class ValidateSequenceOrderExpectation:
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
-        params            = rule.get("parameters", {})
-        value_col         = params.get("value_column")
-        group_col         = params.get("group_column")
-        date_col          = params.get("date_column")
-        expected_sequence = params.get("expected_sequence", [])
-        gate              = params.get("completion_gate", {})
+        params       = rule.get("parameters", {})
+        value_col    = params.get("value_column")
+        group_col    = params.get("group_column")
+        date_col     = params.get("date_column")
+        raw_sequence = params.get("expected_sequence", [])
+        gate         = params.get("completion_gate", {})
 
         df = _resolve_gate_groups(df, gate, group_col)
 
@@ -827,7 +842,21 @@ class ValidateSequenceOrderExpectation:
             )
 
         total = df.count()
-        if total == 0 or len(expected_sequence) < 2:
+
+        # Parse expected_sequence: support both plain string list and dict list
+        # with optional flexible flag.
+        seq_values   = []
+        flexible_set = set()
+        for item in raw_sequence:
+            if isinstance(item, dict):
+                val = item.get("value", "")
+                seq_values.append(val)
+                if item.get("flexible", False):
+                    flexible_set.add(val)
+            else:
+                seq_values.append(str(item))
+
+        if total == 0 or len(seq_values) < 2:
             return _passed_result(total), _empty_violations(spark)
 
         if date_col not in df.columns:
@@ -844,7 +873,7 @@ class ValidateSequenceOrderExpectation:
             }
             return result, _empty_violations(spark)
 
-        seq_map   = {m: i for i, m in enumerate(expected_sequence)}
+        seq_map   = {v: i for i, v in enumerate(seq_values)}
         seq_items = list(seq_map.items())
 
         rank_expr = F.when(F.col(value_col) == seq_items[0][0], F.lit(seq_items[0][1]))
@@ -857,67 +886,108 @@ class ValidateSequenceOrderExpectation:
             & F.col(date_col).isNotNull()
         ).withColumn("_seq_rank", rank_expr)
 
+        group_counts = relevant.groupBy(group_col).agg(
+            F.count("*").alias("_relevant_cnt")
+        ).filter(F.col("_relevant_cnt") >= 2)
+
+        evaluated_total = group_counts.count()
+        if evaluated_total == 0:
+            return _passed_result(total), _empty_violations(spark)
+
+        relevant_filtered = relevant.join(
+            group_counts.select(group_col), on=group_col, how="inner"
+        )
+
+        # Check ordering row-by-row within each group (sorted by date).
+        # A violation occurs when:
+        #   1. The sequence rank decreases (out-of-order value), or
+        #   2. The rank is unchanged (repeated value) and the step is not flexible.
+        window_grp = Window.partitionBy(group_col).orderBy(F.col(date_col).asc())
+
+        ranked = relevant_filtered.withColumn(
+            "_prev_rank", F.lag("_seq_rank").over(window_grp)
+        )
+
+        is_out_of_order   = F.col("_seq_rank") < F.col("_prev_rank")
+        if flexible_set:
+            is_illegal_repeat = (
+                (F.col("_seq_rank") == F.col("_prev_rank"))
+                & ~F.col(value_col).isin(list(flexible_set))
+            )
+        else:
+            is_illegal_repeat = F.col("_seq_rank") == F.col("_prev_rank")
+
+        violation_row_expr = (
+            F.col("_prev_rank").isNotNull()
+            & (is_out_of_order | is_illegal_repeat)
+        )
+
+        violation_groups = (
+            ranked
+            .withColumn("_row_violation", violation_row_expr.cast("int"))
+            .groupBy(group_col)
+            .agg(F.max("_row_violation").alias("_has_violation"))
+            .filter(F.col("_has_violation") == 1)
+        )
+
+        failed = violation_groups.count()
+
+        if failed == 0:
+            return _passed_result(total), _empty_violations(spark)
+
+        # Gather first/last values per violated group for violation reporting.
         window_asc  = Window.partitionBy(group_col).orderBy(F.col(date_col).asc())
         window_desc = Window.partitionBy(group_col).orderBy(F.col(date_col).desc())
 
-        ranked = relevant.withColumn(
+        relevant_rn = relevant_filtered.withColumn(
             "_row_asc",  F.row_number().over(window_asc)
         ).withColumn(
             "_row_desc", F.row_number().over(window_desc)
         )
 
         first_val = (
-            ranked.filter(F.col("_row_asc") == 1)
+            relevant_rn.filter(F.col("_row_asc") == 1)
             .select(group_col, F.col("_seq_rank").alias("_first_rank"),
                     F.col(value_col).alias("_first_val"),
                     F.col(date_col).alias("_first_date"))
         )
         last_val = (
-            ranked.filter(F.col("_row_desc") == 1)
+            relevant_rn.filter(F.col("_row_desc") == 1)
             .select(group_col, F.col("_seq_rank").alias("_last_rank"),
                     F.col(value_col).alias("_last_val"),
                     F.col(date_col).alias("_last_date"))
         )
 
-        group_counts = relevant.groupBy(group_col).agg(
-            F.count("*").alias("_relevant_cnt")
-        ).filter(F.col("_relevant_cnt") >= 2)
-
-        evaluated = (
-            group_counts
+        violations_info = (
+            violation_groups.select(group_col)
             .join(first_val, on=group_col, how="inner")
             .join(last_val,  on=group_col, how="inner")
         )
 
-        evaluated_total = evaluated.count()
-        if evaluated_total == 0:
-            return _passed_result(total), _empty_violations(spark)
+        seq_str       = " \u2192 ".join(seq_values)
+        flexible_note = (
+            f" (flexible: {', '.join(sorted(flexible_set))})" if flexible_set else ""
+        )
 
-        violations_df = evaluated.filter(F.col("_first_rank") > F.col("_last_rank"))
-        failed = violations_df.count()
-
-        if failed == 0:
-            return _passed_result(total), _empty_violations(spark)
-
-        seq_str = " \u2192 ".join(expected_sequence)
-        violations_out = violations_df.select(
+        violations_out = violations_info.select(
             F.col(group_col).cast("string").alias("primary_key_value"),
             F.lit(value_col).alias("violated_column"),
             F.concat(
                 F.lit("first="), F.col("_first_val").cast("string"),
                 F.lit(", last="), F.col("_last_val").cast("string"),
             ).alias("actual_value"),
-            F.lit(f"Values must appear in sequence: {seq_str}").alias("expected_condition"),
+            F.lit(f"Values must appear in sequence: {seq_str}{flexible_note}").alias("expected_condition"),
             F.concat(
                 F.lit(f"For {group_col}='"),
                 F.col(group_col).cast("string"),
-                F.lit(f"', earliest {value_col} is '"),
+                F.lit(f"', {value_col} sequence order violated"),
+                F.lit(f" (first seen: '"),
                 F.col("_first_val").cast("string"),
-                F.lit(f"' ({date_col}="),
+                F.lit(f"' on {date_col}="),
                 F.col("_first_date").cast("string"),
-                F.lit(") which in the expected sequence comes after '"),
+                F.lit(f", last seen: '"),
                 F.col("_last_val").cast("string"),
-                F.lit("'"),
+                F.lit("')"),
             ).alias("violation_detail"),
         )
 
@@ -929,7 +999,7 @@ class ValidateSequenceOrderExpectation:
             "status":      "FAILED",
             "details": (
                 f"{failed} group(s) in {group_col} have out-of-order "
-                f"{value_col} values (expected: {seq_str})."
+                f"{value_col} values (expected: {seq_str}{flexible_note})."
             ),
         }
         return result, violations_out

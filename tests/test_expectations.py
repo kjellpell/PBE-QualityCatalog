@@ -580,6 +580,115 @@ class TestValidateSequenceOrderExpectation:
         assert result["status"] == "FAILED"
         assert viols.count() == 1
 
+    # ------------------------------------------------------------------
+    # Flexible sequence tests
+    # ------------------------------------------------------------------
+
+    def _rule_flexible(self):
+        """Rule where 'Middle' is marked flexible (repeats allowed)."""
+        return {
+            "rule_id": "T-SEQ-FLEX",
+            "name": "test flexible",
+            "expectation": "validate_sequence_order",
+            "parameters": {
+                "value_column":      "step",
+                "group_column":      "group_id",
+                "date_column":       "event_date",
+                "expected_sequence": [
+                    {"value": "Start"},
+                    {"value": "Middle", "flexible": True},
+                    {"value": "End"},
+                ],
+            },
+        }
+
+    def test_flexible_allows_repeated_middle(self, spark):
+        # Start → Middle → Middle → End: Middle is flexible so repeats are allowed.
+        from engine.expectations import ValidateSequenceOrderExpectation
+        df = self._make_df(spark, [
+            ("G1", "Start",  "2024-01-01"),
+            ("G1", "Middle", "2024-02-01"),
+            ("G1", "Middle", "2024-03-01"),
+            ("G1", "End",    "2024-06-01"),
+        ])
+        result, viols = ValidateSequenceOrderExpectation().validate(df, self._rule_flexible(), spark)
+        assert result["status"] == "PASSED", (
+            "Repeated flexible step must not be a violation; got: " + result["status"]
+        )
+
+    def test_flexible_catches_out_of_order(self, spark):
+        # Start → End → Middle: even with flexible Middle, going backwards is a violation.
+        from engine.expectations import ValidateSequenceOrderExpectation
+        df = self._make_df(spark, [
+            ("G1", "Start",  "2024-01-01"),
+            ("G1", "End",    "2024-02-01"),
+            ("G1", "Middle", "2024-03-01"),
+        ])
+        result, viols = ValidateSequenceOrderExpectation().validate(df, self._rule_flexible(), spark)
+        assert result["status"] == "FAILED", (
+            "Out-of-order step after End must be a violation; got: " + result["status"]
+        )
+        assert viols.count() == 1
+
+    def test_dict_format_without_flexible_matches_strict(self, spark):
+        # Dict format without any flexible flag behaves identically to the plain string list.
+        from engine.expectations import ValidateSequenceOrderExpectation
+        df = self._make_df(spark, [
+            ("G1", "Start",  "2024-01-01"),
+            ("G1", "Middle", "2024-03-01"),
+            ("G1", "End",    "2024-06-01"),
+        ])
+        rule = {
+            "rule_id": "T-SEQ-DICT",
+            "name": "test dict format",
+            "expectation": "validate_sequence_order",
+            "parameters": {
+                "value_column":      "step",
+                "group_column":      "group_id",
+                "date_column":       "event_date",
+                "expected_sequence": [
+                    {"value": "Start"},
+                    {"value": "Middle"},
+                    {"value": "End"},
+                ],
+            },
+        }
+        result, viols = ValidateSequenceOrderExpectation().validate(df, rule, spark)
+        assert result["status"] == "PASSED"
+
+    def test_strict_repeated_step_is_violation(self, spark):
+        # Without flexible, a repeated value is an illegal repetition violation.
+        from engine.expectations import ValidateSequenceOrderExpectation
+        df = self._make_df(spark, [
+            ("G1", "Start",  "2024-01-01"),
+            ("G1", "Middle", "2024-02-01"),
+            ("G1", "Middle", "2024-03-01"),   # repeated strict step — violation
+            ("G1", "End",    "2024-06-01"),
+        ])
+        result, viols = ValidateSequenceOrderExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "FAILED", (
+            "Repeated strict step must be flagged as a violation; got: " + result["status"]
+        )
+
+    def test_flexible_multiple_repeats_with_two_groups(self, spark):
+        # G1 valid (Middle repeats are allowed); G2 invalid (End → Middle is out of order).
+        from engine.expectations import ValidateSequenceOrderExpectation
+        df = self._make_df(spark, [
+            ("G1", "Start",  "2024-01-01"),
+            ("G1", "Middle", "2024-02-01"),
+            ("G1", "Middle", "2024-03-01"),
+            ("G1", "End",    "2024-04-01"),
+            ("G2", "Start",  "2024-01-01"),
+            ("G2", "End",    "2024-02-01"),
+            ("G2", "Middle", "2024-03-01"),   # out of order
+        ])
+        result, viols = ValidateSequenceOrderExpectation().validate(df, self._rule_flexible(), spark)
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+        pk_values = [r["primary_key_value"] for r in viols.collect()]
+        assert "G2" in pk_values
+        assert "G1" not in pk_values
+
 
 # ---------------------------------------------------------------------------
 # ValidatePairedPresenceExpectation  (renamed from MilestonePairsCompleteExpectation)
