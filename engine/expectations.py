@@ -80,32 +80,34 @@ def _resolve_gate_groups(df: DataFrame, gate: dict, group_col: str):
 
     A group passes the gate when at least one of its rows satisfies:
       - value_column == value  (the designated completion marker)
-      - date_column  IS NOT NULL (the marker has a recorded date, i.e. it is done)
+      - sort_column  IS NOT NULL (optional; when provided the marker row must
+        have a non-null value in this column to be considered done)
 
     Parameters (from the YAML ``completion_gate`` block):
       value_column - column holding the marker value
       value        - the value that signals group completion
-      date_column  - date/timestamp column that must be non-null on the marker row
+      sort_column  - (optional) column that must be non-null on the marker row;
+                     when omitted any row with the marker value closes the group
 
     If the gate block is absent or empty, the original DataFrame is returned
-    unchanged so that the caller validates all groups — preserving backward
-    compatibility with rules that do not specify a gate.
+    unchanged so that the caller validates all groups.
     """
     if not gate:
         return df
 
     gate_value_col = gate.get("value_column")
     gate_value     = gate.get("value")
-    gate_date_col  = gate.get("date_column")
+    gate_sort_col  = gate.get("sort_column")
 
-    if not gate_value_col or gate_value is None or not gate_date_col:
+    if not gate_value_col or gate_value is None:
         return df
 
+    gate_filter = F.col(gate_value_col) == gate_value
+    if gate_sort_col:
+        gate_filter = gate_filter & F.col(gate_sort_col).isNotNull()
+
     completed_groups = (
-        df.filter(
-            (F.col(gate_value_col) == gate_value)
-            & F.col(gate_date_col).isNotNull()
-        )
+        df.filter(gate_filter)
         .select(group_col)
         .distinct()
     )
@@ -800,7 +802,8 @@ class ValidateSequenceOrderExpectation:
     YAML parameters:
       value_column      - column holding the sequence value names
       group_column      - column that identifies the group
-      date_column       - date/timestamp column used to determine order
+      sort_column       - column used to determine the order of rows within each
+                          group; can be any sortable type (date, numeric, string)
       expected_sequence - ordered list of sequence steps; two formats supported:
 
           Simple string list (all steps are strict):
@@ -820,14 +823,14 @@ class ValidateSequenceOrderExpectation:
       completion_gate   - (optional) only evaluate groups that are "done":
           value_column  - column holding the completion marker value
           value         - the value that signals the group is closed
-          date_column   - date column that must be non-null on the marker row
+          sort_column   - (optional) column that must be non-null on the marker row
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params       = rule.get("parameters", {})
         value_col    = params.get("value_column")
         group_col    = params.get("group_column")
-        date_col     = params.get("date_column")
+        sort_col     = params.get("sort_column")
         raw_sequence = params.get("expected_sequence", [])
         gate         = params.get("completion_gate", {})
 
@@ -859,19 +862,14 @@ class ValidateSequenceOrderExpectation:
         if total == 0 or len(seq_values) < 2:
             return _passed_result(total), _empty_violations(spark)
 
-        if date_col not in df.columns:
-            result = {
-                "total_rows":  total,
-                "passed_rows": total,
-                "failed_rows": 0,
-                "success_pct": 100.0,
-                "status":      "PASSED",
-                "details": (
-                    f"Date column '{date_col}' not found in dataframe - "
-                    f"sequence check skipped."
+        if not sort_col or sort_col not in df.columns:
+            return (
+                _error_result(
+                    f"Parameter 'sort_column' ('{sort_col}') is required and must "
+                    f"exist in the dataframe for validate_sequence_order."
                 ),
-            }
-            return result, _empty_violations(spark)
+                _empty_violations(spark),
+            )
 
         seq_map   = {v: i for i, v in enumerate(seq_values)}
         seq_items = list(seq_map.items())
@@ -883,7 +881,7 @@ class ValidateSequenceOrderExpectation:
 
         relevant = df.filter(
             F.col(value_col).isin(list(seq_map.keys()))
-            & F.col(date_col).isNotNull()
+            & F.col(sort_col).isNotNull()
         ).withColumn("_seq_rank", rank_expr)
 
         group_counts = relevant.groupBy(group_col).agg(
@@ -898,11 +896,11 @@ class ValidateSequenceOrderExpectation:
             group_counts.select(group_col), on=group_col, how="inner"
         )
 
-        # Check ordering row-by-row within each group (sorted by date).
+        # Check ordering row-by-row within each group (sorted by sort_column).
         # A violation occurs when:
         #   1. The sequence rank decreases (out-of-order value), or
         #   2. The rank is unchanged (repeated value) and the step is not flexible.
-        window_grp = Window.partitionBy(group_col).orderBy(F.col(date_col).asc())
+        window_grp = Window.partitionBy(group_col).orderBy(F.col(sort_col).asc())
 
         ranked = relevant_filtered.withColumn(
             "_prev_rank", F.lag("_seq_rank").over(window_grp)
@@ -936,8 +934,8 @@ class ValidateSequenceOrderExpectation:
             return _passed_result(total), _empty_violations(spark)
 
         # Gather first/last values per violated group for violation reporting.
-        window_asc  = Window.partitionBy(group_col).orderBy(F.col(date_col).asc())
-        window_desc = Window.partitionBy(group_col).orderBy(F.col(date_col).desc())
+        window_asc  = Window.partitionBy(group_col).orderBy(F.col(sort_col).asc())
+        window_desc = Window.partitionBy(group_col).orderBy(F.col(sort_col).desc())
 
         relevant_rn = relevant_filtered.withColumn(
             "_row_asc",  F.row_number().over(window_asc)
@@ -949,13 +947,13 @@ class ValidateSequenceOrderExpectation:
             relevant_rn.filter(F.col("_row_asc") == 1)
             .select(group_col, F.col("_seq_rank").alias("_first_rank"),
                     F.col(value_col).alias("_first_val"),
-                    F.col(date_col).alias("_first_date"))
+                    F.col(sort_col).alias("_first_sort"))
         )
         last_val = (
             relevant_rn.filter(F.col("_row_desc") == 1)
             .select(group_col, F.col("_seq_rank").alias("_last_rank"),
                     F.col(value_col).alias("_last_val"),
-                    F.col(date_col).alias("_last_date"))
+                    F.col(sort_col).alias("_last_sort"))
         )
 
         violations_info = (
@@ -983,8 +981,8 @@ class ValidateSequenceOrderExpectation:
                 F.lit(f"', {value_col} sequence order violated"),
                 F.lit(f" (first seen: '"),
                 F.col("_first_val").cast("string"),
-                F.lit(f"' on {date_col}="),
-                F.col("_first_date").cast("string"),
+                F.lit(f"' at {sort_col}="),
+                F.col("_first_sort").cast("string"),
                 F.lit(f", last seen: '"),
                 F.col("_last_val").cast("string"),
                 F.lit("')"),
@@ -1021,7 +1019,7 @@ class ValidatePairedPresenceExpectation:
       completion_gate - (optional) only evaluate groups that are "done":
           value_column  - column holding the completion marker value
           value         - the value that signals the group is closed
-          date_column   - date column that must be non-null on the marker row
+          sort_column   - (optional) column that must be non-null on the marker row
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
