@@ -55,9 +55,10 @@ CREATE TABLE IF NOT EXISTS dq_run_results (
     column_b        STRING,
     operator        STRING,
     sql_query       STRING,
-    rule_category   STRING,
-    reference_table STRING,
-    reference_column STRING
+    rule_category        STRING,
+    reference_table      STRING,
+    reference_column     STRING,
+    rule_duration_seconds DOUBLE
 )
 USING DELTA
 """)
@@ -65,13 +66,14 @@ USING DELTA
 # Add new columns to the existing table if this script is re-run against an
 # older deployment that pre-dates these fields.
 for _col_def in [
-    "column_a        STRING",
-    "column_b        STRING",
-    "operator        STRING",
-    "sql_query       STRING",
-    "rule_category   STRING",
-    "reference_table STRING",
-    "reference_column STRING",
+    "column_a             STRING",
+    "column_b             STRING",
+    "operator             STRING",
+    "sql_query            STRING",
+    "rule_category        STRING",
+    "reference_table      STRING",
+    "reference_column     STRING",
+    "rule_duration_seconds DOUBLE",
 ]:
     try:
         spark.sql(
@@ -139,6 +141,15 @@ for _col_def in [
             print(f"  Warning: could not add column '{_col_def}': {_exc}")
 
 print("dq_violations ready.")
+
+# Performance tip: after the first significant data load, run the following
+# OPTIMIZE command to apply Z-order clustering on the columns most commonly
+# used in WHERE / JOIN predicates.  This can dramatically reduce scan times
+# for handler- and rule-level queries in Power BI.
+#
+#   spark.sql("OPTIMIZE dq_violations ZORDER BY (rule_id, primary_key_value)")
+#
+# Re-run periodically (e.g. weekly) or after large backfills.
 
 
 # CELL 4 — dq_execution_metrics

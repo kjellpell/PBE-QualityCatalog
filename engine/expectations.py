@@ -73,6 +73,11 @@ def _error_result(message: str) -> dict:
     }
 
 
+def _safe_pct(passed: int, total: int) -> float:
+    """Return passed/total as a percentage, guarding against division by zero."""
+    return round(passed / total * 100, 2) if total else 100.0
+
+
 def _resolve_gate_groups(df: DataFrame, gate: dict, group_col: str):
     """
     Return the subset of *df* whose group_col values belong to groups that
@@ -209,7 +214,7 @@ class ColumnComparisonExpectation:
             "total_rows":  total,
             "passed_rows": passed,
             "failed_rows": failed,
-            "success_pct": round(passed / total * 100, 2),
+            "success_pct": _safe_pct(passed, total),
             "status":      "PASSED" if failed == 0 else "FAILED",
             "details": (
                 f"{failed} row(s) violate {condition}."
@@ -562,7 +567,7 @@ class ForeignKeyExpectation:
             "total_rows":  total,
             "passed_rows": passed,
             "failed_rows": failed,
-            "success_pct": round(passed / total * 100, 2),
+            "success_pct": _safe_pct(passed, total),
             "status":      "PASSED" if failed == 0 else "FAILED",
             "details": (
                 f"{failed} value(s) in '{column}' not found in {ref_table}.{ref_col}."
@@ -571,6 +576,22 @@ class ForeignKeyExpectation:
             ),
         }
         return result, violations_out
+
+
+# =============================================================================
+# Module-level constants shared across multiple expectation classes
+# =============================================================================
+
+# Aggregate function map used by ValidateAggregateRuleExpectation and
+# ValidateGroupAggregateMatchExpectation.  Defined once here to avoid
+# duplication and ensure both classes stay in sync.
+_AGGREGATE_FUNCTIONS = {
+    "sum":   F.sum,
+    "count": F.count,
+    "avg":   F.avg,
+    "min":   F.min,
+    "max":   F.max,
+}
 
 
 # =============================================================================
@@ -594,14 +615,6 @@ class ValidateAggregateRuleExpectation:
       threshold - the value the aggregate must satisfy
     """
 
-    _AGGREGATES = {
-        "sum":   F.sum,
-        "count": F.count,
-        "avg":   F.avg,
-        "min":   F.min,
-        "max":   F.max,
-    }
-
     _OPS = {
         ">":  lambda a, b: a > b,
         "<":  lambda a, b: a < b,
@@ -624,11 +637,11 @@ class ValidateAggregateRuleExpectation:
                 _empty_violations(spark),
             )
 
-        if aggregate not in self._AGGREGATES:
+        if aggregate not in _AGGREGATE_FUNCTIONS:
             return (
                 _error_result(
                     f"Unsupported aggregate '{aggregate}'. "
-                    f"Allowed: {sorted(self._AGGREGATES)}"
+                    f"Allowed: {sorted(_AGGREGATE_FUNCTIONS)}"
                 ),
                 _empty_violations(spark),
             )
@@ -657,7 +670,7 @@ class ValidateAggregateRuleExpectation:
                     _empty_violations(spark),
                 )
             agg_val = df.agg(
-                self._AGGREGATES[aggregate](F.col(column).cast("double"))
+                _AGGREGATE_FUNCTIONS[aggregate](F.col(column).cast("double"))
             ).collect()[0][0]
             actual = float(agg_val) if agg_val is not None else 0.0
 
@@ -769,7 +782,7 @@ class ValidateNotNullWhenExpectation:
             "total_rows":  total,
             "passed_rows": passed,
             "failed_rows": failed,
-            "success_pct": round(passed / total * 100, 2),
+            "success_pct": _safe_pct(passed, total),
             "status":      "PASSED" if failed == 0 else "FAILED",
             "details": (
                 f"{failed} row(s) where {cond_label} have NULL in [{check_cols_str}]."
@@ -859,8 +872,16 @@ class ValidateSequenceOrderExpectation:
             else:
                 seq_values.append(str(item))
 
-        if total == 0 or len(seq_values) < 2:
+        if total == 0:
             return _passed_result(total), _empty_violations(spark)
+        if len(seq_values) < 2:
+            return (
+                _error_result(
+                    "Parameter 'expected_sequence' must contain at least 2 values "
+                    "to define an ordering relationship."
+                ),
+                _empty_violations(spark),
+            )
 
         if not sort_col or sort_col not in df.columns:
             return (
@@ -993,7 +1014,7 @@ class ValidateSequenceOrderExpectation:
             "total_rows":  total,
             "passed_rows": total - failed,
             "failed_rows": failed,
-            "success_pct": round((total - failed) / total * 100, 2),
+            "success_pct": _safe_pct(total - failed, total),
             "status":      "FAILED",
             "details": (
                 f"{failed} group(s) in {group_col} have out-of-order "
@@ -1034,6 +1055,16 @@ class ValidatePairedPresenceExpectation:
         total = df.count()
         if total == 0 or not required_pairs:
             return _passed_result(total), _empty_violations(spark)
+
+        for pi, pair in enumerate(required_pairs):
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                return (
+                    _error_result(
+                        f"Parameter 'required_pairs[{pi}]' must be a 2-element list "
+                        f"[start_value, stop_value]."
+                    ),
+                    _empty_violations(spark),
+                )
 
         all_types = list({t for pair in required_pairs for t in pair})
 
@@ -1099,7 +1130,7 @@ class ValidatePairedPresenceExpectation:
             "total_rows":  total,
             "passed_rows": total - total_failed,
             "failed_rows": total_failed,
-            "success_pct": round((total - total_failed) / total * 100, 2),
+            "success_pct": _safe_pct(total - total_failed, total),
             "status":      "FAILED",
             "details": f"{total_failed} group(s) in {group_col} have incomplete pairs.",
         }
@@ -1208,7 +1239,7 @@ class ValidateGateExpectation:
             "total_rows":  total,
             "passed_rows": total - failed,
             "failed_rows": failed,
-            "success_pct": round((total - failed) / total * 100, 2),
+            "success_pct": _safe_pct(total - failed, total),
             "status":      "FAILED",
             "details": (
                 f"{failed} group(s) in {group_col} do not have "
@@ -1295,7 +1326,7 @@ class ValidateNoOrphanExpectation:
             "total_rows":  total,
             "passed_rows": total - total_failed,
             "failed_rows": total_failed,
-            "success_pct": round((total - total_failed) / total * 100, 2),
+            "success_pct": _safe_pct(total - total_failed, total),
             "status":      "FAILED",
             "details": (
                 f"{total_failed} group(s) in {group_col} have a stop-type "
@@ -1385,7 +1416,8 @@ class ValidateConditionalColumnValueExpectation:
             return result, _empty_violations(spark)
 
         violations_df = evaluated.filter(
-            F.col(required_col).isNull() | (F.col(required_col) != str(required_val))
+            F.col(required_col).isNull()
+            | (F.col(required_col).cast("string") != str(required_val))
         )
         failed = violations_df.count()
         passed = total - failed
@@ -1409,7 +1441,7 @@ class ValidateConditionalColumnValueExpectation:
             "total_rows":  total,
             "passed_rows": passed,
             "failed_rows": failed,
-            "success_pct": round(passed / total * 100, 2),
+            "success_pct": _safe_pct(passed, total),
             "status":      "PASSED" if failed == 0 else "FAILED",
             "details": (
                 f"{failed} row(s) where {cond_label} do not have "
@@ -1443,14 +1475,6 @@ class ValidateGroupAggregateMatchExpectation:
       tolerance        - maximum allowed absolute difference (default: 0.01)
     """
 
-    _AGGREGATES = {
-        "sum":   F.sum,
-        "count": F.count,
-        "avg":   F.avg,
-        "min":   F.min,
-        "max":   F.max,
-    }
-
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params = rule.get("parameters", {})
 
@@ -1469,11 +1493,11 @@ class ValidateGroupAggregateMatchExpectation:
                 _empty_violations(spark),
             )
 
-        if aggregate not in self._AGGREGATES:
+        if aggregate not in _AGGREGATE_FUNCTIONS:
             return (
                 _error_result(
                     f"Unsupported aggregate '{aggregate}'. "
-                    f"Allowed: {sorted(self._AGGREGATES)}"
+                    f"Allowed: {sorted(_AGGREGATE_FUNCTIONS)}"
                 ),
                 _empty_violations(spark),
             )
@@ -1497,7 +1521,7 @@ class ValidateGroupAggregateMatchExpectation:
             & F.col(agg_col).isNotNull()
             & F.col(ref_col).isNotNull()
         ).groupBy(group_col, ref_col).agg(
-            self._AGGREGATES[aggregate](agg_col).alias("_agg_val")
+            _AGGREGATE_FUNCTIONS[aggregate](agg_col).alias("_agg_val")
         ).withColumn(
             "diff", F.abs(F.col("_agg_val") - F.col(ref_col))
         )
@@ -1533,7 +1557,7 @@ class ValidateGroupAggregateMatchExpectation:
             "total_rows":  total,
             "passed_rows": passed,
             "failed_rows": failed,
-            "success_pct": round(passed / total * 100, 2),
+            "success_pct": _safe_pct(passed, total),
             "status":      "PASSED" if failed == 0 else "FAILED",
             "details": (
                 f"{failed} group(s) in {group_col} have a mismatch "
@@ -1633,7 +1657,7 @@ class ValidateColumnExclusionsExpectation:
             "total_rows":  total,
             "passed_rows": passed,
             "failed_rows": failed,
-            "success_pct": round(passed / total * 100, 2),
+            "success_pct": _safe_pct(passed, total),
             "status":      "PASSED" if failed == 0 else "FAILED",
             "details": (
                 f"{failed} row(s) satisfy the forbidden condition: {condition}."

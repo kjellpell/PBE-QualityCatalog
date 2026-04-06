@@ -109,6 +109,11 @@ def _apply_resolution_tracking(
     3. Brand-new violations are inserted with issue_status = 'Active' and
        resolution_timestamp = NULL.
 
+    The three cases are handled in a single atomic MERGE statement using the
+    ``NOT MATCHED BY SOURCE`` clause (Delta Lake 2.0+ / Fabric Spark 3.3+).
+    This eliminates the former two-step approach where a failure between the
+    two statements could permanently lose violation records.
+
     Falls back to a plain append if the table does not yet exist or if the
     Delta MERGE is unavailable (e.g. unit-test environments without a
     Spark metastore).  In that case a warning is printed and the caller
@@ -122,49 +127,47 @@ def _apply_resolution_tracking(
     run_timestamp         : timestamp to record for resolutions
                             (defaults to datetime.utcnow())
     """
+    # Validate that the input DataFrame has the columns required by the MERGE
+    # key predicates.  Catching this early avoids a cryptic SQL error later.
+    _MERGE_KEY_COLUMNS = {"rule_id", "primary_key_value", "issue_status"}
+    missing = _MERGE_KEY_COLUMNS - set(current_violations_df.columns)
+    if missing:
+        raise ValueError(
+            f"_apply_resolution_tracking: input DataFrame is missing required "
+            f"columns: {sorted(missing)}"
+        )
+
     ts = (run_timestamp or datetime.utcnow()).isoformat()
 
     try:
         current_violations_df.createOrReplaceTempView("_dq_current_violations")
+        # Register the resolution timestamp as a single-row view so it is
+        # passed as a typed value rather than interpolated directly into SQL.
+        ts_df = spark_session.createDataFrame([(ts,)], ["_ts"])
+        ts_df.createOrReplaceTempView("_dq_run_ts")
 
-        # Step 1 — mark previously Active violations as Resolved if they do
-        # not appear in the current run's violation set.
-        spark_session.sql(f"""
-            MERGE INTO {violations_table} AS t
-            USING (
-                SELECT DISTINCT a.rule_id, a.primary_key_value
-                FROM {violations_table} AS a
-                WHERE a.issue_status = 'Active'
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM _dq_current_violations cv
-                      WHERE cv.rule_id           = a.rule_id
-                        AND cv.primary_key_value  = a.primary_key_value
-                  )
-            ) AS stale
-            ON  t.rule_id            = stale.rule_id
-            AND t.primary_key_value   = stale.primary_key_value
-            AND t.issue_status        = 'Active'
-            WHEN MATCHED THEN UPDATE SET
-                t.issue_status          = 'Resolved',
-                t.resolution_timestamp  = '{ts}'
-        """)
-
-        # Step 2 — upsert current violations: refresh run metadata for
-        # still-Active rows and insert new violations.
+        # Single atomic MERGE (Delta Lake 2.0+ / Fabric Spark 3.3+):
+        #   WHEN MATCHED               → refresh still-active violations
+        #   WHEN NOT MATCHED BY SOURCE → mark stale violations as Resolved
+        #   WHEN NOT MATCHED BY TARGET → insert brand-new violations
         spark_session.sql(f"""
             MERGE INTO {violations_table} AS t
             USING _dq_current_violations AS s
-            ON  t.rule_id            = s.rule_id
-            AND t.primary_key_value   = s.primary_key_value
-            AND t.issue_status        = 'Active'
+            ON  t.rule_id           = s.rule_id
+            AND t.primary_key_value  = s.primary_key_value
+            AND t.issue_status       = 'Active'
             WHEN MATCHED THEN UPDATE SET
                 t.run_id             = s.run_id,
                 t.run_timestamp      = s.run_timestamp,
                 t.batch_date         = s.batch_date,
                 t.violation_detail   = s.violation_detail,
                 t.actual_value       = s.actual_value
-            WHEN NOT MATCHED THEN INSERT *
+            WHEN NOT MATCHED BY SOURCE
+              AND t.issue_status = 'Active'
+              THEN UPDATE SET
+                t.issue_status          = 'Resolved',
+                t.resolution_timestamp  = (SELECT _ts FROM _dq_run_ts)
+            WHEN NOT MATCHED BY TARGET THEN INSERT *
         """)
 
         print(f"  Resolution tracking applied via MERGE on '{violations_table}'.")
@@ -173,3 +176,9 @@ def _apply_resolution_tracking(
         print(f"  Warning: MERGE-based resolution tracking failed ({exc}).")
         print("  Falling back to plain append — run nb_dq_00_setup.py to enable MERGE.")
         current_violations_df.write.mode("append").saveAsTable(violations_table)
+    finally:
+        for _view in ("_dq_current_violations", "_dq_run_ts"):
+            try:
+                spark_session.catalog.dropTempView(_view)
+            except Exception:
+                pass  # best-effort cleanup; non-fatal

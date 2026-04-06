@@ -1749,3 +1749,251 @@ class TestValidateGateExpectation:
         from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
         assert "validate_gate" in CUSTOM_EXPECTATION_REGISTRY
         assert CUSTOM_EXPECTATION_REGISTRY["validate_gate"].__name__ == "ValidateGateExpectation"
+
+
+# ---------------------------------------------------------------------------
+# SqlValidationExpectation
+# ---------------------------------------------------------------------------
+
+class TestSqlValidationExpectation:
+    """Tests for SqlValidationExpectation (sql_validation / sql shorthand).
+
+    These tests register a small temp view so the SQL queries have a real
+    target table to reference without needing a Spark metastore.
+    """
+
+    def _make_view(self, spark, rows, view_name="test_sql_tbl"):
+        schema = StructType([
+            StructField("id",     StringType(),  True),
+            StructField("amount", IntegerType(), True),
+            StructField("status", StringType(),  True),
+        ])
+        spark.createDataFrame(rows, schema).createOrReplaceTempView(view_name)
+        return view_name
+
+    def _rule(self, sql_query, pk_col=None):
+        params = {"sql": sql_query}
+        if pk_col:
+            params["pk_column"] = pk_col
+        return {
+            "rule_id": "T-SQL-001",
+            "name": "test sql",
+            "expectation": "sql_validation",
+            "parameters": params,
+        }
+
+    def test_zero_violations_passes(self, spark):
+        """SQL that returns 0 rows → PASSED."""
+        from engine.expectations import SqlValidationExpectation
+        self._make_view(spark, [("1", 100, "OK"), ("2", 200, "OK")])
+        rule = self._rule("SELECT * FROM test_sql_tbl WHERE amount < 0")
+        result, viols = SqlValidationExpectation().validate(None, rule, spark)
+        assert result["status"] == "PASSED"
+        assert result["failed_rows"] == 0
+        assert viols.count() == 0
+
+    def test_violations_returned(self, spark):
+        """SQL that returns rows → FAILED with correct violation count."""
+        from engine.expectations import SqlValidationExpectation
+        self._make_view(spark, [("1", -5, "ERR"), ("2", 200, "OK")])
+        rule = self._rule("SELECT * FROM test_sql_tbl WHERE amount < 0", pk_col="id")
+        result, viols = SqlValidationExpectation().validate(None, rule, spark)
+        assert result["status"] == "FAILED"
+        assert result["failed_rows"] == 1
+        assert viols.count() == 1
+        row = viols.collect()[0]
+        assert row["primary_key_value"] == "1"
+        assert row["violated_column"] == "SQL_VALIDATION"
+
+    def test_multiple_violations(self, spark):
+        """Multiple offending rows all appear in violations."""
+        from engine.expectations import SqlValidationExpectation
+        self._make_view(spark, [("1", -5, "ERR"), ("2", -1, "ERR"), ("3", 50, "OK")])
+        rule = self._rule("SELECT * FROM test_sql_tbl WHERE amount < 0", pk_col="id")
+        result, viols = SqlValidationExpectation().validate(None, rule, spark)
+        assert result["status"] == "FAILED"
+        assert result["failed_rows"] == 2
+        assert viols.count() == 2
+
+    def test_row_index_used_when_no_pk(self, spark):
+        """When pk_column is absent, row index is used as primary_key_value."""
+        from engine.expectations import SqlValidationExpectation
+        self._make_view(spark, [("1", -5, "ERR")])
+        rule = self._rule("SELECT * FROM test_sql_tbl WHERE amount < 0")
+        result, viols = SqlValidationExpectation().validate(None, rule, spark)
+        assert result["status"] == "FAILED"
+        # primary_key_value should be a string representation of the row index
+        pk_val = viols.collect()[0]["primary_key_value"]
+        assert pk_val is not None
+
+    def test_malformed_sql_returns_error(self, spark):
+        """Invalid SQL → ERROR result, not an unhandled exception."""
+        from engine.expectations import SqlValidationExpectation
+        rule = self._rule("THIS IS NOT VALID SQL !!!!")
+        result, viols = SqlValidationExpectation().validate(None, rule, spark)
+        assert result["status"] == "ERROR"
+        assert "SQL execution error" in result["details"]
+        assert viols.count() == 0
+
+    def test_empty_sql_returns_error(self, spark):
+        """Empty SQL string → ERROR result."""
+        from engine.expectations import SqlValidationExpectation
+        rule = self._rule("   ")
+        result, viols = SqlValidationExpectation().validate(None, rule, spark)
+        assert result["status"] == "ERROR"
+        assert viols.count() == 0
+
+    def test_sql_shorthand_alias_works(self, spark):
+        """'sql' shorthand key is accepted identically to 'sql_validation'."""
+        from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
+        assert "sql" in CUSTOM_EXPECTATION_REGISTRY
+        assert CUSTOM_EXPECTATION_REGISTRY["sql"] is CUSTOM_EXPECTATION_REGISTRY["sql_validation"]
+
+    def test_violation_detail_is_json(self, spark):
+        """violation_detail column holds a JSON representation of the row."""
+        import json
+        from engine.expectations import SqlValidationExpectation
+        self._make_view(spark, [("X1", -99, "FAIL")])
+        rule = self._rule("SELECT * FROM test_sql_tbl WHERE amount < 0", pk_col="id")
+        _, viols = SqlValidationExpectation().validate(None, rule, spark)
+        detail = viols.collect()[0]["violation_detail"]
+        parsed = json.loads(detail)
+        assert parsed.get("id") == "X1"
+
+
+# ---------------------------------------------------------------------------
+# ForeignKeyExpectation
+# ---------------------------------------------------------------------------
+
+class TestForeignKeyExpectation:
+    """Tests for ForeignKeyExpectation (validate_foreign_key).
+
+    Reference tables are registered as temp views so no real metastore is
+    needed.
+    """
+
+    def _make_source(self, spark, rows):
+        schema = StructType([
+            StructField("id",       StringType(), True),
+            StructField("category", StringType(), True),
+        ])
+        return spark.createDataFrame(rows, schema)
+
+    def _make_ref_view(self, spark, values, view_name="test_fk_ref"):
+        schema = StructType([StructField("code", StringType(), True)])
+        spark.createDataFrame(
+            [(v,) for v in values], schema
+        ).createOrReplaceTempView(view_name)
+        return view_name
+
+    def _rule(self, column="category", pk_col=None, ref_table="test_fk_ref", ref_col="code"):
+        params = {
+            "column": column,
+            "reference": {"table": ref_table, "column": ref_col},
+        }
+        if pk_col:
+            params["pk_column"] = pk_col
+        return {
+            "rule_id": "T-FK-001",
+            "name": "test fk",
+            "expectation": "validate_foreign_key",
+            "parameters": params,
+        }
+
+    def test_all_values_exist_passes(self, spark):
+        """All source FK values present in reference → PASSED."""
+        from engine.expectations import ForeignKeyExpectation
+        self._make_ref_view(spark, ["A", "B", "C"])
+        df = self._make_source(spark, [("1", "A"), ("2", "B")])
+        result, viols = ForeignKeyExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "PASSED"
+        assert result["failed_rows"] == 0
+        assert viols.count() == 0
+
+    def test_missing_fk_detected(self, spark):
+        """Source value not in reference → FAILED with 1 violation."""
+        from engine.expectations import ForeignKeyExpectation
+        self._make_ref_view(spark, ["A", "B"])
+        df = self._make_source(spark, [("1", "A"), ("2", "Z")])
+        result, viols = ForeignKeyExpectation().validate(
+            df, self._rule(pk_col="id"), spark
+        )
+        assert result["status"] == "FAILED"
+        assert result["failed_rows"] == 1
+        row = viols.collect()[0]
+        assert row["primary_key_value"] == "2"
+        assert row["actual_value"] == "Z"
+
+    def test_multiple_missing_fk_values(self, spark):
+        """Multiple missing FK values all appear as violations."""
+        from engine.expectations import ForeignKeyExpectation
+        self._make_ref_view(spark, ["A"])
+        df = self._make_source(spark, [("1", "X"), ("2", "Y"), ("3", "A")])
+        result, viols = ForeignKeyExpectation().validate(
+            df, self._rule(pk_col="id"), spark
+        )
+        assert result["status"] == "FAILED"
+        assert result["failed_rows"] == 2
+        assert viols.count() == 2
+
+    def test_null_fk_values_excluded(self, spark):
+        """Null FK values are skipped — only non-null values are validated."""
+        from engine.expectations import ForeignKeyExpectation
+        self._make_ref_view(spark, ["A"])
+        df = self._make_source(spark, [("1", None), ("2", "A")])
+        result, viols = ForeignKeyExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "PASSED"
+        assert result["total_rows"] == 1  # only the non-null row was evaluated
+
+    def test_all_null_fk_passes(self, spark):
+        """All null FK values → PASSED (nothing to validate)."""
+        from engine.expectations import ForeignKeyExpectation
+        self._make_ref_view(spark, ["A"])
+        df = self._make_source(spark, [("1", None), ("2", None)])
+        result, viols = ForeignKeyExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "PASSED"
+
+    def test_missing_reference_table_returns_error(self, spark):
+        """Reference table that does not exist → ERROR result, not an exception."""
+        from engine.expectations import ForeignKeyExpectation
+        df = self._make_source(spark, [("1", "A")])
+        rule = self._rule(ref_table="nonexistent_table_xyz_404")
+        result, viols = ForeignKeyExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR"
+        assert "nonexistent_table_xyz_404" in result["details"]
+        assert viols.count() == 0
+
+    def test_missing_column_in_source_returns_error(self, spark):
+        """Referencing a column not in the source DataFrame → ERROR."""
+        from engine.expectations import ForeignKeyExpectation
+        self._make_ref_view(spark, ["A"])
+        df = self._make_source(spark, [("1", "A")])
+        rule = self._rule(column="nonexistent_col")
+        result, viols = ForeignKeyExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR"
+
+    def test_missing_required_params_returns_error(self, spark):
+        """Omitting required parameters → ERROR."""
+        from engine.expectations import ForeignKeyExpectation
+        df = self._make_source(spark, [("1", "A")])
+        rule = {"rule_id": "T", "name": "t", "expectation": "x", "parameters": {}}
+        result, viols = ForeignKeyExpectation().validate(df, rule, spark)
+        assert result["status"] == "ERROR"
+
+    def test_success_pct_correct(self, spark):
+        """success_pct reflects the proportion of valid FK values."""
+        from engine.expectations import ForeignKeyExpectation
+        self._make_ref_view(spark, ["A", "B"])
+        df = self._make_source(spark, [("1", "A"), ("2", "B"), ("3", "X"), ("4", "Y")])
+        result, viols = ForeignKeyExpectation().validate(
+            df, self._rule(pk_col="id"), spark
+        )
+        assert result["status"] == "FAILED"
+        assert result["total_rows"] == 4
+        assert result["passed_rows"] == 2
+        assert result["failed_rows"] == 2
+        assert result["success_pct"] == 50.0
+
+    def test_validate_foreign_key_registered_in_registry(self, spark):
+        from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
+        assert "validate_foreign_key" in CUSTOM_EXPECTATION_REGISTRY
