@@ -40,6 +40,7 @@
 
 # CELL 2 — Imports and run metadata
 # -----------------------------------------------------------------------------
+import time
 import yaml
 import uuid
 from datetime import datetime, date, timezone
@@ -253,13 +254,15 @@ def _run_gx_expectation(
         }
 
     except Exception as exc:
+        rule_id  = rule.get("rule_id", "?")
+        exp_name = rule.get("expectation", "?")
         return {
             "total_rows":  0,
             "passed_rows": 0,
             "failed_rows": 0,
             "success_pct": 0.0,
             "status":      "ERROR",
-            "details":     f"GX execution error: {exc}",
+            "details":     f"[{rule_id}/{exp_name}] GX execution error: {exc}",
         }
 
 
@@ -299,29 +302,30 @@ def _violations_for_gx_rule(
 # CELL 5 — Schema for result accumulation
 # -----------------------------------------------------------------------------
 RESULT_SCHEMA = StructType([
-    StructField("run_id",            StringType(),    False),
-    StructField("run_timestamp",     TimestampType(), False),
-    StructField("batch_date",        DateType(),      False),
-    StructField("rule_group",        StringType(),    False),
-    StructField("rule_id",           StringType(),    False),
-    StructField("rule_name",         StringType(),    False),
-    StructField("table_name",        StringType(),    False),
-    StructField("expectation",       StringType(),    False),
-    StructField("severity",          StringType(),    False),
-    StructField("owner",             StringType(),    False),
-    StructField("total_rows",        LongType(),      True),
-    StructField("passed_rows",       LongType(),      True),
-    StructField("failed_rows",       LongType(),      True),
-    StructField("success_pct",       DoubleType(),    True),
-    StructField("status",            StringType(),    False),
-    StructField("details",           StringType(),    True),
-    StructField("column_a",          StringType(),    True),
-    StructField("column_b",          StringType(),    True),
-    StructField("operator",          StringType(),    True),
-    StructField("sql_query",         StringType(),    True),
-    StructField("rule_category",     StringType(),    True),
-    StructField("reference_table",   StringType(),    True),
-    StructField("reference_column",  StringType(),    True),
+    StructField("run_id",               StringType(),    False),
+    StructField("run_timestamp",        TimestampType(), False),
+    StructField("batch_date",           DateType(),      False),
+    StructField("rule_group",           StringType(),    False),
+    StructField("rule_id",              StringType(),    False),
+    StructField("rule_name",            StringType(),    False),
+    StructField("table_name",           StringType(),    False),
+    StructField("expectation",          StringType(),    False),
+    StructField("severity",             StringType(),    False),
+    StructField("owner",                StringType(),    False),
+    StructField("total_rows",           LongType(),      True),
+    StructField("passed_rows",          LongType(),      True),
+    StructField("failed_rows",          LongType(),      True),
+    StructField("success_pct",          DoubleType(),    True),
+    StructField("status",               StringType(),    False),
+    StructField("details",              StringType(),    True),
+    StructField("column_a",             StringType(),    True),
+    StructField("column_b",             StringType(),    True),
+    StructField("operator",             StringType(),    True),
+    StructField("sql_query",            StringType(),    True),
+    StructField("rule_category",        StringType(),    True),
+    StructField("reference_table",      StringType(),    True),
+    StructField("reference_column",     StringType(),    True),
+    StructField("rule_duration_seconds", DoubleType(),   True),
 ])
 
 
@@ -391,6 +395,7 @@ def run_validation(
         reference_column = ref_block.get("column") if exp_name == "validate_foreign_key" else None
 
         print(f"  → [{rule_id}] {rule_name} ({exp_name}) ... ", end="")
+        _rule_start = time.perf_counter()
 
         try:
             if exp_name in GX_NATIVE_EXPECTATIONS:
@@ -412,7 +417,7 @@ def run_validation(
                     "failed_rows": 0,
                     "success_pct": 0.0,
                     "status":      "ERROR",
-                    "details":     f"Unknown expectation: '{exp_name}'",
+                    "details":     f"[{table_name}/{rule_id}] Unknown expectation: '{exp_name}'",
                 }
                 viols_spark = None
 
@@ -423,11 +428,12 @@ def run_validation(
                 "failed_rows": 0,
                 "success_pct": 0.0,
                 "status":      "ERROR",
-                "details":     f"Unexpected error: {exc}",
+                "details":     f"[{table_name}/{rule_id}/{exp_name}] Unexpected error: {exc}",
             }
             viols_spark = None
 
-        print(result["status"])
+        _rule_elapsed = time.perf_counter() - _rule_start
+        print(f"{result['status']} ({_rule_elapsed:.2f}s)")
 
         all_results.append((
             RUN_ID,
@@ -453,6 +459,7 @@ def run_validation(
             rule_category,
             reference_table,
             reference_column,
+            round(_rule_elapsed, 3),
         ))
 
         if viols_spark is not None and viols_spark.count() > 0:
@@ -479,6 +486,18 @@ def run_validation(
                     how="left",
                 ).withColumn("_resolved_prosess_id", F.col("_prosess_id"))
                 prosess_id_expr = F.col("_resolved_prosess_id")
+                # Warn if 100% of join keys missed — usually a type mismatch
+                # between primary_key_value (string) and pk_col in source_df.
+                null_count = viols_spark.filter(
+                    F.col("_resolved_prosess_id").isNull()
+                ).count()
+                if null_count > 0 and null_count == viols_spark.count():
+                    print(
+                        f"  Warning [{rule_id}]: prosess_id join on "
+                        f"'{prosess_id_col}' produced no matches — all "
+                        f"{null_count} violation row(s) will have null "
+                        f"prosess_id. Check key type alignment."
+                    )
             else:
                 prosess_id_expr = F.lit(None).cast("string")
 
@@ -558,6 +577,15 @@ def main() -> tuple[int, int]:
 
         all_results_combined = all_results_combined.unionByName(results_df)
         all_violations_combined = all_violations_combined.unionByName(violations_df)
+
+    # Print the top-5 slowest rules to help identify bottlenecks.
+    if all_results_combined.count() > 0:
+        print("\n--- Top-5 slowest rules (by rule_duration_seconds) ---")
+        all_results_combined.orderBy(
+            "rule_duration_seconds", ascending=False
+        ).select("rule_id", "rule_name", "status", "rule_duration_seconds").show(
+            5, truncate=False
+        )
 
     print("\nWriting results to Delta tables…")
 

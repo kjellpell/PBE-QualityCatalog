@@ -72,11 +72,11 @@ def _validate_sequence_order(idx: int, cfg: dict, errors: list) -> None:
     label = f"Rule {idx + 1} [sequence_order]"
 
     group = cfg.get("group", "")
-    if not group or not str(group).strip():
+    if group is None or str(group).strip() == "":
         errors.append(f"{label}: 'group' field cannot be empty.")
 
     column = cfg.get("column", "")
-    if not column or not str(column).strip():
+    if column is None or str(column).strip() == "":
         errors.append(f"{label}: 'column' field cannot be empty.")
 
     values = cfg.get("values")
@@ -95,11 +95,11 @@ def _validate_pair_validation(idx: int, cfg: dict, errors: list) -> None:
     label = f"Rule {idx + 1} [pair_validation]"
 
     group = cfg.get("group", "")
-    if not group or not str(group).strip():
+    if group is None or str(group).strip() == "":
         errors.append(f"{label}: 'group' field cannot be empty.")
 
     column = cfg.get("column", "")
-    if not column or not str(column).strip():
+    if column is None or str(column).strip() == "":
         errors.append(f"{label}: 'column' field cannot be empty.")
 
     pairs = cfg.get("pairs")
@@ -114,6 +114,12 @@ def _validate_pair_validation(idx: int, cfg: dict, errors: list) -> None:
                     f"{label}: pair at index {pi} must be a two-element list "
                     f"[start_value, stop_value]."
                 )
+            else:
+                for ei, elem in enumerate(pair):
+                    if elem is None or str(elem).strip() == "":
+                        errors.append(
+                            f"{label}: pair[{pi}][{ei}] must not be null or empty."
+                        )
 
 
 def _validate_gate(idx: int, cfg: dict, errors: list) -> None:
@@ -121,11 +127,11 @@ def _validate_gate(idx: int, cfg: dict, errors: list) -> None:
     label = f"Rule {idx + 1} [gate]"
 
     group = cfg.get("group", "")
-    if not group or not str(group).strip():
+    if group is None or str(group).strip() == "":
         errors.append(f"{label}: 'group' field cannot be empty.")
 
     column = cfg.get("column", "")
-    if not column or not str(column).strip():
+    if column is None or str(column).strip() == "":
         errors.append(f"{label}: 'column' field cannot be empty.")
 
     value_to_check = cfg.get("value_to_check")

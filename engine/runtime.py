@@ -37,18 +37,26 @@ def require_config_keys(config_module, required_keys: list[str], module_name: st
         raise RuntimeError(f"Missing required {module_name} keys: {', '.join(missing)}")
 
 
+def _qualify(table_name: str, default_schema: str) -> str:
+    """Prepend default_schema only when table_name is not already schema-qualified."""
+    return table_name if "." in table_name else f"{default_schema}.{table_name}"
+
+
 def resolve_targets(config_module, runtime_module) -> dict[str, str]:
-    metrics_table = f"{config_module.DEFAULT_SCHEMA}.{config_module.DQ_EXECUTION_METRICS_TABLE}"
+    schema = config_module.DEFAULT_SCHEMA
+    results    = _qualify(config_module.DQ_RESULTS_TABLE,            schema)
+    violations = _qualify(config_module.DQ_VIOLATIONS_TABLE,         schema)
+    metrics    = _qualify(config_module.DQ_EXECUTION_METRICS_TABLE,  schema)
     if runtime_module.DRY_RUN:
         return {
-            "results_table": f"{config_module.DQ_RESULTS_TABLE}_tmp",
-            "violations_table": f"{config_module.DQ_VIOLATIONS_TABLE}_tmp",
-            "execution_metrics_table": f"{metrics_table}_tmp",
+            "results_table":           f"{results}_tmp",
+            "violations_table":        f"{violations}_tmp",
+            "execution_metrics_table": f"{metrics}_tmp",
         }
     return {
-        "results_table": config_module.DQ_RESULTS_TABLE,
-        "violations_table": config_module.DQ_VIOLATIONS_TABLE,
-        "execution_metrics_table": metrics_table,
+        "results_table":           results,
+        "violations_table":        violations,
+        "execution_metrics_table": metrics,
     }
 
 
