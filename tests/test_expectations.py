@@ -955,6 +955,110 @@ class TestValidatePairedPresenceExpectation:
         assert result["status"] == "FAILED"
         assert viols.count() == 1
 
+    # ---- one-to-many pair tests ----
+
+    def _rule_one_to_many(self):
+        return {
+            "rule_id": "T-PAIR-OTM",
+            "name": "test one-to-many",
+            "expectation": "validate_paired_presence",
+            "parameters": {
+                "value_column": "step",
+                "group_column": "group_id",
+                "required_pairs": [["Start", ["Stop", "Cancel"]]],
+            },
+        }
+
+    def test_one_to_many_first_stop_only_passes(self, spark):
+        """Start + Stop (Cancel absent) → PASSED."""
+        from engine.expectations import ValidatePairedPresenceExpectation
+        df = self._make_df(spark, [("G1", "Start"), ("G1", "Stop")])
+        result, viols = ValidatePairedPresenceExpectation().validate(
+            df, self._rule_one_to_many(), spark
+        )
+        assert result["status"] == "PASSED"
+        assert viols.count() == 0
+
+    def test_one_to_many_second_stop_only_passes(self, spark):
+        """Start + Cancel (Stop absent) → PASSED."""
+        from engine.expectations import ValidatePairedPresenceExpectation
+        df = self._make_df(spark, [("G1", "Start"), ("G1", "Cancel")])
+        result, viols = ValidatePairedPresenceExpectation().validate(
+            df, self._rule_one_to_many(), spark
+        )
+        assert result["status"] == "PASSED"
+        assert viols.count() == 0
+
+    def test_one_to_many_both_stops_present_passes(self, spark):
+        """Start + Stop + Cancel → PASSED (more than one stop is fine)."""
+        from engine.expectations import ValidatePairedPresenceExpectation
+        df = self._make_df(spark, [
+            ("G1", "Start"), ("G1", "Stop"), ("G1", "Cancel")
+        ])
+        result, viols = ValidatePairedPresenceExpectation().validate(
+            df, self._rule_one_to_many(), spark
+        )
+        assert result["status"] == "PASSED"
+
+    def test_one_to_many_start_without_any_stop_fails(self, spark):
+        """Start present, neither Stop nor Cancel → FAILED."""
+        from engine.expectations import ValidatePairedPresenceExpectation
+        df = self._make_df(spark, [("G1", "Start")])
+        result, viols = ValidatePairedPresenceExpectation().validate(
+            df, self._rule_one_to_many(), spark
+        )
+        assert result["status"] == "FAILED"
+        assert result["failed_rows"] == 1
+        row = viols.collect()[0]
+        assert row["primary_key_value"] == "G1"
+
+    def test_one_to_many_stop_without_start_fails(self, spark):
+        """Stop present, Start absent → FAILED."""
+        from engine.expectations import ValidatePairedPresenceExpectation
+        df = self._make_df(spark, [("G1", "Stop")])
+        result, viols = ValidatePairedPresenceExpectation().validate(
+            df, self._rule_one_to_many(), spark
+        )
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+
+    def test_one_to_many_cancel_without_start_fails(self, spark):
+        """Cancel present, Start absent → FAILED."""
+        from engine.expectations import ValidatePairedPresenceExpectation
+        df = self._make_df(spark, [("G1", "Cancel")])
+        result, viols = ValidatePairedPresenceExpectation().validate(
+            df, self._rule_one_to_many(), spark
+        )
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+
+    def test_mixed_strict_and_one_to_many_pairs(self, spark):
+        """One strict pair and one one-to-many pair in the same rule."""
+        from engine.expectations import ValidatePairedPresenceExpectation
+        rule = {
+            "rule_id": "T-PAIR-MIX",
+            "name": "mixed",
+            "expectation": "validate_paired_presence",
+            "parameters": {
+                "value_column": "step",
+                "group_column": "group_id",
+                "required_pairs": [
+                    ["Approve", "Send"],                    # strict
+                    ["Start",   ["Stop", "Cancel"]],        # one-to-many
+                ],
+            },
+        }
+        # G1: Approve+Send OK, Start+Stop OK → all PASS
+        # G2: Approve+Send OK, Start without any stop → FAIL
+        df = self._make_df(spark, [
+            ("G1", "Approve"), ("G1", "Send"), ("G1", "Start"), ("G1", "Stop"),
+            ("G2", "Approve"), ("G2", "Send"), ("G2", "Start"),
+        ])
+        result, viols = ValidatePairedPresenceExpectation().validate(df, rule, spark)
+        assert result["status"] == "FAILED"
+        pks = {r["primary_key_value"] for r in viols.collect()}
+        assert pks == {"G2"}
+
 
 # ---------------------------------------------------------------------------
 # ValidateNoOrphanExpectation  (renamed from MilestoneNoOrphanExpectation)
@@ -997,6 +1101,67 @@ class TestValidateNoOrphanExpectation:
         from engine.expectations import ValidateNoOrphanExpectation
         df = self._make_df(spark, [("G1", "Start")])
         result, viols = ValidateNoOrphanExpectation().validate(df, self._rule(), spark)
+        assert result["status"] == "PASSED"
+
+    # ---- one-to-many orphan tests ----
+
+    def _rule_one_to_many(self):
+        return {
+            "rule_id": "T-ORPHAN-OTM",
+            "name": "test one-to-many orphan",
+            "expectation": "validate_no_orphan",
+            "parameters": {
+                "value_column": "step",
+                "group_column": "group_id",
+                "pairs":        [["Start", ["Stop", "Cancel"]]],
+            },
+        }
+
+    def test_one_to_many_no_orphan_first_stop_has_start_passes(self, spark):
+        """Stop present with Start → no orphan."""
+        from engine.expectations import ValidateNoOrphanExpectation
+        df = self._make_df(spark, [("G1", "Start"), ("G1", "Stop")])
+        result, viols = ValidateNoOrphanExpectation().validate(
+            df, self._rule_one_to_many(), spark
+        )
+        assert result["status"] == "PASSED"
+
+    def test_one_to_many_no_orphan_second_stop_has_start_passes(self, spark):
+        """Cancel present with Start → no orphan."""
+        from engine.expectations import ValidateNoOrphanExpectation
+        df = self._make_df(spark, [("G1", "Start"), ("G1", "Cancel")])
+        result, viols = ValidateNoOrphanExpectation().validate(
+            df, self._rule_one_to_many(), spark
+        )
+        assert result["status"] == "PASSED"
+
+    def test_one_to_many_orphan_first_stop_fails(self, spark):
+        """Stop present without Start → FAILED (orphan)."""
+        from engine.expectations import ValidateNoOrphanExpectation
+        df = self._make_df(spark, [("G1", "Stop")])
+        result, viols = ValidateNoOrphanExpectation().validate(
+            df, self._rule_one_to_many(), spark
+        )
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+
+    def test_one_to_many_orphan_second_stop_fails(self, spark):
+        """Cancel present without Start → FAILED (orphan)."""
+        from engine.expectations import ValidateNoOrphanExpectation
+        df = self._make_df(spark, [("G1", "Cancel")])
+        result, viols = ValidateNoOrphanExpectation().validate(
+            df, self._rule_one_to_many(), spark
+        )
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+
+    def test_one_to_many_start_without_any_stop_passes(self, spark):
+        """Start present, no Stop or Cancel → no orphan (start-without-stop is valid)."""
+        from engine.expectations import ValidateNoOrphanExpectation
+        df = self._make_df(spark, [("G1", "Start")])
+        result, viols = ValidateNoOrphanExpectation().validate(
+            df, self._rule_one_to_many(), spark
+        )
         assert result["status"] == "PASSED"
 
 

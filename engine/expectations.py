@@ -78,6 +78,18 @@ def _safe_pct(passed: int, total: int) -> float:
     return round(passed / total * 100, 2) if total else 100.0
 
 
+def _normalise_stops(raw_stop) -> list:
+    """
+    Normalise the stop-slot of a pair to a list.
+
+    Allows the YAML pair syntax to use either a scalar stop value or a list of
+    acceptable stop values:
+      - ``[A, B]``       → stops = [B]       (single stop, scalar form)
+      - ``[A, [B, C]]``  → stops = [B, C]    (one-to-many, list form)
+    """
+    return list(raw_stop) if isinstance(raw_stop, list) else [raw_stop]
+
+
 def _resolve_gate_groups(df: DataFrame, gate: dict, group_col: str):
     """
     Return the subset of *df* whose group_col values belong to groups that
@@ -1036,7 +1048,11 @@ class ValidatePairedPresenceExpectation:
     YAML parameters:
       value_column    - column holding the values to check
       group_column    - column that identifies the group
-      required_pairs  - list of [start_value, stop_value] pairs
+      required_pairs  - list of pairs; each pair is [start_value, stop_value] or
+                        [start_value, [stop_value1, stop_value2, ...]].
+                        In the multi-stop form the pair is satisfied when at least
+                        one of the stop values exists in the group alongside the
+                        start value.
       completion_gate - (optional) only evaluate groups that are "done":
           value_column  - column holding the completion marker value
           value         - the value that signals the group is closed
@@ -1056,22 +1072,37 @@ class ValidatePairedPresenceExpectation:
         if total == 0 or not required_pairs:
             return _passed_result(total), _empty_violations(spark)
 
+        # Validate pair structure and normalise stop-slots to lists.
+        normalised = []
         for pi, pair in enumerate(required_pairs):
             if not isinstance(pair, (list, tuple)) or len(pair) != 2:
                 return (
                     _error_result(
                         f"Parameter 'required_pairs[{pi}]' must be a 2-element list "
-                        f"[start_value, stop_value]."
+                        f"[start_value, stop_value] or [start_value, [stop1, stop2, ...]]."
                     ),
                     _empty_violations(spark),
                 )
+            stops = _normalise_stops(pair[1])
+            if not stops:
+                return (
+                    _error_result(
+                        f"Parameter 'required_pairs[{pi}]': stop slot must not be empty."
+                    ),
+                    _empty_violations(spark),
+                )
+            normalised.append((pair[0], stops))
 
-        all_types = list({t for pair in required_pairs for t in pair})
+        # Collect every distinct value referenced across all pairs for the pivot.
+        all_types = list({
+            t
+            for start, stops in normalised
+            for t in ([start] + stops)
+        })
 
         pivot_df = (
             df.filter(F.col(group_col).isNotNull())
-            .withColumn("_in_pair", F.col(value_col).isin(all_types))
-            .filter(F.col("_in_pair"))
+            .filter(F.col(value_col).isin(all_types))
             .groupBy(group_col)
             .agg(*[
                 F.max(
@@ -1085,34 +1116,42 @@ class ValidatePairedPresenceExpectation:
         all_violations = _empty_violations(spark)
         total_failed = 0
 
-        for pair in required_pairs:
-            start_type, stop_type = pair[0], pair[1]
+        for start_type, stop_types in normalised:
             has_start = type_to_col.get(start_type)
-            has_stop  = type_to_col.get(stop_type)
-            if not has_start or not has_stop:
+            if not has_start:
                 continue
 
-            pair_viols = pivot_df.filter(
-                F.col(has_start) != F.col(has_stop)
+            # Build OR expression across all stop columns.
+            has_any_stop_expr = F.col(type_to_col[stop_types[0]])
+            for st in stop_types[1:]:
+                has_any_stop_expr = has_any_stop_expr | F.col(type_to_col[st])
+
+            pivot_with_stop = pivot_df.withColumn("_has_any_stop", has_any_stop_expr)
+
+            stop_label = " or ".join(f"'{s}'" for s in stop_types)
+            expected = (
+                f"Both '{start_type}' and ({stop_label}) must exist "
+                f"for the same {group_col}"
+            )
+
+            pair_viols = pivot_with_stop.filter(
+                F.col(has_start) != F.col("_has_any_stop")
             ).select(
                 F.col(group_col).cast("string").alias("primary_key_value"),
                 F.lit(value_col).alias("violated_column"),
                 F.when(F.col(has_start), F.lit(start_type))
-                 .otherwise(F.lit(stop_type)).alias("actual_value"),
-                F.lit(
-                    f"Both '{start_type}' and '{stop_type}' must exist "
-                    f"for the same {group_col}"
-                ).alias("expected_condition"),
+                 .otherwise(F.lit(stop_label)).alias("actual_value"),
+                F.lit(expected).alias("expected_condition"),
                 F.when(
-                    F.col(has_start) & ~F.col(has_stop),
+                    F.col(has_start) & ~F.col("_has_any_stop"),
                     F.concat(
-                        F.lit(f"'{start_type}' present but '{stop_type}' missing "
+                        F.lit(f"'{start_type}' present but none of ({stop_label}) found "
                               f"for {group_col}='"),
                         F.col(group_col).cast("string"), F.lit("'"),
                     ),
                 ).otherwise(
                     F.concat(
-                        F.lit(f"'{stop_type}' present but '{start_type}' missing "
+                        F.lit(f"One of ({stop_label}) present but '{start_type}' missing "
                               f"for {group_col}='"),
                         F.col(group_col).cast("string"), F.lit("'"),
                     ),
@@ -1261,7 +1300,10 @@ class ValidateNoOrphanExpectation:
     YAML parameters:
       value_column - column holding the type/name values
       group_column - column identifying the group
-      pairs        - list of [start_type, stop_type] pairs to check
+      pairs        - list of pairs; each pair is [start_type, stop_type] or
+                     [start_type, [stop_type1, stop_type2, ...]].
+                     In the multi-stop form, the presence of ANY stop value
+                     without the corresponding start value is a violation.
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
@@ -1274,7 +1316,13 @@ class ValidateNoOrphanExpectation:
         if total == 0 or not pairs:
             return _passed_result(total), _empty_violations(spark)
 
-        all_types = list({t for pair in pairs for t in pair})
+        # Normalise stop-slots to lists and collect all referenced values.
+        normalised = [(pair[0], _normalise_stops(pair[1])) for pair in pairs]
+        all_types  = list({
+            t
+            for start, stops in normalised
+            for t in ([start] + stops)
+        })
 
         pivot_df = (
             df.filter(F.col(group_col).isNotNull())
@@ -1292,24 +1340,30 @@ class ValidateNoOrphanExpectation:
         all_violations = _empty_violations(spark)
         total_failed = 0
 
-        for pair in pairs:
-            start_type, stop_type = pair[0], pair[1]
+        for start_type, stop_types in normalised:
             has_start = type_to_col.get(start_type)
-            has_stop  = type_to_col.get(stop_type)
-            if not has_start or not has_stop:
+            if not has_start:
                 continue
 
-            pair_viols = pivot_df.filter(
-                F.col(has_stop) & ~F.col(has_start)
+            # Build OR expression: any stop column is True.
+            has_any_stop_expr = F.col(type_to_col[stop_types[0]])
+            for st in stop_types[1:]:
+                has_any_stop_expr = has_any_stop_expr | F.col(type_to_col[st])
+
+            stop_label = " or ".join(f"'{s}'" for s in stop_types)
+            pivot_with_stop = pivot_df.withColumn("_has_any_stop", has_any_stop_expr)
+
+            pair_viols = pivot_with_stop.filter(
+                F.col("_has_any_stop") & ~F.col(has_start)
             ).select(
                 F.col(group_col).cast("string").alias("primary_key_value"),
                 F.lit(value_col).alias("violated_column"),
-                F.lit(stop_type).alias("actual_value"),
+                F.lit(stop_label).alias("actual_value"),
                 F.lit(
-                    f"'{start_type}' must exist when '{stop_type}' is present"
+                    f"'{start_type}' must exist when any of ({stop_label}) is present"
                 ).alias("expected_condition"),
                 F.concat(
-                    F.lit(f"'{stop_type}' exists but '{start_type}' is missing "
+                    F.lit(f"One of ({stop_label}) exists but '{start_type}' is missing "
                           f"for {group_col}='"),
                     F.col(group_col).cast("string"), F.lit("'"),
                 ).alias("violation_detail"),
