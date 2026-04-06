@@ -112,13 +112,31 @@ def _validate_pair_validation(idx: int, cfg: dict, errors: list) -> None:
             if not isinstance(pair, (list, tuple)) or len(pair) != 2:
                 errors.append(
                     f"{label}: pair at index {pi} must be a two-element list "
-                    f"[start_value, stop_value]."
+                    f"[start_value, stop_value] or [start_value, [stop1, stop2, ...]]."
                 )
             else:
-                for ei, elem in enumerate(pair):
-                    if elem is None or str(elem).strip() == "":
+                # Validate start slot (always a scalar).
+                start = pair[0]
+                if start is None or str(start).strip() == "":
+                    errors.append(
+                        f"{label}: pair[{pi}][0] (start value) must not be null or empty."
+                    )
+                # Validate stop slot (scalar or non-empty list of scalars).
+                stop = pair[1]
+                if isinstance(stop, list):
+                    if not stop:
                         errors.append(
-                            f"{label}: pair[{pi}][{ei}] must not be null or empty."
+                            f"{label}: pair[{pi}][1] stop list must not be empty."
+                        )
+                    for si, sv in enumerate(stop):
+                        if sv is None or str(sv).strip() == "":
+                            errors.append(
+                                f"{label}: pair[{pi}][1][{si}] must not be null or empty."
+                            )
+                else:
+                    if stop is None or str(stop).strip() == "":
+                        errors.append(
+                            f"{label}: pair[{pi}][1] (stop value) must not be null or empty."
                         )
 
 

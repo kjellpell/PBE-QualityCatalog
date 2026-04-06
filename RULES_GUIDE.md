@@ -168,6 +168,68 @@ Important: SQL must return only violating rows. If SQL returns rows, the rule fa
 
 ---
 
+### 6. Paired milestone checks (start and stop must both exist)
+
+Use `validate_paired_presence` when two milestone values must always appear together in the same group. If one exists without the other, the rule fails.
+
+**Single stop (strict pair):**
+
+```yaml
+- rule_id: MIL-004
+  name: Start and Stop milestones must both be present
+  expectation: validate_paired_presence
+  parameters:
+    value_column: Milepel
+    group_column: prosess_id
+    required_pairs:
+      - [Startbehandling, Stoppbehandling]
+  severity: critical
+  category: Business Logic
+  owner: IT
+```
+
+**Multiple acceptable stops (one-to-many):**
+
+Sometimes a process can end in more than one way — for example, it can be either stopped normally or cancelled. Use a list in the stop position to allow any of those values:
+
+```yaml
+- rule_id: MIL-004
+  name: Process must be closed with a stop or cancellation milestone
+  expectation: validate_paired_presence
+  parameters:
+    value_column: Milepel
+    group_column: prosess_id
+    required_pairs:
+      - [Startbehandling, [Stoppbehandling, Kansellert]]
+  severity: critical
+  category: Business Logic
+  owner: IT
+```
+
+This passes when a group has `Startbehandling` + at least one of `Stoppbehandling` or `Kansellert`. It fails when `Startbehandling` exists with neither, or when `Stoppbehandling`/`Kansellert` exists without `Startbehandling`.
+
+**Orphan check (stop without start is invalid):**
+
+Use `validate_no_orphan` when a stop milestone must not exist on its own — the corresponding start must also be present. A start without a stop is allowed (the process may still be running).
+
+```yaml
+- rule_id: MIL-005
+  name: Stop milestone requires a matching start milestone
+  expectation: validate_no_orphan
+  parameters:
+    value_column: Milepel
+    group_column: prosess_id
+    pairs:
+      - [Startbehandling, [Stoppbehandling, Kansellert]]
+  severity: high
+  category: Business Logic
+  owner: IT
+```
+
+This fails when `Stoppbehandling` OR `Kansellert` exists for a group that has no `Startbehandling`.
+
+---
+
 ## Severity Guidance
 
 - critical:
