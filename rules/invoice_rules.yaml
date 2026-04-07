@@ -49,7 +49,6 @@ description: Data quality rules for invoice line data linked to case processes
 
 # Table configuration used by validation_runner.py
 pk_column: Fakturanr
-prosess_id_column: prosess_id
 
 rules:
 

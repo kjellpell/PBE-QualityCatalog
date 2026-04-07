@@ -268,6 +268,8 @@ Use domain prefixes consistently:
 
 Keep IDs unique and continue numbering in each file.
 
+Rule IDs must always be set explicitly in every rule block (`rule_id: PROC-001`). There is no automatic ID generation in the main rule files — every new rule needs a manually chosen ID.
+
 ---
 
 ## Before You Save: Checklist
