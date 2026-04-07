@@ -11,7 +11,7 @@
 #        a. Dispatch standard GX expectations via the GX Core validator.
 #        b. Dispatch custom expectations to the CUSTOM_EXPECTATION_REGISTRY.
 #        c. Collect per-rule results (counts, success %, status).
-#        d. Collect per-row violation details (including prosess_id).
+#        d. Collect per-row violation details (primary_key_value links back to source).
 #   4. Write summary rows to dq_run_results (Delta table).
 #   5. Write violation rows to dq_violations (Delta table).
 #   6. Print a human-readable run summary.
@@ -270,8 +270,6 @@ def _violations_for_gx_rule(
     full_df,
     rule: dict,
     pk_col: str,
-    prosess_id_col: str | None = None,
-    saksbehandler_col: str | None = None,
 ) -> "DataFrame | None":
     """
     For GX null-check expectations, compute violations against the FULL
@@ -285,18 +283,13 @@ def _violations_for_gx_rule(
     if not col or col not in full_df.columns:
         return None
 
-    base_cols = [
+    return full_df.filter(F.col(col).isNull()).select(
         F.col(pk_col).cast("string").alias("primary_key_value"),
         F.lit(col).alias("violated_column"),
         F.lit(None).cast("string").alias("actual_value"),
         F.lit(f"{col} must not be null").alias("expected_condition"),
         F.lit(f"{col} is null").alias("violation_detail"),
-    ]
-    if saksbehandler_col and saksbehandler_col in full_df.columns:
-        base_cols.append(
-            F.col(saksbehandler_col).cast("string").alias("saksbehandler_kode")
-        )
-    return full_df.filter(F.col(col).isNull()).select(*base_cols)
+    )
 
 
 # CELL 5 — Schema for result accumulation
@@ -343,19 +336,17 @@ def run_validation(
     rule_catalog: dict,
     source_df,
     pk_col: str,
-    prosess_id_col: str | None = None,
-    saksbehandler_col: str | None = None,
 ) -> tuple:
     """
     Validate source_df against all rules in rule_catalog.
 
     Parameters
     ----------
-    rule_catalog     : dict loaded from a YAML rule file
-    source_df        : full Spark DataFrame to validate
-    pk_col           : primary key column of source_df (for violation rows)
-    prosess_id_col   : column in source_df that holds the prosess_id link
-    saksbehandler_col: optional handler code column (Process table only)
+    rule_catalog : dict loaded from a YAML rule file
+    source_df    : full Spark DataFrame to validate
+    pk_col       : primary key column of source_df (stored as primary_key_value
+                   in each violation row; use this to join back to the source
+                   table for context columns such as Enhets_id or handler codes)
 
     Returns
     -------
@@ -402,9 +393,7 @@ def run_validation(
                 result = _run_gx_expectation(
                     gx_context, pdf_sample, rule, suite_name=rule_group
                 )
-                viols_spark = _violations_for_gx_rule(
-                    source_df, rule, pk_col, prosess_id_col, saksbehandler_col
-                )
+                viols_spark = _violations_for_gx_rule(source_df, rule, pk_col)
 
             elif exp_name in CUSTOM_EXPECTATION_REGISTRY:
                 validator   = CUSTOM_EXPECTATION_REGISTRY[exp_name]()
@@ -463,44 +452,6 @@ def run_validation(
         ))
 
         if viols_spark is not None and viols_spark.count() > 0:
-            if "saksbehandler_kode" not in viols_spark.columns:
-                viols_spark = viols_spark.withColumn(
-                    "saksbehandler_kode",
-                    F.lit(None).cast("string"),
-                )
-
-            if prosess_id_col and prosess_id_col == pk_col:
-                prosess_id_expr = F.col("primary_key_value")
-            elif (
-                prosess_id_col
-                and prosess_id_col in source_df.columns
-                and prosess_id_col != pk_col
-            ):
-                lookup = source_df.select(
-                    F.col(pk_col).cast("string").alias("_pk"),
-                    F.col(prosess_id_col).cast("string").alias("_prosess_id"),
-                ).dropDuplicates(["_pk"])
-                viols_spark = viols_spark.join(
-                    lookup,
-                    viols_spark["primary_key_value"] == lookup["_pk"],
-                    how="left",
-                ).withColumn("_resolved_prosess_id", F.col("_prosess_id"))
-                prosess_id_expr = F.col("_resolved_prosess_id")
-                # Warn if 100% of join keys missed — usually a type mismatch
-                # between primary_key_value (string) and pk_col in source_df.
-                null_count = viols_spark.filter(
-                    F.col("_resolved_prosess_id").isNull()
-                ).count()
-                if null_count > 0 and null_count == viols_spark.count():
-                    print(
-                        f"  Warning [{rule_id}]: prosess_id join on "
-                        f"'{prosess_id_col}' produced no matches — all "
-                        f"{null_count} violation row(s) will have null "
-                        f"prosess_id. Check key type alignment."
-                    )
-            else:
-                prosess_id_expr = F.lit(None).cast("string")
-
             viols_spark = viols_spark.select(
                 F.lit(RUN_ID).alias("run_id"),
                 F.lit(RUN_TIMESTAMP).alias("run_timestamp"),
@@ -512,13 +463,11 @@ def run_validation(
                 F.lit(severity).alias("severity"),
                 F.lit(owner).alias("owner"),
                 F.lit(rule_category).alias("failure_type"),
-                prosess_id_expr.cast("string").alias("prosess_id"),
                 F.col("primary_key_value"),
                 F.col("violated_column"),
                 F.col("actual_value"),
                 F.col("expected_condition"),
                 F.col("violation_detail"),
-                F.col("saksbehandler_kode"),
                 F.lit("Active").alias("issue_status"),
                 F.lit(None).cast("string").alias("resolution_timestamp"),
             )
@@ -542,8 +491,6 @@ def main() -> tuple[int, int]:
         table_name = catalog["table"]
         database = catalog.get("database", "")
         pk_col = catalog.get("pk_column", "id")
-        prosess_col = catalog.get("prosess_id_column")
-        handler_col = catalog.get("saksbehandler_column")
         joins_cfg = catalog.get("joins", [])
 
         full_table = f"{database}.{table_name}" if database else table_name
@@ -571,8 +518,6 @@ def main() -> tuple[int, int]:
             rule_catalog=catalog,
             source_df=source_df,
             pk_col=pk_col,
-            prosess_id_col=prosess_col,
-            saksbehandler_col=handler_col,
         )
 
         all_results_combined = all_results_combined.unionByName(results_df)

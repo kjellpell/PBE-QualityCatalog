@@ -41,13 +41,11 @@ VIOLATION_SCHEMA = StructType([
     StructField("severity",            StringType(),    False),
     StructField("owner",               StringType(),    False),
     StructField("failure_type",        StringType(),    True),
-    StructField("prosess_id",          StringType(),    True),
     StructField("primary_key_value",   StringType(),    True),
     StructField("violated_column",     StringType(),    True),
     StructField("actual_value",        StringType(),    True),
     StructField("expected_condition",  StringType(),    True),
     StructField("violation_detail",    StringType(),    True),
-    StructField("saksbehandler_kode",  StringType(),    True),
     StructField("issue_status",        StringType(),    False),
     # Stored as an ISO-8601 string ("2026-04-03T10:00:00") so that the value
     # can be read in environments without full Delta/Spark type coercion.

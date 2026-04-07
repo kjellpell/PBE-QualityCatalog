@@ -58,7 +58,6 @@ description: Data quality rules for milestone records linked to case processes
 
 # Table configuration used by validation_runner.py
 pk_column: prosess_id
-prosess_id_column: prosess_id
 
 rules:
 
