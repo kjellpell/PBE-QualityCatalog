@@ -47,16 +47,26 @@ def resolve_targets(config_module, runtime_module) -> dict[str, str]:
     results    = _qualify(config_module.DQ_RESULTS_TABLE,            schema)
     violations = _qualify(config_module.DQ_VIOLATIONS_TABLE,         schema)
     metrics    = _qualify(config_module.DQ_EXECUTION_METRICS_TABLE,  schema)
+
+    # IC tables — use getattr so the function works even if the caller's config
+    # module pre-dates the IC additions (e.g. in older test fixtures).
+    ic_results    = _qualify(getattr(config_module, "IC_RUN_RESULTS_TABLE",  "ic_run_results"),  schema)
+    ic_exceptions = _qualify(getattr(config_module, "IC_EXCEPTIONS_TABLE",   "ic_exceptions"),   schema)
+
     if runtime_module.DRY_RUN:
         return {
             "results_table":           f"{results}_tmp",
             "violations_table":        f"{violations}_tmp",
             "execution_metrics_table": f"{metrics}_tmp",
+            "ic_results_table":        f"{ic_results}_tmp",
+            "ic_exceptions_table":     f"{ic_exceptions}_tmp",
         }
     return {
         "results_table":           results,
         "violations_table":        violations,
         "execution_metrics_table": metrics,
+        "ic_results_table":        ic_results,
+        "ic_exceptions_table":     ic_exceptions,
     }
 
 

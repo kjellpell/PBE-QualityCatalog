@@ -53,7 +53,7 @@ from great_expectations.core.expectation_configuration import (
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.types import (
     StructType, StructField,
-    StringType, LongType, DoubleType, TimestampType, DateType,
+    StringType, LongType, DoubleType, TimestampType, DateType, IntegerType,
 )
 
 spark = SparkSession.builder.getOrCreate()
@@ -73,8 +73,10 @@ if _repo_root not in sys.path:
 from engine.expectations import CUSTOM_EXPECTATION_REGISTRY   # noqa: E402
 from engine.resolution import (                                # noqa: E402
     VIOLATION_SCHEMA,
+    IC_EXCEPTION_SCHEMA,
     _find_stale_violations,
     _apply_resolution_tracking,
+    _apply_ic_resolution_tracking,
 )
 from engine.runtime import (                                   # noqa: E402
     classify_retryable_error,
@@ -319,6 +321,11 @@ RESULT_SCHEMA = StructType([
     StructField("reference_table",      StringType(),    True),
     StructField("reference_column",     StringType(),    True),
     StructField("rule_duration_seconds", DoubleType(),   True),
+    # IC passthrough fields — populated for IC rules, None for DQ-only rules
+    StructField("control_ref",           StringType(),   True),
+    StructField("control_type",          StringType(),   True),
+    StructField("risk_domain",           StringType(),   True),
+    StructField("remediation_due_days",  IntegerType(),  True),
 ])
 
 
@@ -449,6 +456,11 @@ def run_validation(
             reference_table,
             reference_column,
             round(_rule_elapsed, 3),
+            # IC passthrough (None for DQ-only rules)
+            rule.get("control_ref"),
+            rule.get("control_type"),
+            rule.get("risk_domain"),
+            rule.get("remediation_due_days"),
         ))
 
         if viols_spark is not None and viols_spark.count() > 0:
@@ -477,11 +489,32 @@ def run_validation(
     return results_df, all_violations
 
 
+def _empty_ic_exceptions():
+    return spark.createDataFrame([], IC_EXCEPTION_SCHEMA)
+
+
 def main() -> tuple[int, int]:
     print("\nLoading rule catalogs from rules/ folder…")
     all_catalogs = _load_all_rules(RULES_DIR)
     if not all_catalogs and RUNTIME.FAIL_ON_EMPTY_RULES:
         raise RuntimeError(f"No rule catalogs found in {RULES_DIR}")
+
+    # Pre-compute IC rule metadata so we can enrich violations after the main loop.
+    # A rule is IC if it carries at least one of the IC_IDENTIFIER_FIELDS.
+    _ic_id_fields = getattr(CONFIG, "IC_IDENTIFIER_FIELDS", ["control_ref", "control_type", "risk_domain"])
+    ic_rule_meta: dict[str, dict] = {}
+    for _cat in all_catalogs:
+        for _rule in _cat.get("rules", []):
+            if any(_rule.get(f) for f in _ic_id_fields):
+                ic_rule_meta[_rule["rule_id"]] = {
+                    "control_ref":          _rule.get("control_ref"),
+                    "control_type":         _rule.get("control_type"),
+                    "risk_domain":          _rule.get("risk_domain"),
+                    "remediation_due_days": _rule.get("remediation_due_days"),
+                }
+    ic_rule_ids = set(ic_rule_meta.keys())
+    if ic_rule_ids:
+        print(f"  IC rules detected: {sorted(ic_rule_ids)}")
 
     all_results_combined = _empty_results()
     all_violations_combined = _empty_violations()
@@ -546,6 +579,77 @@ def main() -> tuple[int, int]:
     )
     violations_count = all_violations_combined.count()
     print(f"  {TARGETS['violations_table']} : {violations_count} violations processed.")
+
+    # ------------------------------------------------------------------
+    # IC dual-write: results → ic_run_results, violations → ic_exceptions
+    # ------------------------------------------------------------------
+    if ic_rule_ids:
+        # Build a metadata DataFrame to join IC-specific fields onto violations.
+        _ic_meta_schema = StructType([
+            StructField("rule_id",               StringType(),  False),
+            StructField("control_ref",           StringType(),  True),
+            StructField("control_type",          StringType(),  True),
+            StructField("risk_domain",           StringType(),  True),
+            StructField("remediation_due_days",  IntegerType(), True),
+        ])
+        _ic_meta_rows = [
+            (rid, m["control_ref"], m["control_type"], m["risk_domain"], m["remediation_due_days"])
+            for rid, m in ic_rule_meta.items()
+        ]
+        ic_meta_df = spark.createDataFrame(_ic_meta_rows, schema=_ic_meta_schema)
+
+        # Filter violations to IC rules only.
+        ic_base_violations = all_violations_combined.filter(
+            F.col("rule_id").isin(ic_rule_ids)
+        )
+        ic_violations_count = ic_base_violations.count()
+
+        if ic_violations_count > 0:
+            # Enrich with IC metadata and lifecycle columns, reordering to match
+            # IC_EXCEPTION_SCHEMA so that MERGE INSERT * works correctly.
+            ic_violations = (
+                ic_base_violations
+                .join(ic_meta_df, on="rule_id", how="left")
+                .withColumn("ic_status",   F.lit("Open"))
+                .withColumn("first_seen_at", F.lit(RUN_TIMESTAMP).cast("timestamp"))
+                .withColumn(
+                    "remediation_due_date",
+                    F.expr(
+                        "CASE WHEN remediation_due_days IS NOT NULL "
+                        "THEN date_add(to_date(first_seen_at), "
+                        "     cast(remediation_due_days AS INT)) "
+                        "ELSE NULL END"
+                    ).cast("date"),
+                )
+                # Human-set workflow fields — engine always writes NULL
+                .withColumn("remediated_by",  F.lit(None).cast("string"))
+                .withColumn("remediated_at",  F.lit(None).cast("timestamp"))
+                .withColumn("verified_by",    F.lit(None).cast("string"))
+                .withColumn("verified_at",    F.lit(None).cast("timestamp"))
+                .withColumn("waived_by",      F.lit(None).cast("string"))
+                .withColumn("waived_at",      F.lit(None).cast("timestamp"))
+                .withColumn("waiver_reason",  F.lit(None).cast("string"))
+                # Drop DQ-only columns not present in IC_EXCEPTION_SCHEMA
+                .drop("issue_status", "resolution_timestamp")
+                # Select in IC_EXCEPTION_SCHEMA column order for clean INSERT *
+                .select([f.name for f in IC_EXCEPTION_SCHEMA.fields])
+            )
+
+            _apply_ic_resolution_tracking(
+                ic_violations,
+                spark_session=spark,
+                ic_exceptions_table=TARGETS["ic_exceptions_table"],
+                run_timestamp=RUN_TIMESTAMP,
+            )
+            print(f"  {TARGETS['ic_exceptions_table']} : {ic_violations_count} IC violations processed.")
+        else:
+            print(f"  {TARGETS['ic_exceptions_table']} : 0 IC violations this run.")
+
+        # Write IC run summaries (subset of dq_run_results rows for IC rules).
+        ic_results = all_results_combined.filter(F.col("rule_id").isin(ic_rule_ids))
+        ic_results.write.mode("append").saveAsTable(TARGETS["ic_results_table"])
+        ic_results_count = ic_results.count()
+        print(f"  {TARGETS['ic_results_table']} : {ic_results_count} IC summary rows appended.")
 
     print("\n=== DATA QUALITY RUN SUMMARY ===")
     spark.sql(
