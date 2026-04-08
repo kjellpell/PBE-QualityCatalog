@@ -197,6 +197,7 @@ IC_EXCEPTION_SCHEMA = StructType([
     StructField("table_name",            StringType(),    False),
     StructField("severity",              StringType(),    False),
     StructField("owner",                 StringType(),    False),
+    StructField("owner_email",           StringType(),    True),
     StructField("failure_type",          StringType(),    True),
     StructField("primary_key_value",     StringType(),    True),
     StructField("violated_column",       StringType(),    True),
@@ -292,3 +293,69 @@ def _apply_ic_resolution_tracking(
             spark_session.catalog.dropTempView("_ic_current_violations")
         except Exception:
             pass  # best-effort cleanup; non-fatal
+
+
+def _notify_new_ic_exceptions(
+    new_exceptions_df: DataFrame,
+    notify_url_path: str,
+) -> None:
+    """
+    Send an email notification for each newly inserted IC exception by posting
+    to a Power Automate HTTP trigger URL.
+
+    Fails silently — notification failure must never block or fail a run.
+
+    The PA flow is a three-step flow:
+      1. Trigger: HTTP (POST) — body fields: to, subject, body
+      2. Action:  Office 365 Outlook Send Email
+      3. Done
+
+    The HTTP trigger URL is stored in notify_url_path (not in source code).
+    If the file does not exist or is empty, notifications are skipped with a
+    printed message.
+    """
+    import requests as _requests
+
+    try:
+        notify_url = open(notify_url_path).read().strip()
+    except Exception as exc:
+        print(f"  Notification skipped: could not read notify URL from {notify_url_path} ({exc})")
+        return
+
+    if not notify_url:
+        print("  Notification skipped: notify URL file is empty.")
+        return
+
+    try:
+        rows = new_exceptions_df.select(
+            "rule_id", "rule_name", "primary_key_value",
+            "severity", "owner_email", "remediation_due_date"
+        ).collect()
+    except Exception as exc:
+        print(f"  Notification skipped: could not collect exception rows ({exc})")
+        return
+
+    sent = 0
+    for row in rows:
+        owner_email = row["owner_email"]
+        if not owner_email:
+            continue
+        try:
+            _requests.post(notify_url, json={
+                "to":      owner_email,
+                "subject": f"New IC exception: {row['rule_name']}",
+                "body": (
+                    f"A new internal control exception has been detected.\n\n"
+                    f"Control:    {row['rule_name']}\n"
+                    f"Rule ID:    {row['rule_id']}\n"
+                    f"Record:     {row['primary_key_value']}\n"
+                    f"Severity:   {row['severity']}\n"
+                    f"Due by:     {row['remediation_due_date'] or 'No SLA set'}\n\n"
+                    f"Open the IC dashboard in Power BI to review and action."
+                ),
+            }, timeout=10)
+            sent += 1
+        except Exception as exc:
+            print(f"  Warning: notification to {owner_email} failed ({exc})")
+
+    print(f"  Notifications sent: {sent} of {len(rows)} new IC exceptions.")

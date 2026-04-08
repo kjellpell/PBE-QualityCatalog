@@ -41,7 +41,6 @@
 # CELL 2 — Imports and run metadata
 # -----------------------------------------------------------------------------
 import time
-import yaml
 import uuid
 from datetime import datetime, date, timezone
 from pathlib import Path
@@ -77,12 +76,12 @@ from engine.resolution import (                                # noqa: E402
     _find_stale_violations,
     _apply_resolution_tracking,
     _apply_ic_resolution_tracking,
+    _notify_new_ic_exceptions,
 )
 from engine.runtime import (                                   # noqa: E402
     classify_retryable_error,
     load_config_module,
     require_config_keys,
-    resolve_rules_dir,
     resolve_targets,
     write_execution_metric,
 )
@@ -120,12 +119,10 @@ RUN_ID = str(uuid.uuid4())
 RUN_TIMESTAMP = datetime.utcnow()
 BATCH_DATE = date.today()
 STARTED_AT = datetime.now(timezone.utc)
-RULES_DIR = resolve_rules_dir(CONFIG, Path(__file__).parent.parent)
 
 print(f"Run ID    : {RUN_ID}")
 print(f"Timestamp : {RUN_TIMESTAMP.isoformat()}")
 print(f"Batch date: {BATCH_DATE}")
-print(f"Rules dir : {RULES_DIR}")
 print(f"Config    : {CONFIG_PATH}")
 print(f"Runtime   : {RUNTIME_PATH}")
 print(f"Dry run   : {RUNTIME.DRY_RUN}")
@@ -154,26 +151,76 @@ GX_NATIVE_EXPECTATIONS = {
 SAMPLE_SIZE = CONFIG.GX_SAMPLE_SIZE
 
 
-def _load_yaml(path: Path) -> dict:
-    with open(path, "r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
+def _load_all_rules() -> list[dict]:
+    """Load active rules from the rule_catalog Delta table."""
+    catalog_df = (
+        spark.table("rule_catalog")
+        .filter(F.col("status") == "Active")
+        .toPandas()
+    )
+    if len(catalog_df) == 0:
+        raise RuntimeError(
+            "rule_catalog is empty or has no Active rules. "
+            "Run nb_dq_02_migrate_rules.py to populate it."
+        )
+    print(f"  Loaded {len(catalog_df)} active rules from rule_catalog.")
+    return _build_catalogs_from_df(catalog_df)
 
 
-def _load_all_rules(rules_dir: Path) -> list[dict]:
+def _build_catalogs_from_df(df) -> list[dict]:
     """
-    Discover and load all *.yaml files in rules_dir.
-    Returns a list of rule catalog dicts, one per file.
-    Files are processed in alphabetical order for deterministic runs.
+    Convert a rule_catalog Pandas DataFrame into the list-of-catalog-dicts
+    format the validation engine expects. Groups rows by
+    (rule_group, source_table, database, pk_column, joins_json).
     """
+    import json as _json
+
     catalogs = []
-    yaml_files = sorted(rules_dir.glob("*.yaml"))
-    if not yaml_files:
-        print(f"  Warning: no *.yaml files found in {rules_dir}")
-    for yaml_path in yaml_files:
-        catalog = _load_yaml(yaml_path)
-        catalogs.append(catalog)
-        print(f"  Loaded rule file: {yaml_path.name} "
-              f"({len(catalog.get('rules', []))} rules)")
+    group_cols = ["rule_group", "source_table", "database", "pk_column", "joins_json"]
+    for key, group_df in df.groupby(group_cols, dropna=False):
+        rule_group, source_table, database, pk_column, joins_json = key
+        rules = []
+        for _, row in group_df.iterrows():
+            rule = {
+                "rule_id":     row["rule_id"],
+                "name":        row["name"] or "",
+                "expectation": row["expectation"] or "",
+                "severity":    row["severity"] or "medium",
+                "category":    row.get("category"),
+                "owner":       row.get("owner"),
+                "owner_email": row.get("owner_email"),
+            }
+            if row.get("column_name"):
+                rule["column"] = row["column_name"]
+            if row.get("parameters"):
+                try:
+                    rule["parameters"] = _json.loads(row["parameters"])
+                except Exception:
+                    pass
+            if row.get("sql_expression"):
+                rule["sql"] = row["sql_expression"]
+            for ic_field in ("control_ref", "control_type", "risk_domain",
+                             "remediation_due_days"):
+                if row.get(ic_field) is not None:
+                    rule[ic_field] = row[ic_field]
+            rules.append(rule)
+
+        joins = []
+        if joins_json and str(joins_json) not in ("None", "nan", ""):
+            try:
+                joins = _json.loads(joins_json)
+            except Exception:
+                pass
+
+        catalogs.append({
+            "rule_group": rule_group or "",
+            "table":      source_table or "",
+            "database":   database or "",
+            "pk_column":  pk_column or "id",
+            "joins":      joins,
+            "rules":      rules,
+        })
+        print(f"  Rule group: {rule_group} ({len(rules)} rules)")
     return catalogs
 
 
@@ -307,6 +354,7 @@ RESULT_SCHEMA = StructType([
     StructField("expectation",          StringType(),    False),
     StructField("severity",             StringType(),    False),
     StructField("owner",                StringType(),    False),
+    StructField("owner_email",          StringType(),    True),
     StructField("total_rows",           LongType(),      True),
     StructField("passed_rows",          LongType(),      True),
     StructField("failed_rows",          LongType(),      True),
@@ -442,6 +490,7 @@ def run_validation(
             exp_name,
             severity,
             owner,
+            rule.get("owner_email"),
             result["total_rows"],
             result["passed_rows"],
             result["failed_rows"],
@@ -494,10 +543,10 @@ def _empty_ic_exceptions():
 
 
 def main() -> tuple[int, int]:
-    print("\nLoading rule catalogs from rules/ folder…")
-    all_catalogs = _load_all_rules(RULES_DIR)
+    print("\nLoading rule catalogs from rule_catalog Delta table…")
+    all_catalogs = _load_all_rules()
     if not all_catalogs and RUNTIME.FAIL_ON_EMPTY_RULES:
-        raise RuntimeError(f"No rule catalogs found in {RULES_DIR}")
+        raise RuntimeError("No rule catalogs loaded from rule_catalog.")
 
     # Pre-compute IC rule metadata so we can enrich violations after the main loop.
     # A rule is IC if it carries at least one of the IC_IDENTIFIER_FIELDS.
@@ -511,6 +560,7 @@ def main() -> tuple[int, int]:
                     "control_type":         _rule.get("control_type"),
                     "risk_domain":          _rule.get("risk_domain"),
                     "remediation_due_days": _rule.get("remediation_due_days"),
+                    "owner_email":          _rule.get("owner_email"),
                 }
     ic_rule_ids = set(ic_rule_meta.keys())
     if ic_rule_ids:
@@ -591,9 +641,11 @@ def main() -> tuple[int, int]:
             StructField("control_type",          StringType(),  True),
             StructField("risk_domain",           StringType(),  True),
             StructField("remediation_due_days",  IntegerType(), True),
+            StructField("owner_email",           StringType(),  True),
         ])
         _ic_meta_rows = [
-            (rid, m["control_ref"], m["control_type"], m["risk_domain"], m["remediation_due_days"])
+            (rid, m["control_ref"], m["control_type"], m["risk_domain"],
+             m["remediation_due_days"], m["owner_email"])
             for rid, m in ic_rule_meta.items()
         ]
         ic_meta_df = spark.createDataFrame(_ic_meta_rows, schema=_ic_meta_schema)
@@ -642,6 +694,12 @@ def main() -> tuple[int, int]:
                 run_timestamp=RUN_TIMESTAMP,
             )
             print(f"  {TARGETS['ic_exceptions_table']} : {ic_violations_count} IC violations processed.")
+
+            _notify_new_ic_exceptions(
+                ic_violations,
+                notify_url_path=getattr(CONFIG, "IC_NOTIFY_URL_PATH",
+                                        "/lakehouse/default/Files/Configs/pa_notify_url.txt"),
+            )
         else:
             print(f"  {TARGETS['ic_exceptions_table']} : 0 IC violations this run.")
 
