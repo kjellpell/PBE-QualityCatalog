@@ -287,3 +287,151 @@ IF(
 
 > A value of `1` can trigger a Power Automate alert to the responsible handler
 > or team owner.
+
+---
+
+## IC Measures — Internal Control Monitoring
+
+The following measures operate on the IC tables written by the engine and the
+two Fabric notebooks:
+
+| Table | Description |
+|---|---|
+| `ic_run_results` | One row per IC rule per validation run |
+| `ic_exceptions` | One row per IC violation, with 4-state lifecycle |
+| `ic_control_register` | Register of all controls (populated manually) |
+| `ic_manual_attestations` | Attestation records written by nb_ic_02 |
+
+### IC Control Pass Rate (%)
+
+```dax
+IC Control Pass Rate % =
+DIVIDE(
+    COUNTROWS( FILTER( ic_run_results, ic_run_results[status] = "PASSED" ) ),
+    COUNTROWS( ic_run_results )
+) * 100
+```
+
+### IC Open Exceptions
+
+```dax
+IC Open Exceptions =
+COUNTROWS( FILTER( ic_exceptions, ic_exceptions[ic_status] = "Open" ) )
+```
+
+### IC Exceptions Breaching SLA
+
+```dax
+IC Exceptions Breaching SLA =
+COUNTROWS(
+    FILTER(
+        ic_exceptions,
+        ic_exceptions[ic_status] = "Open"
+            && ic_exceptions[remediation_due_date] < TODAY()
+    )
+)
+```
+
+> An exception breaches SLA when it has been Open past its `remediation_due_date`.
+> Exceptions without a due date (remediation_due_days was blank in the rule) are excluded.
+
+### IC Days Open (per exception)
+
+```dax
+IC Days Open =
+DATEDIFF( ic_exceptions[first_seen_at], TODAY(), DAY )
+```
+
+> Add as a calculated column or use in a table visual with exception rows.
+
+### IC Exception Trend (weekly)
+
+Use `ic_exceptions[first_seen_at]` on the axis and `COUNTROWS(ic_exceptions)` as
+the value, with a weekly date hierarchy. This shows the volume of new Open
+exceptions opened each week.
+
+### Manual Controls Overdue for Attestation
+
+```dax
+Manual Controls Overdue =
+COUNTROWS(
+    FILTER(
+        ic_control_register,
+        ic_control_register[execution_type] = "Manual"
+            && ic_control_register[active] = TRUE
+            && CALCULATE(
+                MAX( ic_manual_attestations[next_due_date] ),
+                RELATEDTABLE( ic_manual_attestations )
+               ) < TODAY()
+    )
+)
+```
+
+> Requires a relationship between `ic_control_register[control_id]` and
+> `ic_manual_attestations[control_id]`.
+
+### Days Since Last Attestation (per control)
+
+```dax
+Days Since Last Attestation =
+DATEDIFF(
+    CALCULATE(
+        MAX( ic_manual_attestations[attested_at] ),
+        RELATEDTABLE( ic_manual_attestations )
+    ),
+    TODAY(),
+    DAY
+)
+```
+
+> Use as a calculated column on `ic_control_register`, or in a table visual
+> showing each manual control with its latest attestation age.
+
+---
+
+## Translytical Task Flow Configuration
+
+Fabric Translytical Task Flow replaces Power Automate for both IC notebooks.
+The task flow embeds an interactive panel directly in the Power BI report
+and calls a Fabric notebook with parameters bound from the selected row.
+
+### Task Flow 1 — IC Exception Transitions (nb_ic_01_manage_exceptions)
+
+**Report page:** IC Exceptions (table visual of `ic_exceptions`)
+
+**Row binding:** `ic_exceptions[primary_key_value]` → notebook parameter `exception_id`
+
+**Form fields:**
+| Field | Type | Notes |
+|-------|------|-------|
+| `new_status` | Dropdown | Values: `Verified`, `Waived` |
+| `waiver_reason` | Text | Show conditionally when `new_status = Waived`; min 10 characters |
+
+**Notebook called:** `nb_ic_01_manage_exceptions`
+
+**Identity:** `actioned_by` is derived server-side from the Fabric session — it is not a form field.
+
+**After submission:** Refresh the report to show the updated `ic_status`.
+
+---
+
+### Task Flow 2 — Manual Control Attestation (nb_ic_02_attest_manual_control)
+
+**Report page:** Manual Controls Register (table visual of `ic_control_register` filtered to `execution_type = Manual`)
+
+**Row binding:** `ic_control_register[control_id]` → notebook parameter `control_id`
+
+**Form fields:**
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `period_covered` | Text | Yes | e.g. `2025-Q2`, `2025-April` |
+| `report_link` | Text (URL) | No | Link to evidence document; notebook attempts download |
+| `notes` | Text | No | Free text remarks |
+
+**Notebook called:** `nb_ic_02_attest_manual_control`
+
+**Identity:** `attested_by` is derived server-side from the Fabric session — it is not a form field.
+
+**After submission:** Refresh the report to show the updated `next_due_date` and latest `attested_at`.
+
+**Note on report_link:** The notebook will attempt to download the file from the URL and store it in Lakehouse Files under `ic_evidence/{control_id}/{period_covered}/`. This works for SharePoint "Anyone with the link" share links and other direct download URLs. SSO-protected links (standard SharePoint view/edit links) will fail the download, but the attestation is still recorded with `report_link` stored and `evidence_path = NULL`.

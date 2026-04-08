@@ -1,0 +1,93 @@
+# =============================================================================
+# IC INVOICE RULES — Internal Controls for Invoice Lines (Fakturalinjer)
+# Table: Saksbehandling.Fakturalinjer
+#
+# These rules are tagged with IC-specific fields and are processed alongside
+# DQ rules:
+#   - Summary rows go to both dq_run_results AND ic_run_results
+#   - Violations go to ic_exceptions (4-state lifecycle)
+#
+# Rule IDs use the IC-INV- prefix (not INV-) to avoid collision with
+# data quality rules in invoice_rules.yaml.
+#
+# See IC_RULES_GUIDE.md for full authoring guidance.
+# =============================================================================
+
+rule_group: IC-Invoice
+table: Fakturalinjer
+database: Saksbehandling
+description: Internal control rules for invoice line records
+
+pk_column: Fakturanr
+
+rules:
+
+  # ---------------------------------------------------------------------------
+  # Segregation of Duties
+  # ---------------------------------------------------------------------------
+
+  - rule_id: IC-INV-001
+    name: Invoice approver must differ from requester
+    description: >
+      The employee who raises an invoice must not be the same employee who
+      approves it for payment.  Segregation of duties control (COSO CC5.2).
+    expectation: validate_column_comparison
+    parameters:
+      column_A: ApprovedBy
+      column_B: RequestedBy
+      operator: "!="
+      pk_column: Fakturanr
+    severity: critical
+    category: Segregation of Duties
+    owner: Finansteam
+    control_ref: COSO-CC5.2
+    control_type: Preventive
+    risk_domain: Financial
+    remediation_due_days: 2
+
+  # ---------------------------------------------------------------------------
+  # Sequence / Timing
+  # ---------------------------------------------------------------------------
+
+  - rule_id: IC-INV-002
+    name: Payment date must not precede approval date
+    description: >
+      An invoice must not be recorded as paid before the formal approval
+      timestamp.  A payment before approval indicates a process bypass.
+    expectation: validate_column_comparison
+    parameters:
+      column_A: PaymentDate
+      column_B: ApprovalDate
+      operator: ">="
+      pk_column: Fakturanr
+    severity: critical
+    category: Business Logic
+    owner: Finansteam
+    control_ref: COSO-CC5.3
+    control_type: Detective
+    risk_domain: Financial
+    remediation_due_days: 2
+
+  # ---------------------------------------------------------------------------
+  # Budget Compliance
+  # ---------------------------------------------------------------------------
+
+  - rule_id: IC-INV-003
+    name: Invoice amount must be within approved budget line
+    description: >
+      Invoice total must not exceed the approved budget ceiling for its
+      cost centre.  Overspend requires a formal budget adjustment before
+      the invoice is approved.
+    expectation: sql
+    sql: |
+      SELECT f.Fakturanr
+      FROM Saksbehandling.Fakturalinjer f
+      JOIN Saksbehandling.Budsjett b ON f.KostsenterKode = b.KostsenterKode
+      WHERE f.Belop > b.Ceiling
+    severity: high
+    category: Business Logic
+    owner: Finansteam
+    control_ref: COSO-CC5.4
+    control_type: Detective
+    risk_domain: Financial
+    remediation_due_days: 5
