@@ -19,10 +19,9 @@ IC_EXCEPTIONS_TABLE       = "ic_exceptions"
 IC_CONTROL_REGISTER_TABLE = "ic_control_register"
 IC_ATTESTATIONS_TABLE     = "ic_manual_attestations"
 
-# Evidence file base path — Fabric Lakehouse Files mounted path.
-# Writable from Fabric Spark notebooks using standard open() / os.makedirs().
-# The attestation notebook downloads from report_link and stores here.
-IC_EVIDENCE_BASE_PATH = "/lakehouse/default/Files/ic_evidence"
+# Power Automate HTTP endpoint for email notifications on new IC exceptions.
+# Store the actual URL in the file below — not in source code.
+IC_NOTIFY_URL_PATH = "/lakehouse/default/Files/Configs/pa_notify_url.txt"
 
 # IC-only YAML fields passed through to ic_run_results and ic_exceptions rows.
 IC_PASSTHROUGH_FIELDS = [

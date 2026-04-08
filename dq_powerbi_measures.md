@@ -352,6 +352,9 @@ exceptions opened each week.
 
 ### Manual Controls Overdue for Attestation
 
+`ic_manual_attestations` no longer stores `next_due_date`. Overdue status is derived
+from `attested_at` combined with `attestation_frequency` from `ic_control_register`.
+
 ```dax
 Manual Controls Overdue =
 COUNTROWS(
@@ -359,16 +362,30 @@ COUNTROWS(
         ic_control_register,
         ic_control_register[execution_type] = "Manual"
             && ic_control_register[active] = TRUE
-            && CALCULATE(
-                MAX( ic_manual_attestations[next_due_date] ),
-                RELATEDTABLE( ic_manual_attestations )
-               ) < TODAY()
+            && VAR LastAttestation =
+                CALCULATE(
+                    MAX( ic_manual_attestations[attested_at] ),
+                    RELATEDTABLE( ic_manual_attestations )
+                )
+               VAR FreqDays =
+                SWITCH(
+                    ic_control_register[attestation_frequency],
+                    "Daily",     1,
+                    "Weekly",    7,
+                    "Monthly",   30,
+                    "Quarterly", 91,
+                    30
+                )
+            RETURN
+                ISBLANK( LastAttestation )
+                    || LastAttestation + FreqDays < NOW()
     )
 )
 ```
 
 > Requires a relationship between `ic_control_register[control_id]` and
-> `ic_manual_attestations[control_id]`.
+> `ic_manual_attestations[control_id]`. Controls with no attestations at all
+> are also included (ISBLANK guard).
 
 ### Days Since Last Attestation (per control)
 
@@ -432,6 +449,40 @@ and calls a Fabric notebook with parameters bound from the selected row.
 
 **Identity:** `attested_by` is derived server-side from the Fabric session — it is not a form field.
 
-**After submission:** Refresh the report to show the updated `next_due_date` and latest `attested_at`.
+**After submission:** Refresh the report to show the updated `attested_at` and `conclusion`.
 
-**Note on report_link:** The notebook will attempt to download the file from the URL and store it in Lakehouse Files under `ic_evidence/{control_id}/{period_covered}/`. This works for SharePoint "Anyone with the link" share links and other direct download URLs. SSO-protected links (standard SharePoint view/edit links) will fail the download, but the attestation is still recorded with `report_link` stored and `evidence_path = NULL`.
+---
+
+## Power Automate — IC Exception Email Notifications
+
+When a new IC exception is inserted (first violation detected for a rule/record pair),
+the engine posts to a Power Automate HTTP trigger URL to notify the rule owner by email.
+
+### PA Flow Setup (three steps)
+
+1. **Trigger:** HTTP request (instant cloud flow). Enable **POST** method. Copy the HTTP POST URL.
+2. **Action:** Send an email (Office 365 Outlook). Configure:
+   - To: `@{triggerBody()?['to']}`
+   - Subject: `@{triggerBody()?['subject']}`
+   - Body: `@{triggerBody()?['body']}`
+3. Save and enable the flow.
+
+### Store the URL in Lakehouse
+
+Paste the HTTP POST URL (from step 1 above) into a plain text file at:
+
+```
+/lakehouse/default/Files/Configs/pa_notify_url.txt
+```
+
+The engine reads this file at runtime. The URL is not stored in source code.
+
+### How It Works
+
+The engine calls `_notify_new_ic_exceptions()` after writing to `ic_exceptions`. It iterates
+over all new violation rows and POSTs one request per row where `owner_email` is set. If the
+URL file does not exist, is empty, or the POST fails, the engine logs a warning and continues
+— notification failure never blocks a run.
+
+`owner_email` is set in `rule_catalog` (or in the YAML rule file before migration). Rules
+without `owner_email` are silently skipped for notification.

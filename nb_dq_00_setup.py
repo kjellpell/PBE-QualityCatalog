@@ -248,6 +248,7 @@ CREATE TABLE IF NOT EXISTS ic_exceptions (
     table_name            STRING NOT NULL,
     severity              STRING NOT NULL,
     owner                 STRING,
+    owner_email           STRING,
     failure_type          STRING,
     primary_key_value     STRING,
     violated_column       STRING,
@@ -320,20 +321,23 @@ print("ic_control_register ready.")
 
 # CELL 8 — ic_manual_attestations
 # Written exclusively by nb_ic_02_attest_manual_control.
-# report_link  : URL to evidence document (SharePoint share link, etc.)
-# evidence_path: Lakehouse Files path if the file was successfully downloaded
-#                from report_link; NULL if download failed or link not provided.
+# Structured attestation fields capture the result of the manual review.
+# conclusion must be: Working | Needs Attention | Not Working
+# follow_up_action is required when conclusion != Working.
+spark.sql("DROP TABLE IF EXISTS ic_manual_attestations")
 spark.sql("""
-CREATE TABLE IF NOT EXISTS ic_manual_attestations (
-    attestation_id  STRING NOT NULL,
-    control_id      STRING NOT NULL,
-    attested_by     STRING NOT NULL,
-    attested_at     TIMESTAMP NOT NULL,
-    period_covered  STRING NOT NULL,
-    report_link     STRING,
-    evidence_path   STRING,
-    notes           STRING,
-    next_due_date   DATE
+CREATE TABLE ic_manual_attestations (
+    attestation_id   STRING NOT NULL,
+    control_id       STRING NOT NULL,
+    attested_by      STRING NOT NULL,
+    attested_at      TIMESTAMP NOT NULL,
+    period_covered   STRING NOT NULL,
+    observations     STRING,
+    items_checked    INTEGER,
+    exceptions_found INTEGER,
+    conclusion       STRING,
+    follow_up_action STRING,
+    notes            STRING
 )
 USING DELTA
 """)
@@ -341,5 +345,43 @@ USING DELTA
 print("ic_manual_attestations ready.")
 
 
+# CELL 9 — rule_catalog
+# Single catalog for both DQ and IC rules.
+# Populated via nb_dq_02_migrate_rules.py (from YAML) or directly.
+# The validation engine reads exclusively from this table — no YAML files at runtime.
+spark.sql("""
+CREATE TABLE IF NOT EXISTS rule_catalog (
+    rule_id              STRING,
+    rule_type            STRING,
+    rule_group           STRING,
+    source_table         STRING,
+    database             STRING,
+    pk_column            STRING,
+    name                 STRING,
+    description          STRING,
+    expectation          STRING,
+    column_name          STRING,
+    parameters           STRING,
+    sql_expression       STRING,
+    joins_json           STRING,
+    severity             STRING,
+    category             STRING,
+    owner                STRING,
+    owner_email          STRING,
+    control_ref          STRING,
+    control_type         STRING,
+    risk_domain          STRING,
+    remediation_due_days INTEGER,
+    status               STRING,
+    created_by           STRING,
+    created_at           TIMESTAMP,
+    updated_at           TIMESTAMP
+)
+USING DELTA
+""")
+
+print("rule_catalog ready.")
+
+
 print("\n=== IC SETUP COMPLETE ===")
-print("IC Delta tables: ic_run_results, ic_exceptions, ic_control_register, ic_manual_attestations")
+print("IC Delta tables: ic_run_results, ic_exceptions, ic_control_register, ic_manual_attestations, rule_catalog")

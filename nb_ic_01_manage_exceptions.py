@@ -34,11 +34,8 @@ waiver_reason = mssparkutils.notebook.getParam("waiver_reason", defaultValue="")
 # ---------------------------------------------------------------------------
 # CELL 2 — Resolve caller identity from Fabric session context
 # ---------------------------------------------------------------------------
-try:
-    # Extract UPN from the storage token claims — works in most Fabric tenants.
-    actioned_by = mssparkutils.credentials.getToken("storage").split("upn:")[1].split(",")[0]
-except Exception:
-    actioned_by = mssparkutils.runtime.context.get("userName", "unknown")
+actioned_by = mssparkutils.runtime.context.get("userName")
+assert actioned_by, "Could not resolve caller identity from Fabric session"
 
 # ---------------------------------------------------------------------------
 # CELL 3 — Validate parameters
