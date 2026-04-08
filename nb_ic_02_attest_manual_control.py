@@ -19,10 +19,7 @@
 # as a notebook parameter.
 # =============================================================================
 
-import os
 import uuid
-import requests
-from urllib.parse import urlparse, unquote
 from datetime import datetime, timezone, timedelta
 from pyspark.sql import functions as F
 
@@ -56,7 +53,7 @@ sys.path.insert(0, "/lakehouse/default/Files/Configs")
 from QualityCatalogConfig import (  # noqa: E402
     IC_CONTROL_REGISTER_TABLE,
     IC_ATTESTATIONS_TABLE,
-    IC_EVIDENCE_BASE_PATH,
+    # IC_EVIDENCE_BASE_PATH,  # re-enable when download block is re-enabled
 )
 
 control = (
@@ -85,48 +82,58 @@ now = datetime.now(timezone.utc)
 next_due_date = (now + _freq_map.get(control["attestation_frequency"], timedelta(days=30))).date()
 
 # ---------------------------------------------------------------------------
-# CELL 6 — Attempt to download and store evidence file
+# CELL 6 — Download and store evidence file (DISABLED — not yet implemented)
+#
+# The intent: if report_link is a publicly accessible URL (e.g. SharePoint
+# "Anyone with the link" share link), download the file and store it in
+# Lakehouse Files at:
+#   IC_EVIDENCE_BASE_PATH / {control_id} / {period_covered} / {attestation_id[:8]}_{filename}
+#
+# /lakehouse/default/Files/ is a locally mounted ABFS path in Fabric Spark,
+# so standard os.makedirs() + open(path, "wb") should work in principle.
+# However, the download approach needs further validation before enabling:
+#   - requests.get() won't work for SSO-protected SharePoint links
+#   - Fabric Spark mount behaviour needs confirming in the target workspace
+#   - Token-based download (Graph API / mssparkutils.credentials) may be needed
+#
+# When re-enabling: uncomment the block below, import os/requests/urlparse/unquote
+# at the top, and add IC_EVIDENCE_BASE_PATH to the config import.
 # ---------------------------------------------------------------------------
+
 attestation_id = str(uuid.uuid4())
-evidence_path  = None
+evidence_path  = None  # will remain None until download is re-enabled
 
-if report_link.strip():
-    try:
-        response = requests.get(report_link.strip(), timeout=30, stream=True)
-        response.raise_for_status()
-
-        # Derive a filename from the URL path (falls back to "evidence").
-        raw_name  = os.path.basename(unquote(urlparse(report_link).path)) or "evidence"
-        safe_name = f"{attestation_id[:8]}_{raw_name}"
-
-        dest_dir  = f"{IC_EVIDENCE_BASE_PATH}/{control_id}/{period_covered}"
-        dest_path = f"{dest_dir}/{safe_name}"
-
-        # /lakehouse/default/Files/ is a locally mounted ABFS path in Fabric Spark.
-        # Standard os.makedirs() and open() work here without mssparkutils.fs.put().
-        os.makedirs(dest_dir, exist_ok=True)
-
-        with open(dest_path, "wb") as fh:
-            for chunk in response.iter_content(chunk_size=65_536):
-                fh.write(chunk)
-
-        # Verify the file landed.
-        assert os.path.exists(dest_path) and os.path.getsize(dest_path) > 0, (
-            f"File write verification failed: {dest_path}"
-        )
-
-        evidence_path = dest_path
-        print(f"  Evidence file stored: {evidence_path}")
-
-    except Exception as exc:
-        # Non-fatal — proceed with attestation, log warning.
-        # Common causes: auth-protected SharePoint URL (SSO required),
-        # network error, or invalid URL.
-        print(
-            f"  Warning: could not download evidence file from report_link ({exc}). "
-            f"report_link is stored; evidence_path will be NULL. "
-            f"For authenticated SharePoint URLs, use an 'Anyone with the link' share link."
-        )
+# DISABLED — uncomment when ready to implement:
+#
+# if report_link.strip():
+#     try:
+#         response = requests.get(report_link.strip(), timeout=30, stream=True)
+#         response.raise_for_status()
+#
+#         raw_name  = os.path.basename(unquote(urlparse(report_link).path)) or "evidence"
+#         safe_name = f"{attestation_id[:8]}_{raw_name}"
+#
+#         dest_dir  = f"{IC_EVIDENCE_BASE_PATH}/{control_id}/{period_covered}"
+#         dest_path = f"{dest_dir}/{safe_name}"
+#
+#         os.makedirs(dest_dir, exist_ok=True)
+#
+#         with open(dest_path, "wb") as fh:
+#             for chunk in response.iter_content(chunk_size=65_536):
+#                 fh.write(chunk)
+#
+#         assert os.path.exists(dest_path) and os.path.getsize(dest_path) > 0, (
+#             f"File write verification failed: {dest_path}"
+#         )
+#
+#         evidence_path = dest_path
+#         print(f"  Evidence file stored: {evidence_path}")
+#
+#     except Exception as exc:
+#         print(
+#             f"  Warning: could not download evidence file from report_link ({exc}). "
+#             f"report_link is stored; evidence_path will be NULL."
+#         )
 
 # ---------------------------------------------------------------------------
 # CELL 7 — Write attestation row to ic_manual_attestations
