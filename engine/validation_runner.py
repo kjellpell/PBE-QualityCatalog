@@ -76,7 +76,7 @@ from engine.resolution import (                                # noqa: E402
     _find_stale_violations,
     _apply_resolution_tracking,
     _apply_ic_resolution_tracking,
-    _notify_new_ic_exceptions,
+    # _notify_new_ic_exceptions,  # DISABLED — PA flow not yet configured
 )
 from engine.runtime import (                                   # noqa: E402
     classify_retryable_error,
@@ -695,11 +695,13 @@ def main() -> tuple[int, int]:
             )
             print(f"  {TARGETS['ic_exceptions_table']} : {ic_violations_count} IC violations processed.")
 
-            _notify_new_ic_exceptions(
-                ic_violations,
-                notify_url_path=getattr(CONFIG, "IC_NOTIFY_URL_PATH",
-                                        "/lakehouse/default/Files/Configs/pa_notify_url.txt"),
-            )
+            # DISABLED — uncomment once the Power Automate flow is configured
+            # and the URL is stored in IC_NOTIFY_URL_PATH:
+            # _notify_new_ic_exceptions(
+            #     ic_violations,
+            #     notify_url_path=getattr(CONFIG, "IC_NOTIFY_URL_PATH",
+            #                             "/lakehouse/default/Files/Configs/pa_notify_url.txt"),
+            # )
         else:
             print(f"  {TARGETS['ic_exceptions_table']} : 0 IC violations this run.")
 
