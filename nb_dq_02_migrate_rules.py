@@ -17,15 +17,13 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # CELL 1 — Config and path resolution
 # ---------------------------------------------------------------------------
-sys.path.insert(0, "/lakehouse/default/Files/Configs")
-from QualityCatalogConfig import IC_IDENTIFIER_FIELDS    # noqa: E402
-
 # Use the same path resolution as the engine — avoids relative-path issues
 # in Fabric notebooks where the working directory may not be the repo root.
 sys.path.insert(0, str(Path(__file__).parent))
 from engine.runtime import load_config_module, resolve_rules_dir  # noqa: E402
 
 CONFIG, _ = load_config_module("QualityCatalogConfig")
+IC_IDENTIFIER_FIELDS = CONFIG.IC_IDENTIFIER_FIELDS
 rules_dir = resolve_rules_dir(CONFIG, Path(__file__).parent)
 
 # ---------------------------------------------------------------------------
@@ -48,7 +46,8 @@ if not yaml_files:
     mssparkutils.notebook.exit("no-rules")
 
 for yaml_path in yaml_files:
-    doc = yaml.safe_load(open(yaml_path, encoding="utf-8"))
+    with open(yaml_path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
 
     rule_group   = doc.get("rule_group", yaml_path.stem)
     source_table = doc.get("table", "")
