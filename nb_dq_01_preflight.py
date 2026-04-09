@@ -86,7 +86,6 @@ def main() -> None:
         [
             "DEFAULT_SCHEMA",
             "RULES_DIR",
-            "GX_SAMPLE_SIZE",
             "DQ_RESULTS_TABLE",
             "DQ_VIOLATIONS_TABLE",
             "DQ_EXECUTION_METRICS_TABLE",
