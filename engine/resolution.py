@@ -4,13 +4,14 @@
 #
 # This module is kept separate from validation_runner.py so that its logic
 # can be imported and tested without triggering the runner's module-level
-# Spark / Great Expectations bootstrap code.
+# Spark bootstrap code.
 #
 # Public API
 # ----------
-# VIOLATION_SCHEMA          – canonical Spark schema for dq_violations rows
-# _find_stale_violations()  – pure-DataFrame helper (no I/O)
-# _apply_resolution_tracking() – MERGE-based persistence (uses Delta Lake)
+# VIOLATION_SCHEMA               – canonical Spark schema for dq_violations rows
+# _apply_resolution_tracking()   – MERGE-based persistence (uses Delta Lake)
+# IC_EXCEPTION_SCHEMA            – canonical Spark schema for ic_exceptions rows
+# _apply_ic_resolution_tracking() – MERGE-based IC persistence
 # =============================================================================
 
 from datetime import datetime, timezone
@@ -52,39 +53,6 @@ VIOLATION_SCHEMA = StructType([
     # can be read in environments without full Delta/Spark type coercion.
     StructField("resolution_timestamp", StringType(),   True),
 ])
-
-
-# ---------------------------------------------------------------------------
-# Pure-DataFrame helpers (no I/O — fully unit-testable)
-# ---------------------------------------------------------------------------
-
-def _find_stale_violations(
-    existing_active_df: DataFrame,
-    current_violations_df: DataFrame,
-) -> DataFrame:
-    """
-    Identify previously Active violations that are no longer present in the
-    current run (i.e. the underlying data issue has been fixed).
-
-    Parameters
-    ----------
-    existing_active_df    : DataFrame with at least (rule_id, primary_key_value)
-                            representing the currently Active violations in the
-                            Delta table.
-    current_violations_df : DataFrame with at least (rule_id, primary_key_value)
-                            representing violations detected in this run.
-
-    Returns
-    -------
-    DataFrame with columns (rule_id, primary_key_value) for violations that
-    should be transitioned to Resolved.
-    """
-    current_keys = current_violations_df.select(
-        "rule_id", "primary_key_value"
-    ).distinct()
-    return existing_active_df.join(
-        current_keys, on=["rule_id", "primary_key_value"], how="left_anti"
-    ).select("rule_id", "primary_key_value")
 
 
 # ---------------------------------------------------------------------------

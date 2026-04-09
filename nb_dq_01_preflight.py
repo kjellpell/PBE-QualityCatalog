@@ -31,7 +31,6 @@ _RULE_COLUMN_KEYS = {
     "aggregate_column",
     "reference_column",
     "check_columns",        # list
-    "condition_column",
 }
 
 

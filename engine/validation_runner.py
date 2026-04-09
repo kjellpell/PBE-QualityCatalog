@@ -566,6 +566,7 @@ def main() -> tuple[int, int]:
         print(f"  {TARGETS['ic_results_table']} : {ic_results_count} IC summary rows appended.")
 
     print("\n=== DATA QUALITY RUN SUMMARY ===")
+    spark.createDataFrame([(RUN_ID,)], ["_run_id"]).createOrReplaceTempView("_dq_run_id")
     spark.sql(
         f"""
         SELECT
@@ -579,11 +580,15 @@ def main() -> tuple[int, int]:
                 * 100.0 / COUNT(*), 1
             )                                                           AS quality_score_pct
         FROM {TARGETS['results_table']}
-        WHERE run_id = '{RUN_ID}'
+        WHERE run_id = (SELECT _run_id FROM _dq_run_id)
         GROUP BY rule_group
         ORDER BY rule_group
         """
     ).show(truncate=False)
+    try:
+        spark.catalog.dropTempView("_dq_run_id")
+    except Exception:
+        pass
 
     all_results_combined.unpersist()
     all_violations_combined.unpersist()
