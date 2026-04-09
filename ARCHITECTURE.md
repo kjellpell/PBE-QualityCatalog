@@ -56,6 +56,7 @@ engine/validation_runner.py → Main engine:
 | `nb_ic_02_attest_manual_control.py` | Manual control attestation |
 | `rules/*.yaml` | Migration source files (temporary, will be deleted) |
 | `tests/test_expectations.py` | Unit tests for expectation classes |
+| `tests/test_yaml_rules.py` | Unit tests for YAML rule parsing (migration helper) |
 
 ## Status Constants
 

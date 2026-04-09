@@ -50,7 +50,7 @@ PBE-QualityCatalog/
 │   ├── resolution.py
 │   ├── runtime.py
 │   └── validation_runner.py
-├── rules/                          ← temporary migration source (will be removed)
+├── rules/                          (temporary migration source - will be removed)
 │   ├── ic_invoice_rules.yaml
 │   ├── ic_process_rules.yaml
 │   ├── invoice_rules.yaml
