@@ -42,7 +42,8 @@ spark.sql("SET spark.sql.ansi.enabled = false")
 # All expectation classes are consolidated in engine/expectations.py.
 # Resolution-tracking helpers live in engine/resolution.py.
 # -----------------------------------------------------------------------------
-import sys, os
+import sys
+from functools import reduce
 
 _repo_root = str(Path(__file__).parent.parent)
 if _repo_root not in sys.path:
@@ -93,7 +94,7 @@ require_config_keys(
 TARGETS = resolve_targets(CONFIG, RUNTIME)
 
 RUN_ID = str(uuid.uuid4())
-RUN_TIMESTAMP = datetime.utcnow()
+RUN_TIMESTAMP = datetime.now(timezone.utc)
 BATCH_DATE = date.today()
 STARTED_AT = datetime.now(timezone.utc)
 
@@ -154,8 +155,8 @@ def _build_catalogs_from_df(df) -> list[dict]:
             if row.get("parameters"):
                 try:
                     rule["parameters"] = _json.loads(row["parameters"])
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f"  Warning: invalid JSON in parameters for rule {row.get('rule_id', 'unknown')}: {exc}")
             if row.get("sql_expression"):
                 rule["sql"] = row["sql_expression"]
             for ic_field in ("control_ref", "control_type", "risk_domain",
@@ -168,8 +169,8 @@ def _build_catalogs_from_df(df) -> list[dict]:
         if joins_json and str(joins_json) not in ("None", "nan", ""):
             try:
                 joins = _json.loads(joins_json)
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"  Warning: invalid JSON in joins_json for rule group {rule_group or 'unknown'}: {exc}")
 
         catalogs.append({
             "rule_group": rule_group or "",
@@ -254,7 +255,7 @@ def run_validation(
     rules      = rule_catalog.get("rules", [])
 
     all_results    = []
-    all_violations = _empty_violations()
+    violation_dfs  = []
 
     for rule in rules:
         rule_id   = rule["rule_id"]
@@ -344,7 +345,7 @@ def run_validation(
             rule.get("remediation_due_days"),
         ))
 
-        if viols_spark is not None and viols_spark.count() > 0:
+        if viols_spark is not None:
             viols_spark = viols_spark.select(
                 F.lit(RUN_ID).alias("run_id"),
                 F.lit(RUN_TIMESTAMP).alias("run_timestamp"),
@@ -364,9 +365,14 @@ def run_validation(
                 F.lit("Active").alias("issue_status"),
                 F.lit(None).cast("string").alias("resolution_timestamp"),
             )
-            all_violations = all_violations.unionByName(viols_spark)
+            violation_dfs.append(viols_spark)
 
     results_df = spark.createDataFrame(all_results, schema=RESULT_SCHEMA)
+    all_violations = (
+        reduce(lambda a, b: a.unionByName(b), violation_dfs)
+        if violation_dfs
+        else _empty_violations()
+    )
     return results_df, all_violations
 
 
@@ -398,8 +404,8 @@ def main() -> tuple[int, int]:
     if ic_rule_ids:
         print(f"  IC rules detected: {sorted(ic_rule_ids)}")
 
-    all_results_combined = _empty_results()
-    all_violations_combined = _empty_violations()
+    result_dfs    = []
+    violation_dfs = []
 
     for catalog in all_catalogs:
         rule_group = catalog["rule_group"]
@@ -435,11 +441,27 @@ def main() -> tuple[int, int]:
             pk_col=pk_col,
         )
 
-        all_results_combined = all_results_combined.unionByName(results_df)
-        all_violations_combined = all_violations_combined.unionByName(violations_df)
+        result_dfs.append(results_df)
+        violation_dfs.append(violations_df)
+
+    all_results_combined = (
+        reduce(lambda a, b: a.unionByName(b), result_dfs)
+        if result_dfs
+        else _empty_results()
+    )
+    all_violations_combined = (
+        reduce(lambda a, b: a.unionByName(b), violation_dfs)
+        if violation_dfs
+        else _empty_violations()
+    )
+
+    all_results_combined.cache()
+    all_violations_combined.cache()
+    results_count    = all_results_combined.count()
+    violations_count = all_violations_combined.count()
 
     # Print the top-5 slowest rules to help identify bottlenecks.
-    if all_results_combined.count() > 0:
+    if results_count > 0:
         print("\n--- Top-5 slowest rules (by rule_duration_seconds) ---")
         all_results_combined.orderBy(
             "rule_duration_seconds", ascending=False
@@ -450,7 +472,6 @@ def main() -> tuple[int, int]:
     print("\nWriting results to Delta tables…")
 
     all_results_combined.write.mode("append").saveAsTable(TARGETS["results_table"])
-    results_count = all_results_combined.count()
     print(f"  {TARGETS['results_table']} : {results_count} rows appended.")
 
     _apply_resolution_tracking(
@@ -459,7 +480,6 @@ def main() -> tuple[int, int]:
         violations_table=TARGETS["violations_table"],
         run_timestamp=RUN_TIMESTAMP,
     )
-    violations_count = all_violations_combined.count()
     print(f"  {TARGETS['violations_table']} : {violations_count} violations processed.")
 
     # ------------------------------------------------------------------
@@ -539,8 +559,10 @@ def main() -> tuple[int, int]:
 
         # Write IC run summaries (subset of dq_run_results rows for IC rules).
         ic_results = all_results_combined.filter(F.col("rule_id").isin(ic_rule_ids))
-        ic_results.write.mode("append").saveAsTable(TARGETS["ic_results_table"])
+        ic_results.cache()
         ic_results_count = ic_results.count()
+        ic_results.write.mode("append").saveAsTable(TARGETS["ic_results_table"])
+        ic_results.unpersist()
         print(f"  {TARGETS['ic_results_table']} : {ic_results_count} IC summary rows appended.")
 
     print("\n=== DATA QUALITY RUN SUMMARY ===")
@@ -563,6 +585,8 @@ def main() -> tuple[int, int]:
         """
     ).show(truncate=False)
 
+    all_results_combined.unpersist()
+    all_violations_combined.unpersist()
     return results_count, violations_count
 
 

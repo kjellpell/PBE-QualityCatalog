@@ -13,7 +13,7 @@
 # _apply_resolution_tracking() – MERGE-based persistence (uses Delta Lake)
 # =============================================================================
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
@@ -124,7 +124,7 @@ def _apply_resolution_tracking(
     spark_session         : active SparkSession
     violations_table      : fully-qualified Delta table name
     run_timestamp         : timestamp to record for resolutions
-                            (defaults to datetime.utcnow())
+                            (defaults to datetime.now(timezone.utc))
     """
     # Validate that the input DataFrame has the columns required by the MERGE
     # key predicates.  Catching this early avoids a cryptic SQL error later.
@@ -136,7 +136,7 @@ def _apply_resolution_tracking(
             f"columns: {sorted(missing)}"
         )
 
-    ts = (run_timestamp or datetime.utcnow()).isoformat()
+    ts = (run_timestamp or datetime.now(timezone.utc)).isoformat()
 
     try:
         current_violations_df.createOrReplaceTempView("_dq_current_violations")
