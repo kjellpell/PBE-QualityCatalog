@@ -588,7 +588,7 @@ def main() -> tuple[int, int]:
     try:
         spark.catalog.dropTempView("_dq_run_id")
     except Exception:
-        pass
+        pass  # best-effort cleanup; non-fatal
 
     all_results_combined.unpersist()
     all_violations_combined.unpersist()
