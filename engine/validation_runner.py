@@ -156,7 +156,7 @@ def _build_catalogs_from_df(df) -> list[dict]:
                 try:
                     rule["parameters"] = _json.loads(row["parameters"])
                 except Exception as exc:
-                    print(f"  Warning: invalid JSON in parameters for rule {row['rule_id']}: {exc}")
+                    print(f"  Warning: invalid JSON in parameters for rule {row.get('rule_id', 'unknown')}: {exc}")
             if row.get("sql_expression"):
                 rule["sql"] = row["sql_expression"]
             for ic_field in ("control_ref", "control_type", "risk_domain",
@@ -170,7 +170,7 @@ def _build_catalogs_from_df(df) -> list[dict]:
             try:
                 joins = _json.loads(joins_json)
             except Exception as exc:
-                print(f"  Warning: invalid JSON in joins_json for rule group {rule_group}: {exc}")
+                print(f"  Warning: invalid JSON in joins_json for rule group {rule_group or 'unknown'}: {exc}")
 
         catalogs.append({
             "rule_group": rule_group or "",
@@ -559,8 +559,10 @@ def main() -> tuple[int, int]:
 
         # Write IC run summaries (subset of dq_run_results rows for IC rules).
         ic_results = all_results_combined.filter(F.col("rule_id").isin(ic_rule_ids))
+        ic_results.cache()
         ic_results_count = ic_results.count()
         ic_results.write.mode("append").saveAsTable(TARGETS["ic_results_table"])
+        ic_results.unpersist()
         print(f"  {TARGETS['ic_results_table']} : {ic_results_count} IC summary rows appended.")
 
     print("\n=== DATA QUALITY RUN SUMMARY ===")
