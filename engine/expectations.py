@@ -8,7 +8,7 @@
 # Each class implements:
 #   validate(df, rule, spark) -> (result_dict, violations_df | None)
 #
-#   result_dict keys (GX-compatible):
+#   result_dict keys:
 #     total_rows    int   - rows evaluated
 #     passed_rows   int   - rows that satisfy the rule
 #     failed_rows   int   - rows that violate the rule
@@ -20,14 +20,14 @@
 #     Columns: primary_key_value, violated_column,
 #              actual_value, expected_condition, violation_detail
 #
-# CUSTOM_EXPECTATION_REGISTRY maps YAML expectation names to validator classes.
+# CUSTOM_EXPECTATION_REGISTRY maps expectation names to validator classes.
 # Add new entries when creating new custom validators - no other file needs
 # to be changed to register a new expectation.
 #
 # Adding a new expectation:
 #   1. Create a class with a validate() method following the contract above.
 #   2. Add it to CUSTOM_EXPECTATION_REGISTRY at the bottom of this file.
-#   3. Reference it by name in any YAML rule file.
+#   3. Reference it by name in the rule_catalog Delta table.
 # =============================================================================
 
 from pyspark.sql import functions as F, Window
