@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 # CELL 1 — Parameters (bound by Translytical Task Flow)
 # ---------------------------------------------------------------------------
 exception_id  = mssparkutils.notebook.getParam("exception_id")
+rule_id       = mssparkutils.notebook.getParam("rule_id")
 new_status    = mssparkutils.notebook.getParam("new_status")
 waiver_reason = mssparkutils.notebook.getParam("waiver_reason", defaultValue="")
 
@@ -41,6 +42,7 @@ assert actioned_by, "Could not resolve caller identity from Fabric session"
 # CELL 3 — Validate parameters
 # ---------------------------------------------------------------------------
 assert exception_id, "exception_id is required"
+assert rule_id, "rule_id is required"
 assert new_status in ("Verified", "Waived"), (
     f"new_status must be 'Verified' or 'Waived', got: '{new_status}'"
 )
@@ -68,6 +70,7 @@ if new_status == "Verified":
     dt.update(
         condition=(
             (F.col("primary_key_value") == exception_id)
+            & (F.col("rule_id") == rule_id)
             & (F.col("ic_status").isin("Open", "Remediated"))
         ),
         set={
@@ -82,6 +85,7 @@ elif new_status == "Waived":
     dt.update(
         condition=(
             (F.col("primary_key_value") == exception_id)
+            & (F.col("rule_id") == rule_id)
             & (F.col("ic_status") == F.lit("Open"))
         ),
         set={
