@@ -47,14 +47,14 @@ Set in config/QualityCatalogRuntime.py.
 
 ---
 
-## Config Resolution
+## Config Location
 
-Order of config loading:
+Config files must be uploaded to the Lakehouse at:
 
-1. /lakehouse/default/Files/Configs
-2. repo-local config fallback
+    /lakehouse/default/Files/Configs/QualityCatalogConfig.py
+    /lakehouse/default/Files/Configs/QualityCatalogRuntime.py
 
-Set REQUIRE_LAKEHOUSE_CONFIG=1 to require Lakehouse config files.
+The engine raises a clear error if either file is missing.
 
 ---
 
@@ -96,9 +96,8 @@ After each run, confirm:
 
 ### Config load failure
 
-- Verify Lakehouse config path.
-- Check REQUIRE_LAKEHOUSE_CONFIG setting.
-- Confirm local fallback files exist.
+- Verify Lakehouse config path: `/lakehouse/default/Files/Configs/`.
+- Confirm both `QualityCatalogConfig.py` and `QualityCatalogRuntime.py` are uploaded.
 
 ### MERGE failure on dq_violations
 

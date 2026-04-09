@@ -1,3 +1,5 @@
+# Template / reference copy — deploy to /lakehouse/default/Files/Configs/ on Fabric.
+# This file is NOT loaded at runtime; the Lakehouse copy is always used.
 """Runtime controls for the Quality Catalog validation runner."""
 
 DRY_RUN = False

@@ -11,7 +11,7 @@ Copy these files to Lakehouse Files:
 | `config/QualityCatalogConfig.py` | `/lakehouse/default/Files/Configs/QualityCatalogConfig.py` |
 | `config/QualityCatalogRuntime.py` | `/lakehouse/default/Files/Configs/QualityCatalogRuntime.py` |
 
-In production, set `REQUIRE_LAKEHOUSE_CONFIG=1` so local fallback is disabled.
+In production, both config files must exist at `/lakehouse/default/Files/Configs/` — the engine raises a clear error if either is missing.
 
 ## Run order
 
