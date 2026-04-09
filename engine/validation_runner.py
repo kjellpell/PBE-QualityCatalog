@@ -1,41 +1,24 @@
 # =============================================================================
 # engine/validation_runner.py
-# YAML-driven data quality validation using Great Expectations (GX Core).
+# Data quality validation engine for the PBE Quality Catalog.
 #
 # Flow:
-#   1. Install GX Core and load all YAML rule catalogs from the rules/ folder.
-#   2. For each rule file, load the source table from the Spark metastore
-#      using the table and database fields in the YAML header, then apply
-#      any configured pre-joins.
-#   3. For each rule in the catalog:
-#        a. Dispatch standard GX expectations via the GX Core validator.
-#        b. Dispatch custom expectations to the CUSTOM_EXPECTATION_REGISTRY.
-#        c. Collect per-rule results (counts, success %, status).
-#        d. Collect per-row violation details (primary_key_value links back to source).
+#   1. Load active rules from the rule_catalog Delta table.
+#   2. For each rule group, load the source table from the Spark metastore
+#      and apply any configured pre-joins.
+#   3. For each rule:
+#        a. Dispatch to the matching validator in CUSTOM_EXPECTATION_REGISTRY.
+#        b. Collect per-rule results (counts, success %, status).
+#        c. Collect per-row violation details.
 #   4. Write summary rows to dq_run_results (Delta table).
-#   5. Write violation rows to dq_violations (Delta table).
-#   6. Print a human-readable run summary.
-#
-# All validation rules are defined in YAML files under rules/.
-# The engine automatically discovers and processes every *.yaml file in that
-# folder — no code changes are needed when adding new rule files.
-#
-# Phase 1 structure:
-#   engine/expectations.py   – all custom expectation classes (consolidated)
-#   engine/validation_runner.py – this file
-#   rules/                   – domain-specific YAML rule files
-#   outputs/validation_results/ – Delta table result logs
+#   5. Write violation rows to dq_violations via MERGE-based resolution tracking.
+#   6. Write IC exceptions to ic_exceptions (for IC-flagged rules).
+#   7. Write execution metrics to dq_execution_metrics.
 #
 # Schedule: nightly (after source tables are refreshed).
 # Prerequisites: nb_dq_00_setup.py must have been run at least once.
+#                nb_dq_02_migrate_rules.py must have populated rule_catalog.
 # =============================================================================
-
-
-# CELL 1 — Install Great Expectations
-# Run this cell only once per cluster / Fabric session restart.
-# Comment it out after the first run to save startup time.
-# -----------------------------------------------------------------------------
-# %pip install great-expectations==1.3.10
 
 
 # CELL 2 — Imports and run metadata
@@ -45,10 +28,6 @@ import uuid
 from datetime import datetime, date, timezone
 from pathlib import Path
 
-import great_expectations as gx
-from great_expectations.core.expectation_configuration import (
-    ExpectationConfiguration,
-)
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.types import (
     StructType, StructField,
@@ -73,7 +52,6 @@ from engine.expectations import CUSTOM_EXPECTATION_REGISTRY   # noqa: E402
 from engine.resolution import (                                # noqa: E402
     VIOLATION_SCHEMA,
     IC_EXCEPTION_SCHEMA,
-    _find_stale_violations,
     _apply_resolution_tracking,
     _apply_ic_resolution_tracking,
     # _notify_new_ic_exceptions,  # DISABLED — PA flow not yet configured
@@ -95,7 +73,6 @@ require_config_keys(
     [
         "DEFAULT_SCHEMA",
         "RULES_DIR",
-        "GX_SAMPLE_SIZE",
         "DQ_RESULTS_TABLE",
         "DQ_VIOLATIONS_TABLE",
         "DQ_EXECUTION_METRICS_TABLE",
@@ -131,26 +108,8 @@ print(f"Violations: {TARGETS['violations_table']}")
 print(f"Metrics   : {TARGETS['execution_metrics_table']}")
 
 
-# CELL 4 — GX Core context and helper functions
+# CELL 4 — Helper functions
 # -----------------------------------------------------------------------------
-# GX native expectation names supported via the GX validator.
-# Any name not listed here is dispatched to the custom registry.
-GX_NATIVE_EXPECTATIONS = {
-    "expect_column_values_to_not_be_null",
-    "expect_column_values_to_be_greater_than",
-    "expect_column_values_to_be_less_than",
-    "expect_column_values_to_be_between",
-    "expect_column_values_to_be_in_set",
-    "expect_column_values_to_not_be_in_set",
-    "expect_column_to_exist",
-    "expect_table_row_count_to_be_between",
-}
-
-# GX operates on a Pandas sample for standard expectations.
-# Adjust SAMPLE_SIZE for the trade-off between accuracy and runtime.
-SAMPLE_SIZE = CONFIG.GX_SAMPLE_SIZE
-
-
 def _load_all_rules() -> list[dict]:
     """Load active rules from the rule_catalog Delta table."""
     catalog_df = (
@@ -224,123 +183,6 @@ def _build_catalogs_from_df(df) -> list[dict]:
     return catalogs
 
 
-def _get_gx_context() -> gx.DataContext:
-    """Return an ephemeral (in-memory) GX data context."""
-    return gx.get_context()
-
-
-def _run_gx_expectation(
-    context: gx.DataContext,
-    pdf,
-    rule: dict,
-    suite_name: str,
-) -> dict:
-    """
-    Run a single GX built-in expectation against a Pandas DataFrame sample.
-    Returns a result_dict compatible with the standard contract.
-    """
-    try:
-        ds_name    = f"ds_{suite_name}_{rule['rule_id']}"
-        asset_name = rule["rule_id"]
-
-        datasource = context.data_sources.add_pandas(ds_name)
-        asset      = datasource.add_dataframe_asset(name=asset_name)
-        batch_def  = asset.add_batch_definition_whole_dataframe(
-            name=f"{asset_name}_batch"
-        )
-        batch = batch_def.get_batch(batch_parameters={"dataframe": pdf})
-
-        suite = context.suites.add(
-            gx.ExpectationSuite(name=f"{suite_name}_{rule['rule_id']}")
-        )
-
-        kwargs = {}
-        if "column" in rule:
-            kwargs["column"] = rule["column"]
-        if "parameters" in rule:
-            kwargs.update(rule["parameters"])
-
-        suite.add_expectation(
-            ExpectationConfiguration(
-                expectation_type=rule["expectation"],
-                kwargs=kwargs,
-            )
-        )
-
-        validation_def = context.validation_definitions.add(
-            gx.ValidationDefinition(
-                name=f"vd_{suite_name}_{rule['rule_id']}",
-                data=batch_def,
-                suite=suite,
-            )
-        )
-        results = validation_def.run()
-
-        er = results.results[0] if results.results else None
-        if er is None:
-            raise ValueError("No result returned from GX validator.")
-
-        total   = int(er.result.get("element_count", len(pdf)))
-        failed  = int(er.result.get("unexpected_count", 0))
-        passed  = total - failed
-        success = er.success
-
-        return {
-            "total_rows":  total,
-            "passed_rows": passed,
-            "failed_rows": failed,
-            "success_pct": round(passed / total * 100, 2) if total else 100.0,
-            "status":      "PASSED" if success else "FAILED",
-            "details": (
-                f"GX: {failed} unexpected value(s) for "
-                f"'{rule.get('column', '')}'."
-                if not success
-                else (
-                    f"GX: All {total} sampled rows passed "
-                    f"'{rule['expectation']}'."
-                )
-            ),
-        }
-
-    except Exception as exc:
-        rule_id  = rule.get("rule_id", "?")
-        exp_name = rule.get("expectation", "?")
-        return {
-            "total_rows":  0,
-            "passed_rows": 0,
-            "failed_rows": 0,
-            "success_pct": 0.0,
-            "status":      "ERROR",
-            "details":     f"[{rule_id}/{exp_name}] GX execution error: {exc}",
-        }
-
-
-def _violations_for_gx_rule(
-    full_df,
-    rule: dict,
-    pk_col: str,
-) -> "DataFrame | None":
-    """
-    For GX null-check expectations, compute violations against the FULL
-    Spark DataFrame so the violation table is complete (not limited to sample).
-    Returns None for other GX expectations (not implemented at row level).
-    """
-    if rule["expectation"] != "expect_column_values_to_not_be_null":
-        return None
-
-    col = rule.get("column")
-    if not col or col not in full_df.columns:
-        return None
-
-    return full_df.filter(F.col(col).isNull()).select(
-        F.col(pk_col).cast("string").alias("primary_key_value"),
-        F.lit(col).alias("violated_column"),
-        F.lit(None).cast("string").alias("actual_value"),
-        F.lit(f"{col} must not be null").alias("expected_condition"),
-        F.lit(f"{col} is null").alias("violation_detail"),
-    )
-
-
 # CELL 5 — Schema for result accumulation
 # -----------------------------------------------------------------------------
 RESULT_SCHEMA = StructType([
@@ -397,11 +239,10 @@ def run_validation(
 
     Parameters
     ----------
-    rule_catalog : dict loaded from a YAML rule file
+    rule_catalog : dict loaded from the rule_catalog Delta table (one rule group)
     source_df    : full Spark DataFrame to validate
     pk_col       : primary key column of source_df (stored as primary_key_value
-                   in each violation row; use this to join back to the source
-                   table for context columns such as Enhets_id or handler codes)
+                   in each violation row)
 
     Returns
     -------
@@ -414,9 +255,6 @@ def run_validation(
 
     all_results    = []
     all_violations = _empty_violations()
-
-    gx_context = _get_gx_context()
-    pdf_sample = source_df.limit(SAMPLE_SIZE).toPandas()
 
     for rule in rules:
         rule_id   = rule["rule_id"]
@@ -444,13 +282,7 @@ def run_validation(
         _rule_start = time.perf_counter()
 
         try:
-            if exp_name in GX_NATIVE_EXPECTATIONS:
-                result = _run_gx_expectation(
-                    gx_context, pdf_sample, rule, suite_name=rule_group
-                )
-                viols_spark = _violations_for_gx_rule(source_df, rule, pk_col)
-
-            elif exp_name in CUSTOM_EXPECTATION_REGISTRY:
+            if exp_name in CUSTOM_EXPECTATION_REGISTRY:
                 validator   = CUSTOM_EXPECTATION_REGISTRY[exp_name]()
                 result, viols_spark = validator.validate(source_df, rule, spark)
 
