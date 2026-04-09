@@ -92,7 +92,6 @@ print("dq_run_results ready.")
 # One row per offending record per rule (current state — upserted each run).
 # Used by Power BI for the drill-through / detail view.
 # Key fields for the semantic model:
-#   prosess_id           – links the violation back to Saksbehandling.Prosesser
 #   primary_key_value    – the PK value of the offending row in its own table
 #   violated_column      – which column caused the violation
 #   severity / owner     – copied from the rule definition for easy filtering
@@ -111,13 +110,11 @@ CREATE TABLE IF NOT EXISTS dq_violations (
     severity             STRING,
     owner                STRING,
     failure_type         STRING,
-    prosess_id           STRING,
     primary_key_value    STRING,
     violated_column      STRING,
     actual_value         STRING,
     expected_condition   STRING,
     violation_detail     STRING,
-    saksbehandler_kode   STRING,
     issue_status         STRING,
     resolution_timestamp STRING
 )
@@ -198,12 +195,20 @@ CREATE TABLE IF NOT EXISTS ic_run_results (
     expectation           STRING NOT NULL,
     severity              STRING NOT NULL,
     owner                 STRING,
+    owner_email           STRING,
     total_rows            BIGINT,
     passed_rows           BIGINT,
     failed_rows           BIGINT,
     success_pct           DOUBLE,
     status                STRING NOT NULL,
     details               STRING,
+    column_a              STRING,
+    column_b              STRING,
+    operator              STRING,
+    sql_query             STRING,
+    rule_category         STRING,
+    reference_table       STRING,
+    reference_column      STRING,
     control_ref           STRING,
     control_type          STRING,
     risk_domain           STRING,
@@ -212,22 +217,6 @@ CREATE TABLE IF NOT EXISTS ic_run_results (
 )
 USING DELTA
 """)
-
-for _col_def in [
-    "column_a             STRING",
-    "column_b             STRING",
-    "operator             STRING",
-    "sql_query            STRING",
-    "rule_category        STRING",
-    "reference_table      STRING",
-    "reference_column     STRING",
-]:
-    try:
-        spark.sql(f"ALTER TABLE ic_run_results ADD COLUMNS ({_col_def})")
-    except Exception as _exc:
-        _msg = str(_exc).lower()
-        if "already exists" not in _msg and "duplicate" not in _msg:
-            print(f"  Warning: could not add column '{_col_def}': {_exc}")
 
 print("ic_run_results ready.")
 
@@ -324,9 +313,8 @@ print("ic_control_register ready.")
 # Structured attestation fields capture the result of the manual review.
 # conclusion must be: Working | Needs Attention | Not Working
 # follow_up_action is required when conclusion != Working.
-spark.sql("DROP TABLE IF EXISTS ic_manual_attestations")
 spark.sql("""
-CREATE TABLE ic_manual_attestations (
+CREATE TABLE IF NOT EXISTS ic_manual_attestations (
     attestation_id   STRING NOT NULL,
     control_id       STRING NOT NULL,
     attested_by      STRING NOT NULL,
