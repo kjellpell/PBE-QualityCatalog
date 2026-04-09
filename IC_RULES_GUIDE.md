@@ -1,8 +1,11 @@
 # IC Rules Guide For Control Owners
 
-This guide explains how to write and maintain Internal Control (IC) rules in YAML.
+This guide explains how to write and maintain Internal Control (IC) rules.
 
-IC rules use the same engine as data quality rules. You only edit YAML files in the `rules/` folder — no Python code changes are needed.
+IC rules use the same engine as data quality rules. Rules are managed in the `rule_catalog`
+Delta table — the YAML files in `rules/` are one-time migration source artifacts and are
+**not** read by the validation engine at runtime. No Python code changes are needed to add
+or update rules.
 
 ---
 
@@ -175,7 +178,7 @@ Transitions are made from the IC Exceptions page in Power BI using the Translyti
 
 ## Automated Controls vs Manual Controls
 
-**Automated controls** (this guide) are rules in YAML that the engine checks against live data on every run.
+**Automated controls** (this guide) are rules in `rule_catalog` that the engine checks against live data on every run.
 
 **Manual controls** are controls that cannot be automated — e.g. a manager sign-off meeting, a quarterly review process. They are registered in `ic_control_register` (maintained manually) and attested periodically via the Manual Controls page in Power BI. The attestation notebook (`nb_ic_02_attest_manual_control`) records the attested_by, period_covered, report_link, and optionally downloads the evidence file.
 

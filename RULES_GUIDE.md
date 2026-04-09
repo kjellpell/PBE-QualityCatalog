@@ -2,7 +2,9 @@
 
 This guide shows how to create and update data quality rules in plain language.
 
-You do not need to change Python code. You only edit YAML files in the rules folder.
+Rules are managed in the `rule_catalog` Delta table. The YAML files in the `rules/` folder
+are one-time migration source artifacts used to populate `rule_catalog` — they are not
+read by the validation engine at runtime.
 
 ---
 
@@ -30,26 +32,14 @@ If data breaks a rule, it appears in violation output for follow-up.
 
 ---
 
-## Where To Edit Rules
+## Where Rules Are Managed
 
-Rule files are in the rules folder, grouped by business area:
+Rules are stored in the `rule_catalog` Delta table. Each row is one rule.
 
-- process_rules.yaml
-- milestone_rules.yaml
-- invoice_rules.yaml
-
-Pick the file for your domain and add or update rules under the rules section.
-
----
-
-## Quick Rule Workflow
-
-1. Open the correct domain YAML file.
-2. Copy a similar existing rule.
-3. Change rule_id, name, description, expectation, and parameters.
-4. Set severity, category, and owner.
-5. Save.
-6. Ask IT to include the change in normal preflight and run cycles.
+The YAML files in the `rules/` folder were the original source for the initial
+migration into `rule_catalog` and are **not** used by the validation engine at runtime.
+To add or update rules after the initial migration, insert or update rows directly
+in `rule_catalog`. Ask IT for guidance if needed.
 
 ---
 
