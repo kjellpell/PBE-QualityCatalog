@@ -86,12 +86,14 @@ PBE-QualityCatalog/
 - QualityCatalogRuntime.py:
   behavior flags and retry markers.
 
-### Config loading order
+### Config location
 
-1. /lakehouse/default/Files/Configs
-2. repo-local config fallback
+Config files must be uploaded to the Lakehouse at:
 
-Set REQUIRE_LAKEHOUSE_CONFIG=1 to require Lakehouse config.
+    /lakehouse/default/Files/Configs/QualityCatalogConfig.py
+    /lakehouse/default/Files/Configs/QualityCatalogRuntime.py
+
+The engine will raise a clear error if either file is missing.
 
 ### Key runtime toggles
 
@@ -219,7 +221,7 @@ Business authoring guidance is in RULES_GUIDE.md.
 - Missing source tables:
   run preflight and confirm metastore names.
 - Config loading failures:
-  verify Lakehouse config path and REQUIRE_LAKEHOUSE_CONFIG.
+  verify Lakehouse config path — ensure both config files exist at /lakehouse/default/Files/Configs/.
 - Violation MERGE failures:
   rerun nb_dq_00_setup.py and verify Delta support.
 - Unexpected expectation errors:

@@ -3,24 +3,20 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 from pathlib import Path
 
 
 LAKEHOUSE_CONFIG_DIR = Path("/lakehouse/default/Files/Configs")
-LOCAL_CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
 
 
 def load_config_module(module_name: str):
-    lakehouse_path = LAKEHOUSE_CONFIG_DIR / f"{module_name}.py"
-    local_path = LOCAL_CONFIG_DIR / f"{module_name}.py"
-    require_lakehouse = os.getenv("REQUIRE_LAKEHOUSE_CONFIG", "0").lower() in {"1", "true", "yes"}
-    module_path = lakehouse_path if lakehouse_path.exists() else local_path
-
-    if require_lakehouse and not lakehouse_path.exists():
-        raise FileNotFoundError(f"Missing required Lakehouse config: {lakehouse_path}")
+    module_path = LAKEHOUSE_CONFIG_DIR / f"{module_name}.py"
     if not module_path.exists():
-        raise FileNotFoundError(f"Configuration module not found: {module_path}")
+        raise FileNotFoundError(
+            f"Config file not found: {module_path}\n"
+            f"Ensure {module_name}.py is uploaded to the Lakehouse at "
+            f"/lakehouse/default/Files/Configs/"
+        )
 
     spec = importlib.util.spec_from_file_location(module_name, str(module_path))
     if spec is None or spec.loader is None:

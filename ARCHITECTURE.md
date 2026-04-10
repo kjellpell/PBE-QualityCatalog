@@ -45,7 +45,7 @@ engine/validation_runner.py → Main engine:
 |------|---------|
 | `engine/expectations.py` | All custom expectation classes + registry |
 | `engine/resolution.py` | MERGE-based violation and IC exception persistence |
-| `engine/runtime.py` | Config loading, target resolution, metrics writing |
+| `engine/runtime.py` | Config loading (Lakehouse only), target resolution, metrics writing |
 | `engine/validation_runner.py` | Main orchestration engine |
 | `config/QualityCatalogConfig.py` | Table names, paths, IC settings |
 | `config/QualityCatalogRuntime.py` | Behavior flags (dry-run, retry, fail-on-empty) |
