@@ -3,10 +3,55 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
+
+from pyspark.sql.types import (
+    BooleanType,
+    DoubleType,
+    LongType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampType,
+)
 
 
 LAKEHOUSE_CONFIG_DIR = Path("/lakehouse/default/Files/Configs")
+
+
+def _safe_table_name(name: str) -> str:
+    """Validate and return a bare table name (no schema prefix).
+
+    Accepts only alphanumeric characters and underscores — the valid set for
+    Delta/Hive table names.  Raises ``ValueError`` if the name contains any
+    other character, blocking SQL injection via crafted table name values in
+    the config files.
+    """
+    bare = name.strip()
+    if not re.match(r"^[a-zA-Z0-9_]+$", bare):
+        raise ValueError(
+            f"Invalid table name '{bare}': only letters, digits, and underscores "
+            f"are allowed.  Check table name settings in QualityCatalogConfig.py."
+        )
+    return bare
+
+
+def resolve_repo_root() -> Path:
+    """Return the repository root directory.
+
+    When running from a file on disk, uses this file's location (engine/) to
+    derive the parent.  In a Fabric notebook (no ``__file__``), walks up from
+    ``cwd`` looking for the ``engine/`` directory marker.
+    """
+    if "__file__" in globals():
+        return Path(__file__).resolve().parent.parent
+
+    cwd = Path.cwd().resolve()
+    for candidate in [cwd, *cwd.parents, Path("/lakehouse/default/Files")]:
+        if (candidate / "engine").exists():
+            return candidate
+    return cwd
 
 
 def load_config_module(module_name: str):
@@ -66,10 +111,15 @@ def resolve_targets(config_module, runtime_module) -> dict[str, str]:
     }
 
 
-def resolve_rules_dir(config_module, repo_root: Path) -> Path:
+def resolve_rules_dir(config_module, repo_root: Path, must_exist: bool = False) -> Path:
     rules_dir = Path(config_module.RULES_DIR)
     if not rules_dir.is_absolute():
         rules_dir = repo_root / rules_dir
+    if must_exist and not rules_dir.exists():
+        raise FileNotFoundError(
+            f"RULES_DIR not found: {rules_dir}\n"
+            f"Ensure RULES_DIR in QualityCatalogConfig.py points to your rules folder."
+        )
     return rules_dir
 
 
@@ -78,8 +128,39 @@ def classify_retryable_error(message: str | None, runtime_module) -> bool:
     return any(marker in lowered for marker in runtime_module.RETRYABLE_ERROR_MARKERS)
 
 
+_EXECUTION_METRIC_SCHEMA = StructType([
+    StructField("script_name", StringType(), True),
+    StructField("status", StringType(), True),
+    StructField("dry_run", BooleanType(), True),
+    StructField("output_target", StringType(), True),
+    StructField("artifact_target", StringType(), True),
+    StructField("row_count", LongType(), True),
+    StructField("started_at_utc", TimestampType(), True),
+    StructField("finished_at_utc", TimestampType(), True),
+    StructField("duration_seconds", DoubleType(), True),
+    StructField("is_retryable", BooleanType(), True),
+    StructField("error_message", StringType(), True),
+])
+
+
 def write_execution_metric(spark, table_name: str, payload: dict) -> None:
+    row = {
+        "script_name": payload.get("script_name"),
+        "status": payload.get("status"),
+        "dry_run": payload.get("dry_run"),
+        "output_target": payload.get("output_target"),
+        "artifact_target": payload.get("artifact_target"),
+        "row_count": int(payload.get("row_count", 0)) if payload.get("row_count") is not None else None,
+        "started_at_utc": payload.get("started_at_utc"),
+        "finished_at_utc": payload.get("finished_at_utc"),
+        "duration_seconds": float(payload.get("duration_seconds")) if payload.get("duration_seconds") is not None else None,
+        "is_retryable": payload.get("is_retryable"),
+        "error_message": payload.get("error_message"),
+    }
+    df = spark.createDataFrame([row], schema=_EXECUTION_METRIC_SCHEMA)
     try:
-        spark.createDataFrame([payload]).write.mode("append").saveAsTable(table_name)
+        df.write.mode("append").saveAsTable(table_name)
     except Exception as exc:
-        print(f"Warning: failed to write execution metric to {table_name}: {exc}")
+        print(
+            f"Warning: failed to write execution metric to '{table_name}': {exc}"
+        )

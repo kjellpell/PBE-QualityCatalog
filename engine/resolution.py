@@ -14,6 +14,7 @@
 # _apply_ic_resolution_tracking() – MERGE-based IC persistence
 # =============================================================================
 
+import re
 from datetime import datetime, timezone
 
 from pyspark.sql import DataFrame
@@ -26,6 +27,17 @@ from pyspark.sql.types import (
     StructType,
     TimestampType,
 )
+
+
+def _safe_table_name(name: str) -> str:
+    """Validate and return a bare table name.  See engine/runtime.py for docs."""
+    bare = name.strip()
+    if not re.match(r"^[a-zA-Z0-9_]+$", bare):
+        raise ValueError(
+            f"Invalid table name '{bare}': only letters, digits, and underscores "
+            f"are allowed.  Check table name settings in QualityCatalogConfig.py."
+        )
+    return bare
 
 
 # ---------------------------------------------------------------------------
@@ -66,20 +78,19 @@ def _apply_resolution_tracking(
     run_timestamp: datetime | None = None,
 ) -> None:
     """
-    Persist violations using MERGE-based resolution tracking:
+     Persist violations using MERGE-based resolution tracking:
 
-    1. Previously Active violations whose (rule_id, primary_key_value) is
-       **not** in the current run are marked as Resolved with a
-       resolution_timestamp.
-    2. Violations still present have their run metadata refreshed in-place
-       (run_id, run_timestamp, batch_date, violation_detail, actual_value).
-    3. Brand-new violations are inserted with issue_status = 'Active' and
-       resolution_timestamp = NULL.
+     1. Violations still present have their run metadata refreshed in-place
+         (run_id, run_timestamp, batch_date, violation_detail, actual_value).
+     2. Brand-new violations are inserted with issue_status = 'Active' and
+         resolution_timestamp = NULL.
+     3. Previously Active violations whose (rule_id, primary_key_value) is
+         **not** in the current run are marked as Resolved with a
+         resolution_timestamp via a follow-up UPDATE.
 
-    The three cases are handled in a single atomic MERGE statement using the
-    ``NOT MATCHED BY SOURCE`` clause (Delta Lake 2.0+ / Fabric Spark 3.3+).
-    This eliminates the former two-step approach where a failure between the
-    two statements could permanently lose violation records.
+     The stale-row resolve step is implemented as a separate UPDATE to stay
+     compatible with Fabric SQL dialects that do not support
+     ``WHEN NOT MATCHED BY SOURCE THEN UPDATE`` in MERGE.
 
     Falls back to a plain append if the table does not yet exist or if the
     Delta MERGE is unavailable (e.g. unit-test environments without a
@@ -96,7 +107,7 @@ def _apply_resolution_tracking(
     """
     # Validate that the input DataFrame has the columns required by the MERGE
     # key predicates.  Catching this early avoids a cryptic SQL error later.
-    _MERGE_KEY_COLUMNS = {"rule_id", "primary_key_value", "issue_status"}
+    _MERGE_KEY_COLUMNS = {"rule_id", "primary_key_value", "violated_column", "issue_status"}
     missing = _MERGE_KEY_COLUMNS - set(current_violations_df.columns)
     if missing:
         raise ValueError(
@@ -106,45 +117,91 @@ def _apply_resolution_tracking(
 
     ts = (run_timestamp or datetime.now(timezone.utc)).isoformat()
 
-    try:
-        current_violations_df.createOrReplaceTempView("_dq_current_violations")
-        # Register the resolution timestamp as a single-row view so it is
-        # passed as a typed value rather than interpolated directly into SQL.
-        ts_df = spark_session.createDataFrame([(ts,)], ["_ts"])
-        ts_df.createOrReplaceTempView("_dq_run_ts")
+    # In Fabric, schema-qualified names like "dbo.dq_violations" are resolved
+    # by the Lakehouse connector for DataFrame API calls, but Spark SQL
+    # (MERGE, CREATE TEMP VIEW) only sees the Spark metastore where tables are
+    # registered under their bare names.  Always use the bare name for SQL.
+    _sql_table_name = _safe_table_name(violations_table.split(".")[-1])
+    _quoted_violations_table = f"`{_sql_table_name}`"
 
-        # Single atomic MERGE (Delta Lake 2.0+ / Fabric Spark 3.3+):
-        #   WHEN MATCHED               → refresh still-active violations
-        #   WHEN NOT MATCHED BY SOURCE → mark stale violations as Resolved
-        #   WHEN NOT MATCHED BY TARGET → insert brand-new violations
+    try:
+        # Deduplicate on the MERGE key before registering the temp view.
+        # Rules such as expect_unique_combination_of_columns emit one violation
+        # row per duplicate occurrence of the primary key, so the same
+        # (rule_id, primary_key_value, violated_column) tuple can appear many
+        # times.  Delta MERGE requires source rows to be unique on the join key;
+        # keeping one representative row per key is correct here because the
+        # MERGE tracks existence, not individual row identity.
+        _merge_key = ["rule_id", "primary_key_value", "violated_column"]
+        current_violations_df = current_violations_df.dropDuplicates(_merge_key)
+
+        current_violations_df.createOrReplaceTempView("_dq_current_violations")
+
+        # Step 1: MERGE active violations that are still present in this run
+        # and insert brand-new active violations.
+        # violated_column is included in the ON key (NULL-safe) so that rules
+        # producing multiple per-column violations for the same primary key do
+        # not cause DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE.
         spark_session.sql(f"""
-            MERGE INTO {violations_table} AS t
+            MERGE INTO {_quoted_violations_table} AS t
             USING _dq_current_violations AS s
-            ON  t.rule_id           = s.rule_id
-            AND t.primary_key_value  = s.primary_key_value
-            AND t.issue_status       = 'Active'
+            ON  t.rule_id                          = s.rule_id
+            AND t.primary_key_value                = s.primary_key_value
+            AND COALESCE(t.violated_column, '')    = COALESCE(s.violated_column, '')
+            AND t.issue_status                     = 'Active'
             WHEN MATCHED THEN UPDATE SET
                 t.run_id             = s.run_id,
                 t.run_timestamp      = s.run_timestamp,
                 t.batch_date         = s.batch_date,
                 t.violation_detail   = s.violation_detail,
                 t.actual_value       = s.actual_value
-            WHEN NOT MATCHED BY SOURCE
-              AND t.issue_status = 'Active'
-              THEN UPDATE SET
-                t.issue_status          = 'Resolved',
-                t.resolution_timestamp  = (SELECT _ts FROM _dq_run_ts)
-            WHEN NOT MATCHED BY TARGET THEN INSERT *
+            WHEN NOT MATCHED THEN INSERT *
         """)
 
-        print(f"  Resolution tracking applied via MERGE on '{violations_table}'.")
+        # Step 2: Mark previously active violations as resolved when they are
+        # absent from the current violation set (matched on the same composite key).
+        # Fabric does not support subqueries in UPDATE conditions, so we first
+        # compute stale active keys with a LEFT ANTI join and then MERGE-update.
+        spark_session.sql(f"""
+            CREATE OR REPLACE TEMP VIEW _dq_stale_active_keys AS
+            SELECT DISTINCT
+                t.rule_id,
+                t.primary_key_value,
+                t.violated_column
+            FROM {_quoted_violations_table} AS t
+            LEFT ANTI JOIN _dq_current_violations AS s
+              ON s.rule_id                       = t.rule_id
+             AND s.primary_key_value             = t.primary_key_value
+             AND COALESCE(s.violated_column, '') = COALESCE(t.violated_column, '')
+            WHERE t.issue_status = 'Active'
+        """)
+
+        # Pass the resolution timestamp via a single-row temp view rather than
+        # string interpolation, eliminating any SQL injection risk from the value.
+        spark_session.createDataFrame(
+            [(ts,)], StructType([StructField("resolution_ts", StringType(), False)])
+        ).createOrReplaceTempView("_dq_resolution_ts")
+
+        spark_session.sql(f"""
+            MERGE INTO {_quoted_violations_table} AS t
+            USING _dq_stale_active_keys AS s
+            ON  t.rule_id                          = s.rule_id
+            AND t.primary_key_value                = s.primary_key_value
+            AND COALESCE(t.violated_column, '')    = COALESCE(s.violated_column, '')
+            AND t.issue_status                     = 'Active'
+            WHEN MATCHED THEN UPDATE SET
+                t.issue_status          = 'Resolved',
+                t.resolution_timestamp  = (SELECT resolution_ts FROM _dq_resolution_ts)
+        """)
+
+        print(f"  Resolution tracking applied via MERGE on '{_sql_table_name}'.")
 
     except Exception as exc:
         print(f"  Warning: MERGE-based resolution tracking failed ({exc}).")
         print("  Falling back to plain append — run nb_dq_00_setup.py to enable MERGE.")
         current_violations_df.write.mode("append").saveAsTable(violations_table)
     finally:
-        for _view in ("_dq_current_violations", "_dq_run_ts"):
+        for _view in ("_dq_current_violations", "_dq_stale_active_keys", "_dq_resolution_ts"):
             try:
                 spark_session.catalog.dropTempView(_view)
             except Exception:
@@ -224,7 +281,7 @@ def _apply_ic_resolution_tracking(
     Falls back to plain append if MERGE is unavailable (e.g. unit-test
     environments without a Spark metastore).
     """
-    _IC_MERGE_KEY_COLUMNS = {"rule_id", "primary_key_value", "ic_status"}
+    _IC_MERGE_KEY_COLUMNS = {"rule_id", "primary_key_value", "violated_column", "ic_status"}
     missing = _IC_MERGE_KEY_COLUMNS - set(current_ic_violations_df.columns)
     if missing:
         raise ValueError(
@@ -233,25 +290,33 @@ def _apply_ic_resolution_tracking(
         )
 
     try:
+        # Deduplicate on the MERGE key before registering the temp view.
+        # Mirrors the same safeguard in _apply_resolution_tracking() to avoid
+        # DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE.
+        _ic_merge_key = ["rule_id", "primary_key_value", "violated_column"]
+        current_ic_violations_df = current_ic_violations_df.dropDuplicates(_ic_merge_key)
+
         current_ic_violations_df.createOrReplaceTempView("_ic_current_violations")
 
+        _ic_sql_table = _safe_table_name(ic_exceptions_table.split(".")[-1])
         spark_session.sql(f"""
-            MERGE INTO {ic_exceptions_table} AS t
+            MERGE INTO `{_ic_sql_table}` AS t
             USING _ic_current_violations AS s
-            ON  t.rule_id           = s.rule_id
-            AND t.primary_key_value  = s.primary_key_value
-            AND t.ic_status          = 'Open'
+            ON  t.rule_id                          = s.rule_id
+            AND t.primary_key_value                 = s.primary_key_value
+            AND COALESCE(t.violated_column, '')     = COALESCE(s.violated_column, '')
+            AND t.ic_status                         = 'Open'
             WHEN MATCHED THEN UPDATE SET
                 t.run_id           = s.run_id,
                 t.run_timestamp    = s.run_timestamp,
                 t.batch_date       = s.batch_date,
                 t.violation_detail = s.violation_detail,
                 t.actual_value     = s.actual_value
-            WHEN NOT MATCHED BY TARGET THEN INSERT *
+            WHEN NOT MATCHED THEN INSERT *
         """)
         # NOT MATCHED BY SOURCE is intentionally omitted — see docstring.
 
-        print(f"  IC resolution tracking applied via MERGE on '{ic_exceptions_table}'.")
+        print(f"  IC resolution tracking applied via MERGE on '{_ic_sql_table}'.")
 
     except Exception as exc:
         print(f"  Warning: IC MERGE failed ({exc}). Falling back to plain append.")
@@ -261,69 +326,3 @@ def _apply_ic_resolution_tracking(
             spark_session.catalog.dropTempView("_ic_current_violations")
         except Exception:
             pass  # best-effort cleanup; non-fatal
-
-
-def _notify_new_ic_exceptions(
-    new_exceptions_df: DataFrame,
-    notify_url_path: str,
-) -> None:
-    """
-    Send an email notification for each newly inserted IC exception by posting
-    to a Power Automate HTTP trigger URL.
-
-    Fails silently — notification failure must never block or fail a run.
-
-    The PA flow is a three-step flow:
-      1. Trigger: HTTP (POST) — body fields: to, subject, body
-      2. Action:  Office 365 Outlook Send Email
-      3. Done
-
-    The HTTP trigger URL is stored in notify_url_path (not in source code).
-    If the file does not exist or is empty, notifications are skipped with a
-    printed message.
-    """
-    import requests as _requests
-
-    try:
-        notify_url = open(notify_url_path).read().strip()
-    except Exception as exc:
-        print(f"  Notification skipped: could not read notify URL from {notify_url_path} ({exc})")
-        return
-
-    if not notify_url:
-        print("  Notification skipped: notify URL file is empty.")
-        return
-
-    try:
-        rows = new_exceptions_df.select(
-            "rule_id", "rule_name", "primary_key_value",
-            "severity", "owner_email", "remediation_due_date"
-        ).collect()
-    except Exception as exc:
-        print(f"  Notification skipped: could not collect exception rows ({exc})")
-        return
-
-    sent = 0
-    for row in rows:
-        owner_email = row["owner_email"]
-        if not owner_email:
-            continue
-        try:
-            _requests.post(notify_url, json={
-                "to":      owner_email,
-                "subject": f"New IC exception: {row['rule_name']}",
-                "body": (
-                    f"A new internal control exception has been detected.\n\n"
-                    f"Control:    {row['rule_name']}\n"
-                    f"Rule ID:    {row['rule_id']}\n"
-                    f"Record:     {row['primary_key_value']}\n"
-                    f"Severity:   {row['severity']}\n"
-                    f"Due by:     {row['remediation_due_date'] or 'No SLA set'}\n\n"
-                    f"Open the IC dashboard in Power BI to review and action."
-                ),
-            }, timeout=10)
-            sent += 1
-        except Exception as exc:
-            print(f"  Warning: notification to {owner_email} failed ({exc})")
-
-    print(f"  Notifications sent: {sent} of {len(rows)} new IC exceptions.")

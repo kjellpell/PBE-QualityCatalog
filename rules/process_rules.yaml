@@ -51,7 +51,7 @@ pk_column: Saksnummer
 # Each entry specifies a table to join, the join key, join strategy, and
 # (optionally) a list of columns to select from the joined table.
 joins:
-  - table: Saksbehandling.Saker
+  - table: Saksbehandling.saker
     on: Saksnummer
     how: left
     select:

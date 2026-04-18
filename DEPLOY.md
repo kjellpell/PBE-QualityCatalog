@@ -2,7 +2,9 @@
 
 This repository runs the YAML-driven Quality Catalog validation workflow in Microsoft Fabric.
 
-## Deploy configuration files
+## Deploy files to Lakehouse
+
+### Required for notebook-first operation
 
 Copy these files to Lakehouse Files:
 
@@ -10,14 +12,31 @@ Copy these files to Lakehouse Files:
 |---|---|
 | `config/QualityCatalogConfig.py` | `/lakehouse/default/Files/Configs/QualityCatalogConfig.py` |
 | `config/QualityCatalogRuntime.py` | `/lakehouse/default/Files/Configs/QualityCatalogRuntime.py` |
+| `rules/*.yaml` | `/lakehouse/default/Files/rules/*.yaml` |
 
-In production, both config files must exist at `/lakehouse/default/Files/Configs/` — the engine raises a clear error if either is missing.
+Notes:
+
+- Both config files must exist at `/lakehouse/default/Files/Configs/`.
+- Rule catalogs are required for `nb_dq_01_preflight.py` and `nb_dq_02_migrate_rules.py`.
+- Keep `RULES_DIR = "rules"` unless you intentionally move rule files elsewhere.
+
+### Optional, only if running the engine module directly
+
+If you execute `engine/validation_runner.py` as a module/script in Fabric, also copy:
+
+| Repo folder | Lakehouse target |
+|---|---|
+| `engine/` | `/lakehouse/default/Files/engine/` |
+
+If you run notebook-native entrypoints only, `engine/` does not need to be present in Lakehouse Files.
 
 ## Run order
 
 1. Run `nb_dq_00_setup.py` once per environment to create or upgrade Delta tables.
 2. Run `nb_dq_01_preflight.py` before promoting runtime changes.
-3. Run `engine/validation_runner.py` after source tables refresh.
+3. Run `nb_dq_03_run_validation.py` after source tables refresh.
+   This notebook runner executes `/lakehouse/default/Files/engine/validation_runner.py`
+   and prints a post-run summary.
 4. Validate `dq_run_results`, `dq_violations`, and `default.dq_execution_metrics`.
 
 ## Runtime controls

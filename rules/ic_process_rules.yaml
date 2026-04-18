@@ -21,7 +21,7 @@ description: Internal control rules for case process records
 pk_column: Saksnummer
 
 joins:
-  - table: Saksbehandling.Saker
+  - table: Saksbehandling.saker
     on: Saksnummer
     how: left
     select:

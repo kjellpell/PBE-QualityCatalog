@@ -27,8 +27,10 @@
 # Adding a new expectation:
 #   1. Create a class with a validate() method following the contract above.
 #   2. Add it to CUSTOM_EXPECTATION_REGISTRY at the bottom of this file.
-#   3. Reference it by name in the rule_catalog Delta table.
+#   3. Reference it by name in YAML rule files.
 # =============================================================================
+
+from functools import reduce
 
 from pyspark.sql import functions as F, Window
 from pyspark.sql import DataFrame
@@ -136,6 +138,72 @@ def _resolve_gate_groups(df: DataFrame, gate: dict, group_col: str):
 # =============================================================================
 
 # -----------------------------------------------------------------------------
+# expect_column_values_to_not_be_null
+# Generic not-null validator used by YAML rules with top-level 'column'.
+# -----------------------------------------------------------------------------
+class ExpectColumnValuesToNotBeNullExpectation:
+    """
+    Validates that every row has a non-null value in the target column.
+
+    YAML fields:
+      column                 - target column (top-level or parameters.column)
+      parameters.pk_column   - optional PK column for violations (default: id)
+    """
+
+    def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
+        params = rule.get("parameters", {})
+        column = rule.get("column") or params.get("column")
+        pk_col = params.get("pk_column", "id")
+
+        if not column:
+            return (
+                _error_result("Missing required field 'column' for not-null expectation."),
+                _empty_violations(spark),
+            )
+
+        if column not in df.columns:
+            return (
+                _error_result(f"Column '{column}' not found in DataFrame."),
+                _empty_violations(spark),
+            )
+
+        total = df.count()
+        if total == 0:
+            return _passed_result(0), _empty_violations(spark)
+
+        violations_df = df.filter(F.col(column).isNull())
+        failed = violations_df.count()
+        passed = total - failed
+
+        pk_expr = (
+            F.col(pk_col).cast("string")
+            if pk_col in df.columns
+            else F.lit(None).cast("string")
+        )
+
+        violations_out = violations_df.select(
+            pk_expr.alias("primary_key_value"),
+            F.lit(column).alias("violated_column"),
+            F.lit(None).cast("string").alias("actual_value"),
+            F.lit("NOT NULL").alias("expected_condition"),
+            F.concat(F.lit("Column '"), F.lit(column), F.lit("' is NULL")).alias("violation_detail"),
+        )
+
+        result = {
+            "total_rows": total,
+            "passed_rows": passed,
+            "failed_rows": failed,
+            "success_pct": _safe_pct(passed, total),
+            "status": "PASSED" if failed == 0 else "FAILED",
+            "details": (
+                f"{failed} row(s) have NULL in '{column}'."
+                if failed > 0
+                else f"All {total} rows have non-null '{column}'."
+            ),
+        }
+        return result, violations_out
+
+# -----------------------------------------------------------------------------
 # validate_column_comparison
 # Validates that column_A <operator> column_B is TRUE for every row.
 # Rows where either column is NULL are excluded from evaluation.
@@ -151,7 +219,7 @@ class ColumnComparisonExpectation:
       column_B  - name of the right-hand column
       operator  - comparison operator: >, <, >=, <=, ==, !=
       pk_column - primary key column used to identify violating rows
-                  (default: "Saksnummer")
+                  (default: "id")
     """
 
     _VIOLATION_FILTERS = {
@@ -165,10 +233,25 @@ class ColumnComparisonExpectation:
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params   = rule.get("parameters", {})
-        col_a    = params["column_A"]
-        col_b    = params["column_B"]
-        operator = params["operator"]
-        pk_col   = params.get("pk_column", "Saksnummer")
+        col_a    = params.get("column_A")
+        col_b    = params.get("column_B")
+        operator = params.get("operator")
+        pk_col   = params.get("pk_column", "id")
+
+        if not col_a or not col_b or not operator:
+            return (
+                _error_result(
+                    "Parameters 'column_A', 'column_B', and 'operator' are all required."
+                ),
+                _empty_violations(spark),
+            )
+
+        missing = [c for c in (col_a, col_b) if c not in df.columns]
+        if missing:
+            return (
+                _error_result(f"Column(s) not found in DataFrame: {missing}"),
+                _empty_violations(spark),
+            )
 
         if operator not in self._VIOLATION_FILTERS:
             return (
@@ -351,9 +434,12 @@ class ColumnSumExpectation:
                 _empty_violations(spark),
             )
 
-        total     = df.count()
-        actual    = df.agg(F.sum(F.col(column).cast("double"))).collect()[0][0]
-        actual    = float(actual) if actual is not None else 0.0
+        agg_row   = df.agg(
+            F.count(F.lit(1)).alias("_total"),
+            F.sum(F.col(column).cast("double")).alias("_sum"),
+        ).collect()[0]
+        total     = agg_row["_total"]
+        actual    = float(agg_row["_sum"]) if agg_row["_sum"] is not None else 0.0
         expected  = float(expected_value)
         deviation = abs(actual - expected)
         passed    = deviation <= tolerance
@@ -461,9 +547,13 @@ class UniqueColumnCombinationExpectation:
             .filter(F.col("_cnt") > 1)
         )
 
-        violations_df = df.join(dup_groups.drop("_cnt"), on=columns, how="inner")
-        failed = violations_df.count()
+        # Get failed count from the already-computed group aggregation rather
+        # than joining back and counting, saving one full-table scan.
+        failed_agg = dup_groups.agg(F.sum("_cnt")).collect()[0][0]
+        failed = int(failed_agg) if failed_agg else 0
         passed = total - failed
+
+        violations_df = df.join(dup_groups.drop("_cnt"), on=columns, how="inner")
 
         col_combo = ", ".join(columns)
         condition  = f"UNIQUE({col_combo})"
@@ -508,7 +598,7 @@ class ForeignKeyExpectation:
         column         - column in the reference table holding valid values
     """
 
-    def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
+    def validate(self, df: DataFrame, rule: dict, spark, ref_cache: dict = None) -> tuple:
         params    = rule.get("parameters", {})
         column    = params.get("column")
         pk_col    = params.get("pk_column") or column
@@ -531,15 +621,23 @@ class ForeignKeyExpectation:
                 _empty_violations(spark),
             )
 
-        try:
-            ref_df = spark.read.table(ref_table).select(
-                F.col(ref_col).cast("string").alias("_ref_key")
-            ).distinct()
-        except Exception as exc:
-            return (
-                _error_result(f"Could not load reference table '{ref_table}': {exc}"),
-                _empty_violations(spark),
-            )
+        # Use pre-loaded reference DataFrame from cache when available,
+        # avoiding redundant table reads when multiple rules share a ref table.
+        cache_key = (ref_table, ref_col)
+        if ref_cache is not None and cache_key in ref_cache:
+            ref_df = ref_cache[cache_key]
+        else:
+            try:
+                ref_df = spark.read.table(ref_table).select(
+                    F.col(ref_col).cast("string").alias("_ref_key")
+                ).distinct()
+            except Exception as exc:
+                return (
+                    _error_result(f"Could not load reference table '{ref_table}': {exc}"),
+                    _empty_violations(spark),
+                )
+            if ref_cache is not None:
+                ref_cache[cache_key] = ref_df
 
         evaluated = df.filter(F.col(column).isNotNull())
         total     = evaluated.count()
@@ -667,11 +765,7 @@ class ValidateAggregateRuleExpectation:
                 _empty_violations(spark),
             )
 
-        total = df.count()
-
-        if aggregate == "count":
-            actual = float(total)
-        else:
+        if aggregate != "count":
             if not column or column not in df.columns:
                 return (
                     _error_result(
@@ -681,10 +775,15 @@ class ValidateAggregateRuleExpectation:
                     ),
                     _empty_violations(spark),
                 )
-            agg_val = df.agg(
-                _AGGREGATE_FUNCTIONS[aggregate](F.col(column).cast("double"))
-            ).collect()[0][0]
-            actual = float(agg_val) if agg_val is not None else 0.0
+            agg_row = df.agg(
+                F.count(F.lit(1)).alias("_total"),
+                _AGGREGATE_FUNCTIONS[aggregate](F.col(column).cast("double")).alias("_agg"),
+            ).collect()[0]
+            total  = agg_row["_total"]
+            actual = float(agg_row["_agg"]) if agg_row["_agg"] is not None else 0.0
+        else:
+            total  = df.count()
+            actual = float(total)
 
         threshold_f = float(threshold)
         passed      = self._OPS[operator](actual, threshold_f)
@@ -1113,8 +1212,9 @@ class ValidatePairedPresenceExpectation:
         )
         type_to_col = {t: f"_has_{i}" for i, t in enumerate(all_types)}
 
-        all_violations = _empty_violations(spark)
-        total_failed = 0
+        # Build all pair violation DataFrames as lazy transformations first,
+        # then union them in one go and count once — avoids per-pair actions.
+        pair_violation_dfs = []
 
         for start_type, stop_types in normalised:
             has_start = type_to_col.get(start_type)
@@ -1157,10 +1257,13 @@ class ValidatePairedPresenceExpectation:
                     ),
                 ).alias("violation_detail"),
             )
-            cnt = pair_viols.count()
-            total_failed += cnt
-            if cnt > 0:
-                all_violations = all_violations.unionByName(pair_viols)
+            pair_violation_dfs.append(pair_viols)
+
+        if not pair_violation_dfs:
+            return _passed_result(total), _empty_violations(spark)
+
+        all_violations = reduce(lambda a, b: a.unionByName(b), pair_violation_dfs)
+        total_failed = all_violations.count()
 
         if total_failed == 0:
             return _passed_result(total), _empty_violations(spark)
@@ -1337,8 +1440,9 @@ class ValidateNoOrphanExpectation:
         )
         type_to_col = {t: f"_has_{i}" for i, t in enumerate(all_types)}
 
-        all_violations = _empty_violations(spark)
-        total_failed = 0
+        # Build all pair violation DataFrames as lazy transformations first,
+        # then union them in one go and count once — avoids per-pair actions.
+        pair_violation_dfs = []
 
         for start_type, stop_types in normalised:
             has_start = type_to_col.get(start_type)
@@ -1368,10 +1472,13 @@ class ValidateNoOrphanExpectation:
                     F.col(group_col).cast("string"), F.lit("'"),
                 ).alias("violation_detail"),
             )
-            cnt = pair_viols.count()
-            total_failed += cnt
-            if cnt > 0:
-                all_violations = all_violations.unionByName(pair_viols)
+            pair_violation_dfs.append(pair_viols)
+
+        if not pair_violation_dfs:
+            return _passed_result(total), _empty_violations(spark)
+
+        all_violations = reduce(lambda a, b: a.unionByName(b), pair_violation_dfs)
+        total_failed = all_violations.count()
 
         if total_failed == 0:
             return _passed_result(total), _empty_violations(spark)
@@ -1737,6 +1844,7 @@ CUSTOM_EXPECTATION_REGISTRY = {
     # Generic cross-table validators (work on any table)
     # -------------------------------------------------------------------------
     "validate_column_comparison":           ColumnComparisonExpectation,
+    "expect_column_values_to_not_be_null":  ExpectColumnValuesToNotBeNullExpectation,
     "sql_validation":                       SqlValidationExpectation,
     "sql":                                  SqlValidationExpectation,    # shorthand
 

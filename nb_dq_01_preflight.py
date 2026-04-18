@@ -9,11 +9,93 @@ import yaml
 from pyspark.sql import SparkSession
 
 
-REPO_ROOT = Path(__file__).resolve().parent
+LAKEHOUSE_CONFIG_DIR = Path("/lakehouse/default/Files/Configs")
+
+
+def _resolve_repo_root() -> Path:
+    """Resolve repository root. Canonical implementation in engine/runtime.py."""
+    if "__file__" in globals():
+        return Path(__file__).resolve().parent
+
+    cwd = Path.cwd().resolve()
+    for candidate in [cwd, *cwd.parents, Path("/lakehouse/default/Files")]:
+        if (candidate / "engine").exists():
+            return candidate
+    return cwd
+
+
+REPO_ROOT = _resolve_repo_root()
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from engine.runtime import load_config_module, require_config_keys, resolve_rules_dir, resolve_targets
+try:
+    from engine.runtime import load_config_module, require_config_keys, resolve_rules_dir, resolve_targets
+except ModuleNotFoundError:
+    print(
+        "  Note: engine package not importable as a module; "
+        "using inline file-based imports (Fabric notebook mode)."
+    )
+    import importlib.util
+
+    def load_config_module(module_name: str):
+        module_path = LAKEHOUSE_CONFIG_DIR / f"{module_name}.py"
+        if not module_path.exists():
+            raise FileNotFoundError(
+                f"Config file not found: {module_path}\n"
+                f"Ensure {module_name}.py is uploaded to the Lakehouse at "
+                f"/lakehouse/default/Files/Configs/"
+            )
+
+        spec = importlib.util.spec_from_file_location(module_name, str(module_path))
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load configuration module from: {module_path}")
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module, module_path
+
+    def require_config_keys(config_module, required_keys: list[str], module_name: str) -> None:
+        missing = sorted(key for key in required_keys if not hasattr(config_module, key))
+        if missing:
+            raise RuntimeError(f"Missing required {module_name} keys: {', '.join(missing)}")
+
+    def _qualify(table_name: str, default_schema: str) -> str:
+        return table_name if "." in table_name else f"{default_schema}.{table_name}"
+
+    def resolve_targets(config_module, runtime_module) -> dict[str, str]:
+        schema = config_module.DEFAULT_SCHEMA
+        results = _qualify(config_module.DQ_RESULTS_TABLE, schema)
+        violations = _qualify(config_module.DQ_VIOLATIONS_TABLE, schema)
+        metrics = _qualify(config_module.DQ_EXECUTION_METRICS_TABLE, schema)
+        ic_results = _qualify(getattr(config_module, "IC_RUN_RESULTS_TABLE", "ic_run_results"), schema)
+        ic_exceptions = _qualify(getattr(config_module, "IC_EXCEPTIONS_TABLE", "ic_exceptions"), schema)
+
+        if runtime_module.DRY_RUN:
+            return {
+                "results_table": f"{results}_tmp",
+                "violations_table": f"{violations}_tmp",
+                "execution_metrics_table": f"{metrics}_tmp",
+                "ic_results_table": f"{ic_results}_tmp",
+                "ic_exceptions_table": f"{ic_exceptions}_tmp",
+            }
+        return {
+            "results_table": results,
+            "violations_table": violations,
+            "execution_metrics_table": metrics,
+            "ic_results_table": ic_results,
+            "ic_exceptions_table": ic_exceptions,
+        }
+
+    def resolve_rules_dir(config_module, repo_root: Path, must_exist: bool = False) -> Path:
+        rules_dir = Path(config_module.RULES_DIR)
+        if not rules_dir.is_absolute():
+            rules_dir = repo_root / rules_dir
+        if must_exist and not rules_dir.exists():
+            raise FileNotFoundError(
+                f"RULES_DIR not found: {rules_dir}\n"
+                f"Ensure RULES_DIR in QualityCatalogConfig.py points to your rules folder."
+            )
+        return rules_dir
 
 
 # Column-name keys that can be referenced in a rule's top-level fields or
@@ -97,8 +179,9 @@ def main() -> None:
             "DRY_RUN",
             "FAIL_ON_EMPTY_RULES",
             "FAIL_ON_EMPTY_SOURCE",
-            "MAX_RETRIES",
             "RETRYABLE_ERROR_MARKERS",
+            "MAX_RULE_RETRIES",
+            "RULE_TIMEOUT_SECONDS",
         ],
         "QualityCatalogRuntime",
     )

@@ -333,43 +333,5 @@ USING DELTA
 print("ic_manual_attestations ready.")
 
 
-# CELL 9 — rule_catalog
-# Single catalog for both DQ and IC rules.
-# Populated via nb_dq_02_migrate_rules.py (from YAML) or directly.
-# The validation engine reads exclusively from this table — no YAML files at runtime.
-spark.sql("""
-CREATE TABLE IF NOT EXISTS rule_catalog (
-    rule_id              STRING,
-    rule_type            STRING,
-    rule_group           STRING,
-    source_table         STRING,
-    database             STRING,
-    pk_column            STRING,
-    name                 STRING,
-    description          STRING,
-    expectation          STRING,
-    column_name          STRING,
-    parameters           STRING,
-    sql_expression       STRING,
-    joins_json           STRING,
-    severity             STRING,
-    category             STRING,
-    owner                STRING,
-    owner_email          STRING,
-    control_ref          STRING,
-    control_type         STRING,
-    risk_domain          STRING,
-    remediation_due_days INTEGER,
-    status               STRING,
-    created_by           STRING,
-    created_at           TIMESTAMP,
-    updated_at           TIMESTAMP
-)
-USING DELTA
-""")
-
-print("rule_catalog ready.")
-
-
 print("\n=== IC SETUP COMPLETE ===")
-print("IC Delta tables: ic_run_results, ic_exceptions, ic_control_register, ic_manual_attestations, rule_catalog")
+print("IC Delta tables: ic_run_results, ic_exceptions, ic_control_register, ic_manual_attestations")

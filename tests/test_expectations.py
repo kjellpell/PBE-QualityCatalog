@@ -2326,113 +2326,20 @@ class TestRuntimeIcTargets:
 
 
 # =============================================================================
-# Tests for V2 additions — rule_catalog, attestation validation, notification
+# Tests for IC, attestation validation, schema checks
 # =============================================================================
 
 
-class TestBuildCatalogsFromDf:
-    """_build_catalogs_from_df reconstructs catalog dicts from rule_catalog rows."""
+class TestLoadAllRulesUsesYaml:
+    """Engine loads rules from YAML files."""
 
-    def _make_df(self, rows):
-        """Return a minimal Pandas DataFrame matching rule_catalog columns."""
-        import pandas as pd
-        return pd.DataFrame(rows, columns=[
-            "rule_group", "source_table", "database", "pk_column", "joins_json",
-            "rule_id", "name", "expectation", "severity", "category",
-            "owner", "owner_email", "column_name", "parameters", "sql_expression",
-            "control_ref", "control_type", "risk_domain", "remediation_due_days",
-        ])
-
-    def _base_row(self, **overrides):
-        defaults = {
-            "rule_group": "DQ-Test", "source_table": "TestTable",
-            "database": "default", "pk_column": "id", "joins_json": None,
-            "rule_id": "T-001", "name": "Test rule",
-            "expectation": "expect_column_values_to_not_be_null",
-            "severity": "medium", "category": None,
-            "owner": "Team", "owner_email": None,
-            "column_name": None, "parameters": None, "sql_expression": None,
-            "control_ref": None, "control_type": None,
-            "risk_domain": None, "remediation_due_days": None,
-        }
-        defaults.update(overrides)
-        return defaults
-
-    def test_basic_catalog_structure(self):
-        # Import here — no Spark needed for this function
-        import sys
-        sys.path.insert(0, "/home/user/PBE-QualityCatalog")
-        # We test the logic directly rather than importing the module-level
-        # function which depends on a running Spark session.
-        # Build a minimal DataFrame and verify groupby key fields are present.
-        import pandas as pd
-        row = self._base_row()
-        df = pd.DataFrame([row])
-        # Verify the groupby columns exist
-        for col in ["rule_group", "source_table", "database", "pk_column", "joins_json"]:
-            assert col in df.columns
-
-    def test_parameters_json_deserialised(self):
-        import json, pandas as pd
-        params = {"column_A": "ApprovedBy", "column_B": "CreatedBy", "operator": "!="}
-        row = self._base_row(parameters=json.dumps(params))
-        df = pd.DataFrame([row])
-        loaded = json.loads(df.iloc[0]["parameters"])
-        assert loaded == params
-
-    def test_joins_json_deserialised(self):
-        import json, pandas as pd
-        joins = [{"table": "Saker", "on": "Saksnummer", "how": "left"}]
-        row = self._base_row(joins_json=json.dumps(joins))
-        df = pd.DataFrame([row])
-        loaded = json.loads(df.iloc[0]["joins_json"])
-        assert loaded == joins
-        assert loaded[0]["table"] == "Saker"
-
-    def test_null_joins_json_produces_empty_list(self):
-        import pandas as pd
-        row = self._base_row(joins_json=None)
-        df = pd.DataFrame([row])
-        # None / NaN joins_json should yield []
-        joins_val = df.iloc[0]["joins_json"]
-        import json
-        joins = []
-        if joins_val and str(joins_val) not in ("None", "nan", ""):
-            joins = json.loads(joins_val)
-        assert joins == []
-
-    def test_owner_email_included_in_rule(self):
-        import pandas as pd
-        row = self._base_row(owner_email="team@example.com")
-        df = pd.DataFrame([row])
-        assert df.iloc[0]["owner_email"] == "team@example.com"
-
-    def test_ic_fields_present(self):
-        import pandas as pd
-        row = self._base_row(
-            control_ref="COSO-CC5.2", control_type="Detective",
-            risk_domain="Financial", remediation_due_days=5,
-        )
-        df = pd.DataFrame([row])
-        assert df.iloc[0]["control_ref"] == "COSO-CC5.2"
-        assert df.iloc[0]["remediation_due_days"] == 5
-
-
-class TestLoadAllRulesRaisesWhenEmpty:
-    """Engine raises clearly when rule_catalog is empty (no YAML fallback)."""
-
-    def test_empty_catalog_raises(self, spark):
-        """If toPandas() returns 0 rows, RuntimeError is raised."""
-        # We can't easily mock spark.table() in a unit test, so we verify
-        # the error message in the function source instead.
+    def test_load_all_rules_uses_yaml(self, spark):
+        """_load_all_rules should reference YAML/glob loading."""
         import inspect
         from engine import validation_runner
         source = inspect.getsource(validation_runner._load_all_rules)
         assert "RuntimeError" in source
-        assert "rule_catalog" in source
-        # Confirm no YAML fallback path exists
-        assert ".yaml" not in source
-        assert "glob" not in source
+        assert ".yaml" in source or "glob" in source
 
 
 class TestNbIc02Validation:
@@ -2484,28 +2391,6 @@ class TestNbIc02Validation:
         assert safe_int("") is None
         assert safe_int("42") == 42
         assert safe_int(None) is None
-
-
-class TestNotifyNewIcExceptions:
-    """_notify_new_ic_exceptions fails silently when URL file is missing or empty."""
-
-    def test_missing_url_file_does_not_raise(self, spark, tmp_path):
-        from engine.resolution import _notify_new_ic_exceptions
-        from engine.resolution import IC_EXCEPTION_SCHEMA
-
-        missing_path = str(tmp_path / "nonexistent.txt")
-        df = spark.createDataFrame([], IC_EXCEPTION_SCHEMA)
-        # Must not raise
-        _notify_new_ic_exceptions(df, notify_url_path=missing_path)
-
-    def test_empty_url_file_does_not_raise(self, spark, tmp_path):
-        from engine.resolution import _notify_new_ic_exceptions
-        from engine.resolution import IC_EXCEPTION_SCHEMA
-
-        url_file = tmp_path / "pa_notify_url.txt"
-        url_file.write_text("")
-        df = spark.createDataFrame([], IC_EXCEPTION_SCHEMA)
-        _notify_new_ic_exceptions(df, notify_url_path=str(url_file))
 
 
 class TestOwnerEmailInSchema:

@@ -3,7 +3,7 @@
 # Data quality validation engine for the PBE Quality Catalog.
 #
 # Flow:
-#   1. Load active rules from the rule_catalog Delta table.
+#   1. Load active rules from YAML files in RULES_DIR.
 #   2. For each rule group, load the source table from the Spark metastore
 #      and apply any configured pre-joins.
 #   3. For each rule:
@@ -17,14 +17,15 @@
 #
 # Schedule: nightly (after source tables are refreshed).
 # Prerequisites: nb_dq_00_setup.py must have been run at least once.
-#                nb_dq_02_migrate_rules.py must have populated rule_catalog.
 # =============================================================================
 
 
 # CELL 2 — Imports and run metadata
 # -----------------------------------------------------------------------------
+import concurrent.futures
 import time
 import uuid
+import math
 from datetime import datetime, date, timezone
 from pathlib import Path
 
@@ -44,26 +45,84 @@ spark.sql("SET spark.sql.ansi.enabled = false")
 # -----------------------------------------------------------------------------
 import sys
 from functools import reduce
+import importlib.util
 
-_repo_root = str(Path(__file__).parent.parent)
+def _resolve_repo_root() -> Path:
+    """Resolve repository root. Canonical implementation in engine/runtime.py."""
+    if "__file__" in globals():
+        return Path(__file__).resolve().parent.parent
+
+    cwd = Path.cwd().resolve()
+    for candidate in [cwd, *cwd.parents, Path("/lakehouse/default/Files")]:
+        if (candidate / "engine").exists():
+            return candidate
+    return cwd
+
+
+_repo_root = str(_resolve_repo_root())
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
-from engine.expectations import CUSTOM_EXPECTATION_REGISTRY   # noqa: E402
-from engine.resolution import (                                # noqa: E402
-    VIOLATION_SCHEMA,
-    IC_EXCEPTION_SCHEMA,
-    _apply_resolution_tracking,
-    _apply_ic_resolution_tracking,
-    # _notify_new_ic_exceptions,  # DISABLED — PA flow not yet configured
-)
-from engine.runtime import (                                   # noqa: E402
-    classify_retryable_error,
-    load_config_module,
-    require_config_keys,
-    resolve_targets,
-    write_execution_metric,
-)
+def _load_module_from_path(module_name: str, module_path: Path):
+    spec = importlib.util.spec_from_file_location(module_name, str(module_path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load module {module_name} from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+try:
+    from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
+    from engine.resolution import (
+        VIOLATION_SCHEMA,
+        IC_EXCEPTION_SCHEMA,
+        _apply_resolution_tracking,
+        _apply_ic_resolution_tracking,
+    )
+    from engine.runtime import (
+        classify_retryable_error,
+        load_config_module,
+        require_config_keys,
+        resolve_targets,
+        write_execution_metric,
+    )
+except ModuleNotFoundError:
+    print(
+        "  Note: engine package not importable as a module; "
+        "using inline file-based imports (Fabric notebook mode)."
+    )
+    engine_dir = Path(_repo_root) / "engine"
+    expectations_py = engine_dir / "expectations.py"
+    resolution_py = engine_dir / "resolution.py"
+    runtime_py = engine_dir / "runtime.py"
+    missing = [
+        str(p)
+        for p in [expectations_py, resolution_py, runtime_py]
+        if not p.exists()
+    ]
+    if missing:
+        raise ModuleNotFoundError(
+            "Could not import engine modules in notebook mode. "
+            "Ensure engine files exist in Lakehouse Files. Missing: "
+            f"{missing}"
+        )
+
+    expectations_module = _load_module_from_path("qc_expectations", expectations_py)
+    resolution_module = _load_module_from_path("qc_resolution", resolution_py)
+    runtime_module = _load_module_from_path("qc_runtime", runtime_py)
+
+    CUSTOM_EXPECTATION_REGISTRY = expectations_module.CUSTOM_EXPECTATION_REGISTRY
+    VIOLATION_SCHEMA = resolution_module.VIOLATION_SCHEMA
+    IC_EXCEPTION_SCHEMA = resolution_module.IC_EXCEPTION_SCHEMA
+    _apply_resolution_tracking = resolution_module._apply_resolution_tracking
+    _apply_ic_resolution_tracking = resolution_module._apply_ic_resolution_tracking
+
+    classify_retryable_error = runtime_module.classify_retryable_error
+    load_config_module = runtime_module.load_config_module
+    require_config_keys = runtime_module.require_config_keys
+    resolve_targets = runtime_module.resolve_targets
+    write_execution_metric = runtime_module.write_execution_metric
 
 print("Custom expectation registry loaded:", list(CUSTOM_EXPECTATION_REGISTRY))
 
@@ -86,8 +145,9 @@ require_config_keys(
         "DRY_RUN",
         "FAIL_ON_EMPTY_RULES",
         "FAIL_ON_EMPTY_SOURCE",
-        "MAX_RETRIES",
         "RETRYABLE_ERROR_MARKERS",
+        "MAX_RULE_RETRIES",
+        "RULE_TIMEOUT_SECONDS",
     ],
     "QualityCatalogRuntime",
 )
@@ -112,76 +172,72 @@ print(f"Metrics   : {TARGETS['execution_metrics_table']}")
 # CELL 4 — Helper functions
 # -----------------------------------------------------------------------------
 def _load_all_rules() -> list[dict]:
-    """Load active rules from the rule_catalog Delta table."""
-    catalog_df = (
-        spark.table("rule_catalog")
-        .filter(F.col("status") == "Active")
-        .toPandas()
-    )
-    if len(catalog_df) == 0:
+    """
+    Load rule catalogs directly from YAML files in RULES_DIR.
+
+    Each YAML file must have a top-level structure:
+        rule_group: <str>
+        table:      <str>
+        database:   <str>          # optional
+        pk_column:  <str>          # optional, default "id"
+        joins:      [...]          # optional
+        rules:      [...]
+
+    Files are loaded alphabetically.
+    """
+    import yaml as _yaml
+
+    rules_dir = _resolve_rules_dir()
+    yaml_files = sorted(rules_dir.glob("*.yaml")) + sorted(rules_dir.glob("*.yml"))
+    if not yaml_files:
         raise RuntimeError(
-            "rule_catalog is empty or has no Active rules. "
-            "Run nb_dq_02_migrate_rules.py to populate it."
+            f"No YAML rule files found in {rules_dir}. "
+            f"Ensure *.yaml files are present at that path."
         )
-    print(f"  Loaded {len(catalog_df)} active rules from rule_catalog.")
-    return _build_catalogs_from_df(catalog_df)
-
-
-def _build_catalogs_from_df(df) -> list[dict]:
-    """
-    Convert a rule_catalog Pandas DataFrame into the list-of-catalog-dicts
-    format the validation engine expects. Groups rows by
-    (rule_group, source_table, database, pk_column, joins_json).
-    """
-    import json as _json
+    print(f"  Rule YAML files found: {len(yaml_files)}")
 
     catalogs = []
-    group_cols = ["rule_group", "source_table", "database", "pk_column", "joins_json"]
-    for key, group_df in df.groupby(group_cols, dropna=False):
-        rule_group, source_table, database, pk_column, joins_json = key
-        rules = []
-        for _, row in group_df.iterrows():
-            rule = {
-                "rule_id":     row["rule_id"],
-                "name":        row["name"] or "",
-                "expectation": row["expectation"] or "",
-                "severity":    row["severity"] or "medium",
-                "category":    row.get("category"),
-                "owner":       row.get("owner"),
-                "owner_email": row.get("owner_email"),
-            }
-            if row.get("column_name"):
-                rule["column"] = row["column_name"]
-            if row.get("parameters"):
-                try:
-                    rule["parameters"] = _json.loads(row["parameters"])
-                except Exception as exc:
-                    print(f"  Warning: invalid JSON in parameters for rule {row.get('rule_id', 'unknown')}: {exc}")
-            if row.get("sql_expression"):
-                rule["sql"] = row["sql_expression"]
-            for ic_field in ("control_ref", "control_type", "risk_domain",
-                             "remediation_due_days"):
-                if row.get(ic_field) is not None:
-                    rule[ic_field] = row[ic_field]
-            rules.append(rule)
+    total_rules = 0
+    for yaml_path in yaml_files:
+        try:
+            with open(yaml_path, "r", encoding="utf-8") as fh:
+                doc = _yaml.safe_load(fh)
+        except Exception as exc:
+            print(f"  Warning: could not parse {yaml_path.name}: {exc} — skipping.")
+            continue
 
-        joins = []
-        if joins_json and str(joins_json) not in ("None", "nan", ""):
-            try:
-                joins = _json.loads(joins_json)
-            except Exception as exc:
-                print(f"  Warning: invalid JSON in joins_json for rule group {rule_group or 'unknown'}: {exc}")
+        if not isinstance(doc, dict):
+            print(f"  Warning: {yaml_path.name} did not parse to a dict — skipping.")
+            continue
 
-        catalogs.append({
-            "rule_group": rule_group or "",
-            "table":      source_table or "",
-            "database":   database or "",
-            "pk_column":  pk_column or "id",
-            "joins":      joins,
+        rules = doc.get("rules") or []
+        if not rules:
+            print(f"  Warning: {yaml_path.name} has no rules — skipping.")
+            continue
+
+        catalog = {
+            "rule_group": doc.get("rule_group") or yaml_path.stem,
+            "table":      doc.get("table", ""),
+            "database":   doc.get("database", ""),
+            "pk_column":  doc.get("pk_column", "id"),
+            "joins":      doc.get("joins") or [],
             "rules":      rules,
-        })
-        print(f"  Rule group: {rule_group} ({len(rules)} rules)")
+        }
+        catalogs.append(catalog)
+        total_rules += len(rules)
+        print(f"  Rule group: {catalog['rule_group']} ({len(rules)} rules)  [{yaml_path.name}]")
+
+    if not catalogs:
+        raise RuntimeError(f"No valid rule catalogs loaded from {rules_dir}.")
+
+    print(f"  Total: {total_rules} rules across {len(catalogs)} catalog(s).")
     return catalogs
+
+
+def _resolve_rules_dir() -> Path:
+    """Resolve RULES_DIR from config, relative to repo root if not absolute."""
+    from engine.runtime import resolve_rules_dir
+    return resolve_rules_dir(CONFIG, Path(_repo_root), must_exist=True)
 
 
 # CELL 5 — Schema for result accumulation
@@ -228,22 +284,50 @@ def _empty_violations():
     return spark.createDataFrame([], VIOLATION_SCHEMA)
 
 
+def _align_df_to_table_schema(df, table_name: str):
+    """
+    Align a DataFrame to an existing Delta table schema.
+
+    - Drops columns that are not present in the target table.
+    - Adds missing target columns as NULL cast to the target data type.
+    - Reorders columns to the target table order.
+    """
+    target_schema = spark.table(table_name).schema
+    target_fields = {field.name: field for field in target_schema.fields}
+    target_names = [field.name for field in target_schema.fields]
+    source_names = set(df.columns)
+
+    extra_cols = sorted(col for col in df.columns if col not in target_fields)
+    if extra_cols:
+        print(f"  Note: dropping columns not in {table_name}: {extra_cols}")
+
+    aligned = df
+    for field in target_schema.fields:
+        if field.name not in source_names:
+            aligned = aligned.withColumn(field.name, F.lit(None).cast(field.dataType))
+
+    return aligned.select(*target_names)
+
+
 # CELL 6 — Main validation engine
 # -----------------------------------------------------------------------------
 def run_validation(
     rule_catalog: dict,
     source_df,
     pk_col: str,
+    ref_cache: dict = None,
 ) -> tuple:
     """
     Validate source_df against all rules in rule_catalog.
 
     Parameters
     ----------
-    rule_catalog : dict loaded from the rule_catalog Delta table (one rule group)
+    rule_catalog : dict loaded from YAML rule files (one rule group)
     source_df    : full Spark DataFrame to validate
     pk_col       : primary key column of source_df (stored as primary_key_value
                    in each violation row)
+    ref_cache    : optional dict for caching reference table DataFrames across
+                   rules, keyed by (table, column); avoids redundant reads
 
     Returns
     -------
@@ -282,32 +366,55 @@ def run_validation(
         print(f"  → [{rule_id}] {rule_name} ({exp_name}) ... ", end="")
         _rule_start = time.perf_counter()
 
-        try:
-            if exp_name in CUSTOM_EXPECTATION_REGISTRY:
-                validator   = CUSTOM_EXPECTATION_REGISTRY[exp_name]()
-                result, viols_spark = validator.validate(source_df, rule, spark)
-
-            else:
-                result = {
-                    "total_rows":  0,
-                    "passed_rows": 0,
-                    "failed_rows": 0,
-                    "success_pct": 0.0,
-                    "status":      "ERROR",
-                    "details":     f"[{table_name}/{rule_id}] Unknown expectation: '{exp_name}'",
-                }
-                viols_spark = None
-
-        except Exception as exc:
+        if exp_name not in CUSTOM_EXPECTATION_REGISTRY:
             result = {
                 "total_rows":  0,
                 "passed_rows": 0,
                 "failed_rows": 0,
                 "success_pct": 0.0,
                 "status":      "ERROR",
-                "details":     f"[{table_name}/{rule_id}/{exp_name}] Unexpected error: {exc}",
+                "details":     f"[{table_name}/{rule_id}] Unknown expectation: '{exp_name}'",
             }
             viols_spark = None
+        else:
+            validator    = CUSTOM_EXPECTATION_REGISTRY[exp_name]()
+            _timeout_s   = RUNTIME.RULE_TIMEOUT_SECONDS
+            _max_retries = RUNTIME.MAX_RULE_RETRIES
+            for _attempt in range(_max_retries + 1):
+                try:
+                    result, viols_spark = _run_validator(
+                        validator, source_df, rule, spark, exp_name, ref_cache, _timeout_s
+                    )
+                    break
+                except concurrent.futures.TimeoutError:
+                    result = {
+                        "total_rows":  0,
+                        "passed_rows": 0,
+                        "failed_rows": 0,
+                        "success_pct": 0.0,
+                        "status":      "ERROR",
+                        "details":     f"[{table_name}/{rule_id}] Timed out after {_timeout_s}s.",
+                    }
+                    viols_spark = None
+                    break  # do not retry on timeout
+                except Exception as exc:
+                    if _attempt < _max_retries and classify_retryable_error(str(exc), RUNTIME):
+                        print(
+                            f"\n    Retrying [{rule_id}] "
+                            f"(attempt {_attempt + 1}/{_max_retries}): {exc}"
+                        )
+                        time.sleep(2 ** (_attempt + 1))
+                        continue
+                    result = {
+                        "total_rows":  0,
+                        "passed_rows": 0,
+                        "failed_rows": 0,
+                        "success_pct": 0.0,
+                        "status":      "ERROR",
+                        "details":     f"[{table_name}/{rule_id}/{exp_name}] Error: {exc}",
+                    }
+                    viols_spark = None
+                    break
 
         _rule_elapsed = time.perf_counter() - _rule_start
         print(f"{result['status']} ({_rule_elapsed:.2f}s)")
@@ -342,7 +449,7 @@ def run_validation(
             rule.get("control_ref"),
             rule.get("control_type"),
             rule.get("risk_domain"),
-            rule.get("remediation_due_days"),
+            _as_int_or_none(rule.get("remediation_due_days")),
         ))
 
         if viols_spark is not None:
@@ -380,11 +487,63 @@ def _empty_ic_exceptions():
     return spark.createDataFrame([], IC_EXCEPTION_SCHEMA)
 
 
+def _as_int_or_none(value):
+    if value in (None, ""):
+        return None
+    try:
+        if math.isnan(value):
+            return None
+    except TypeError:
+        pass
+    if isinstance(value, str) and value.strip().lower() in {"nan", "none", "null"}:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _run_validator(
+    validator,
+    source_df,
+    rule: dict,
+    spark_session,
+    exp_name: str,
+    ref_cache,
+    timeout_s: float,
+) -> tuple:
+    """Execute validator.validate() in a bounded-time background thread.
+
+    On timeout, raises ``concurrent.futures.TimeoutError`` and releases the
+    executor without waiting.  The underlying PySpark/JVM job continues to
+    completion in the background — it cannot be cancelled at the Python level,
+    but the main run proceeds without blocking.
+
+    When a timeout does *not* occur the thread is already finished by the time
+    we call ``shutdown(wait=True)``, so there is no extra blocking cost.
+    """
+    if ref_cache is not None and exp_name == "validate_foreign_key":
+        call = lambda: validator.validate(source_df, rule, spark_session, ref_cache=ref_cache)
+    else:
+        call = lambda: validator.validate(source_df, rule, spark_session)
+
+    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    _future = _executor.submit(call)
+    _timed_out = False
+    try:
+        return _future.result(timeout=timeout_s)
+    except concurrent.futures.TimeoutError:
+        _timed_out = True
+        raise
+    finally:
+        _executor.shutdown(wait=not _timed_out)
+
+
 def main() -> tuple[int, int]:
-    print("\nLoading rule catalogs from rule_catalog Delta table…")
+    print("\nLoading rule catalogs from YAML files…")
     all_catalogs = _load_all_rules()
     if not all_catalogs and RUNTIME.FAIL_ON_EMPTY_RULES:
-        raise RuntimeError("No rule catalogs loaded from rule_catalog.")
+        raise RuntimeError("No rule catalogs loaded from YAML files.")
 
     # Pre-compute IC rule metadata so we can enrich violations after the main loop.
     # A rule is IC if it carries at least one of the IC_IDENTIFIER_FIELDS.
@@ -397,7 +556,7 @@ def main() -> tuple[int, int]:
                     "control_ref":          _rule.get("control_ref"),
                     "control_type":         _rule.get("control_type"),
                     "risk_domain":          _rule.get("risk_domain"),
-                    "remediation_due_days": _rule.get("remediation_due_days"),
+                    "remediation_due_days": _as_int_or_none(_rule.get("remediation_due_days")),
                     "owner_email":          _rule.get("owner_email"),
                 }
     ic_rule_ids = set(ic_rule_meta.keys())
@@ -406,6 +565,11 @@ def main() -> tuple[int, int]:
 
     result_dfs    = []
     violation_dfs = []
+
+    # Shared cache for reference tables used by ForeignKeyExpectation.
+    # Keyed by (table_name, column_name) so repeated FK rules against the
+    # same reference table read it only once across all catalogs.
+    ref_cache: dict = {}
 
     for catalog in all_catalogs:
         rule_group = catalog["rule_group"]
@@ -424,22 +588,61 @@ def main() -> tuple[int, int]:
         print(f"  Source rows: {source_count:,}")
 
         for join_cfg in joins_cfg:
-            join_table = join_cfg["table"]
-            join_on = join_cfg["on"]
+            if not isinstance(join_cfg, dict):
+                print(f"  Warning: skipping invalid join config (not a dict): {join_cfg}")
+                continue
+
+            join_table = join_cfg.get("table")
+            if not join_table:
+                print(f"  Warning: skipping join config without table: {join_cfg}")
+                continue
+
             join_how = join_cfg.get("how", "left")
             join_select = join_cfg.get("select")
+            join_on = (
+                join_cfg.get("on")
+                or join_cfg.get("true")
+                or join_cfg.get("True")
+                or join_cfg.get(True)
+            )
+            left_on = join_cfg.get("left_on")
+            right_on = join_cfg.get("right_on")
 
             join_df = spark.read.table(join_table)
             if join_select:
-                join_df = join_df.select(*join_select)
-            source_df = source_df.join(join_df, on=join_on, how=join_how)
-            print(f"  Joined with {join_table} on {join_on} ({join_how})")
+                select_cols = list(join_select)
+                # Ensure join key is present when using left_on/right_on format.
+                if right_on and right_on not in select_cols:
+                    select_cols.append(right_on)
+                join_df = join_df.select(*select_cols)
 
-        results_df, violations_df = run_validation(
-            rule_catalog=catalog,
-            source_df=source_df,
-            pk_col=pk_col,
-        )
+            if join_on not in (None, ""):
+                source_df = source_df.join(join_df, on=join_on, how=join_how)
+                print(f"  Joined with {join_table} on {join_on} ({join_how})")
+            elif left_on and right_on:
+                source_df = source_df.join(join_df, source_df[left_on] == join_df[right_on], how=join_how)
+                print(f"  Joined with {join_table} on {left_on}={right_on} ({join_how})")
+            else:
+                print(
+                    "  Warning: skipping join config without key(s). "
+                    f"Expected 'on' or both 'left_on'/'right_on': {join_cfg}"
+                )
+
+        # Cache source DataFrame so that each rule in this catalog reads it
+        # from memory rather than re-scanning the table (and re-executing any
+        # joins) on every rule.
+        source_df = source_df.cache()
+        source_df.count()  # materialise the cache before rules run
+
+        try:
+            results_df, violations_df = run_validation(
+                rule_catalog=catalog,
+                source_df=source_df,
+                pk_col=pk_col,
+                ref_cache=ref_cache,
+            )
+        finally:
+            source_df.unpersist()
 
         result_dfs.append(results_df)
         violation_dfs.append(violations_df)
@@ -471,7 +674,8 @@ def main() -> tuple[int, int]:
 
     print("\nWriting results to Delta tables…")
 
-    all_results_combined.write.mode("append").saveAsTable(TARGETS["results_table"])
+    results_to_write = _align_df_to_table_schema(all_results_combined, TARGETS["results_table"])
+    results_to_write.write.mode("append").saveAsTable(TARGETS["results_table"])
     print(f"  {TARGETS['results_table']} : {results_count} rows appended.")
 
     _apply_resolution_tracking(
@@ -496,8 +700,14 @@ def main() -> tuple[int, int]:
             StructField("owner_email",           StringType(),  True),
         ])
         _ic_meta_rows = [
-            (rid, m["control_ref"], m["control_type"], m["risk_domain"],
-             m["remediation_due_days"], m["owner_email"])
+            (
+                rid,
+                m["control_ref"],
+                m["control_type"],
+                m["risk_domain"],
+                _as_int_or_none(m["remediation_due_days"]),
+                m["owner_email"],
+            )
             for rid, m in ic_rule_meta.items()
         ]
         ic_meta_df = spark.createDataFrame(_ic_meta_rows, schema=_ic_meta_schema)
@@ -546,23 +756,15 @@ def main() -> tuple[int, int]:
                 run_timestamp=RUN_TIMESTAMP,
             )
             print(f"  {TARGETS['ic_exceptions_table']} : {ic_violations_count} IC violations processed.")
-
-            # DISABLED — uncomment once the Power Automate flow is configured
-            # and the URL is stored in IC_NOTIFY_URL_PATH:
-            # _notify_new_ic_exceptions(
-            #     ic_violations,
-            #     notify_url_path=getattr(CONFIG, "IC_NOTIFY_URL_PATH",
-            #                             "/lakehouse/default/Files/Configs/pa_notify_url.txt"),
-            # )
         else:
             print(f"  {TARGETS['ic_exceptions_table']} : 0 IC violations this run.")
 
         # Write IC run summaries (subset of dq_run_results rows for IC rules).
+        # No separate cache — filter from already-cached all_results_combined.
         ic_results = all_results_combined.filter(F.col("rule_id").isin(ic_rule_ids))
-        ic_results.cache()
         ic_results_count = ic_results.count()
-        ic_results.write.mode("append").saveAsTable(TARGETS["ic_results_table"])
-        ic_results.unpersist()
+        ic_results_to_write = _align_df_to_table_schema(ic_results, TARGETS["ic_results_table"])
+        ic_results_to_write.write.mode("append").saveAsTable(TARGETS["ic_results_table"])
         print(f"  {TARGETS['ic_results_table']} : {ic_results_count} IC summary rows appended.")
 
     print("\n=== DATA QUALITY RUN SUMMARY ===")
@@ -595,43 +797,44 @@ def main() -> tuple[int, int]:
     return results_count, violations_count
 
 
-try:
-    results_count, violations_count = main()
-    FINISHED_AT = datetime.now(timezone.utc)
-    write_execution_metric(
-        spark,
-        TARGETS["execution_metrics_table"],
-        {
-            "script_name": "validation_runner",
-            "status": "Succeeded",
-            "dry_run": RUNTIME.DRY_RUN,
-            "output_target": TARGETS["results_table"],
-            "artifact_target": TARGETS["violations_table"],
-            "row_count": int(results_count),
-            "started_at_utc": STARTED_AT,
-            "finished_at_utc": FINISHED_AT,
-            "duration_seconds": float((FINISHED_AT - STARTED_AT).total_seconds()),
-            "is_retryable": False,
-            "error_message": None,
-        },
-    )
-except Exception as exc:
-    FINISHED_AT = datetime.now(timezone.utc)
-    write_execution_metric(
-        spark,
-        TARGETS["execution_metrics_table"],
-        {
-            "script_name": "validation_runner",
-            "status": "Failed",
-            "dry_run": RUNTIME.DRY_RUN,
-            "output_target": TARGETS["results_table"],
-            "artifact_target": TARGETS["violations_table"],
-            "row_count": 0,
-            "started_at_utc": STARTED_AT,
-            "finished_at_utc": FINISHED_AT,
-            "duration_seconds": float((FINISHED_AT - STARTED_AT).total_seconds()),
-            "is_retryable": classify_retryable_error(str(exc), RUNTIME),
-            "error_message": str(exc)[:4000],
-        },
-    )
-    raise
+if __name__ == "__main__":
+    try:
+        results_count, violations_count = main()
+        FINISHED_AT = datetime.now(timezone.utc)
+        write_execution_metric(
+            spark,
+            TARGETS["execution_metrics_table"],
+            {
+                "script_name": "validation_runner",
+                "status": "Succeeded",
+                "dry_run": RUNTIME.DRY_RUN,
+                "output_target": TARGETS["results_table"],
+                "artifact_target": TARGETS["violations_table"],
+                "row_count": int(results_count),
+                "started_at_utc": STARTED_AT,
+                "finished_at_utc": FINISHED_AT,
+                "duration_seconds": float((FINISHED_AT - STARTED_AT).total_seconds()),
+                "is_retryable": False,
+                "error_message": None,
+            },
+        )
+    except Exception as exc:
+        FINISHED_AT = datetime.now(timezone.utc)
+        write_execution_metric(
+            spark,
+            TARGETS["execution_metrics_table"],
+            {
+                "script_name": "validation_runner",
+                "status": "Failed",
+                "dry_run": RUNTIME.DRY_RUN,
+                "output_target": TARGETS["results_table"],
+                "artifact_target": TARGETS["violations_table"],
+                "row_count": 0,
+                "started_at_utc": STARTED_AT,
+                "finished_at_utc": FINISHED_AT,
+                "duration_seconds": float((FINISHED_AT - STARTED_AT).total_seconds()),
+                "is_retryable": classify_retryable_error(str(exc), RUNTIME),
+                "error_message": str(exc)[:4000],
+            },
+        )
+        raise
