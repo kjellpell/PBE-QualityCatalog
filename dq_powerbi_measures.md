@@ -1,22 +1,22 @@
-# Power BI — Data Quality Catalog: DAX Measures & Report Guide
+# Power BI — Datakvalitetskatalog: DAX-målinger og rapportguide
 
-This document lists all DAX measures to create in Power BI for the GX Core
-data quality framework. The measures operate on the two Delta tables written
-by `nb_dq_validate.py`:
+Dette dokumentet lister opp alle DAX-målingene som skal opprettes i Power BI
+for datakvalitetsrammeverket. Målingene opererer på de to Delta-tabellene
+som skrives av `nb_dq_validate.py`:
 
-| Table | Description |
+| Tabell | Beskrivelse |
 |---|---|
-| `dq_run_results` | One row per rule per validation run (summary) |
-| `dq_violations`  | One row per offending record per rule per run (detail) |
+| `dq_run_results` | Én rad per regel per valideringskjøring (oppsummering) |
+| `dq_violations`  | Én rad per feilende post per regel per kjøring (detalj) |
 
 ---
 
-## 1. Core Quality Score Measures
+## 1. Kjerne: mål for datakvalitet
 
-### 1.1 Overall Data Quality Score (%)
+### 1.1 Total datakvalitetsscore (%)
 
 ```dax
-DQ Score % =
+DQ-score % =
 DIVIDE(
     CALCULATE(
         COUNTROWS( dq_run_results ),
@@ -26,15 +26,15 @@ DIVIDE(
 ) * 100
 ```
 
-> Shows the percentage of rules that passed across all rule groups and runs
-> visible in the current filter context.
+> Viser prosentandelen av regler som besto på tvers av alle regelgrupper og
+> Vises som et KPI-kort med grønn/rød betinget formatering.
 
 ---
 
-### 1.2 Data Quality Score by Rule Group
+### 1.2 Datakvalitetsscore etter regelgruppe
 
 ```dax
-DQ Score % by Group =
+DQ-score % per gruppe =
 DIVIDE(
     CALCULATE(
         COUNTROWS( dq_run_results ),
@@ -44,24 +44,25 @@ DIVIDE(
 ) * 100
 ```
 
-> Use this measure in a bar / donut chart sliced by `dq_run_results[rule_group]`
-> to compare Case vs. Invoice quality side-by-side.
+> Bruk denne målingen i et stolpe-/donutdiagram delt på `dq_run_results[rule_group]`
+> for å sammenligne datakvaliteten for Case vs. Invoice side om side.
 
 ---
 
-### 1.3 Total Rules Evaluated
+### 1.3 Totalt antall evaluerte regler
 
 ```dax
-Total Rules =
+Totale regler =
 COUNTROWS( dq_run_results )
 ```
 
 ---
 
-### 1.4 Rules Passed
+### 1.4 Regler som besto
+### 3.3 Endring i kvalitetsscore (vs. forrige kjøring)
 
 ```dax
-Rules Passed =
+Regler bestått =
 CALCULATE(
     COUNTROWS( dq_run_results ),
     dq_run_results[status] = "PASSED"
@@ -70,10 +71,10 @@ CALCULATE(
 
 ---
 
-### 1.5 Rules Failed
+### 1.5 Regler som feilet
 
 ```dax
-Rules Failed =
+Regler feilet =
 CALCULATE(
     COUNTROWS( dq_run_results ),
     dq_run_results[status] = "FAILED"
@@ -82,10 +83,10 @@ CALCULATE(
 
 ---
 
-### 1.6 Rules in Error
+### 1.6 Regler med feil
 
 ```dax
-Rules in Error =
+Regler i feil =
 CALCULATE(
     COUNTROWS( dq_run_results ),
     dq_run_results[status] = "ERROR"
@@ -94,33 +95,33 @@ CALCULATE(
 
 ---
 
-## 2. Violation Measures
+## 2. Feil/avviksmålinger
 
-### 2.1 Total Violation Rows
+### 2.1 Totalt antall avviksrader
 
 ```dax
-Total Violations =
+Totale avvik =
 COUNTROWS( dq_violations )
 ```
 
 ---
 
-### 2.2 Violations by Severity
+### 2.2 Avvik etter alvorlighetsgrad
 
 ```dax
-Critical Violations =
+Kritiske avvik =
 CALCULATE(
     COUNTROWS( dq_violations ),
     dq_violations[severity] = "critical"
 )
 
-High Violations =
+Alvorlige avvik =
 CALCULATE(
     COUNTROWS( dq_violations ),
     dq_violations[severity] = "high"
 )
 
-Medium Violations =
+Middels avvik =
 CALCULATE(
     COUNTROWS( dq_violations ),
     dq_violations[severity] = "medium"
@@ -129,10 +130,10 @@ CALCULATE(
 
 ---
 
-### 2.3 Violation Rate (per 1 000 rows)
+### 2.3 Avviksrate (per 1 000 rader)
 
 ```dax
-Violation Rate per 1k =
+Avviksrate per 1000 =
 DIVIDE(
     COUNTROWS( dq_violations ),
     SUMX( DISTINCT( dq_run_results[run_id] ), CALCULATE( SUM( dq_run_results[total_rows] ) ) )
@@ -146,7 +147,7 @@ DIVIDE(
 ### 3.1 Quality Score — Latest Run
 
 ```dax
-DQ Score % Latest Run =
+DQ-score % siste kjøring =
 VAR LatestRun =
     CALCULATE(
         MAX( dq_run_results[run_timestamp] ),
@@ -171,7 +172,7 @@ DIVIDE(
 ### 3.2 Quality Score — Previous Run
 
 ```dax
-DQ Score % Prev Run =
+DQ-score % forrige kjøring =
 VAR RunDates =
     CALCULATETABLE(
         DISTINCT( dq_run_results[run_timestamp] ),
@@ -198,8 +199,8 @@ DIVIDE(
 ### 3.3 Quality Score Change (vs. Previous Run)
 
 ```dax
-DQ Score % Change =
-[DQ Score % Latest Run] - [DQ Score % Prev Run]
+Endring i DQ-score % =
+[DQ-score % siste kjøring] - [DQ-score % forrige kjøring]
 ```
 
 > Display this as a KPI card with a green / red conditional format.
@@ -211,7 +212,7 @@ DQ Score % Change =
 ### 4.1 Handlers with Violations
 
 ```dax
-Handlers with Violations =
+Saksbehandlere med avvik =
 CALCULATE(
     DISTINCTCOUNT( dq_violations[saksbehandler_kode] ),
     dq_violations[rule_group] = "Case",
@@ -224,7 +225,7 @@ CALCULATE(
 ### 4.2 Top Violating Handler
 
 ```dax
-Top Violating Handler =
+Saksbehandler med flest avvik =
 TOPN(
     1,
     ADDCOLUMNS(
@@ -241,38 +242,38 @@ TOPN(
 
 ---
 
-## 5. Recommended Report Pages
+## 5. Anbefalte rapportsider
 
-### Page 1 — Executive Summary
-- **KPI cards**: `DQ Score % Latest Run`, `Total Violations`, `Rules Failed`,
-  `DQ Score % Change`
-- **Donut chart**: DQ Score % by `rule_group` (Case / Invoice)
-- **Stacked bar**: Rule status counts (Passed / Failed / Error) by `rule_group`
-- **Line chart**: `DQ Score % Latest Run` over `batch_date` (trend)
+### Side 1 — Oppsummering for ledelsen
+- **KPI-kort**: `DQ-score % siste kjøring`, `Totale avvik`, `Regler feilet`,
+  `Endring i DQ-score %`
+- **Donutdiagram**: `DQ-score % per gruppe` etter `rule_group` (Case / Invoice)
+- **Stablet stolpe**: Antall regler per status (Passed / Failed / Error) etter `rule_group`
+- **Linjediagram**: `DQ-score % siste kjøring` over `batch_date` (trend)
 
-### Page 2 — Case Rules Detail
+### Side 2 — Detaljer for Case-regler
 - **Slicer**: `batch_date`, `severity`, `rule_id`
-- **Table**: `rule_id`, `rule_name`, `severity`, `total_rows`, `failed_rows`,
-  `success_pct`, `status`, `details`  filtered to `rule_group = "Case"`
-- **Bar chart**: `failed_rows` by `rule_id`
+- **Tabell**: `rule_id`, `rule_name`, `severity`, `total_rows`, `failed_rows`,
+  `success_pct`, `status`, `details` filtrert til `rule_group = "Case"`
+- **Stolpediagram**: `failed_rows` etter `rule_id`
 
-### Page 3 — Invoice Rules Detail
-- Same layout as Page 2 but filtered to `rule_group = "Invoice"`
+### Side 3 — Detaljer for Invoice-regler
+- Samme oppsett som Side 2, men filtrert til `rule_group = "Invoice"`
 
-### Page 4 — Violation Drill-Through
-- **Table**: `violation_detail`, `primary_key_value`, `rule_name`,
+### Side 4 — Avviks-drilldown
+- **Tabell**: `violation_detail`, `primary_key_value`, `rule_name`,
   `severity`, `saksbehandler_kode`, `batch_date`
-- **Enable drill-through** from Pages 2 & 3 on `rule_id`
+- **Aktiver drill-through** fra Side 2 & 3 på `rule_id`
 
 ---
 
-## 6. Alert-Ready Measure (future use)
+## 6. Mål for varsling (for fremtidig bruk)
 
-When alert functionality is added, link the following measure to a
-notification flow (e.g. Power Automate):
+Når varslingsfunksjonalitet legges til, koble følgende måling til et
+varslingsflyt (f.eks. Power Automate):
 
 ```dax
-Has Critical Violations Today =
+Har kritiske avvik i dag =
 VAR Today = TODAY()
 RETURN
 IF(
@@ -285,44 +286,44 @@ IF(
 )
 ```
 
-> A value of `1` can trigger a Power Automate alert to the responsible handler
-> or team owner.
+> En verdi på `1` kan utløse et Power Automate-varsel til ansvarlig saksbehandler
+> eller team-eier.
 
 ---
 
-## IC Measures — Internal Control Monitoring
+## IC-målinger — Intern kontrollovervåkning
 
-The following measures operate on the IC tables written by the engine and the
-two Fabric notebooks:
+Følgende målinger opererer på IC-tabellene skrevet av motoren og de
+to Fabric-notebookene:
 
-| Table | Description |
+| Tabell | Beskrivelse |
 |---|---|
-| `ic_run_results` | One row per IC rule per validation run |
-| `ic_exceptions` | One row per IC violation, with 4-state lifecycle |
-| `ic_control_register` | Register of all controls (populated manually) |
-| `ic_manual_attestations` | Attestation records written by nb_ic_02 |
+| `ic_run_results` | Én rad per IC-regel per valideringskjøring |
+| `ic_exceptions` | Én rad per IC-avvik, med en 4-state livssyklus |
+| `ic_control_register` | Register over alle kontroller (fylt manuelt) |
+| `ic_manual_attestations` | Attestasjonslogger skrevet av `nb_ic_02` |
 
-### IC Control Pass Rate (%)
+### IC kontrollbeståelsesrate (%)
 
 ```dax
-IC Control Pass Rate % =
+IC kontrollbeståelsesrate % =
 DIVIDE(
     COUNTROWS( FILTER( ic_run_results, ic_run_results[status] = "PASSED" ) ),
     COUNTROWS( ic_run_results )
 ) * 100
 ```
 
-### IC Open Exceptions
+### Åpne IC-avvik
 
 ```dax
-IC Open Exceptions =
+Åpne IC-avvik =
 COUNTROWS( FILTER( ic_exceptions, ic_exceptions[ic_status] = "Open" ) )
 ```
 
 ### IC Exceptions Breaching SLA
 
 ```dax
-IC Exceptions Breaching SLA =
+IC-avvik som bryter SLA =
 COUNTROWS(
     FILTER(
         ic_exceptions,
@@ -332,17 +333,17 @@ COUNTROWS(
 )
 ```
 
-> An exception breaches SLA when it has been Open past its `remediation_due_date`.
-> Exceptions without a due date (remediation_due_days was blank in the rule) are excluded.
+> Et avvik bryter SLA når det har vært "Open" etter `remediation_due_date`.
+> Avvik uten forfallsdato (hvor `remediation_due_days` var blank i regelen) er utelatt.
 
-### IC Days Open (per exception)
+### Antall dager åpen (per avvik)
 
 ```dax
-IC Days Open =
+IC dager åpne =
 DATEDIFF( ic_exceptions[first_seen_at], TODAY(), DAY )
 ```
 
-> Add as a calculated column or use in a table visual with exception rows.
+> Legg til som en beregnet kolonne eller bruk i en tabellvisning med avviksrader.
 
 ### IC Exception Trend (weekly)
 
@@ -350,13 +351,14 @@ Use `ic_exceptions[first_seen_at]` on the axis and `COUNTROWS(ic_exceptions)` as
 the value, with a weekly date hierarchy. This shows the volume of new Open
 exceptions opened each week.
 
-### Manual Controls Overdue for Attestation
+### Manuelle kontroller som er forfalt for attestasjon
 
-`ic_manual_attestations` no longer stores `next_due_date`. Overdue status is derived
-from `attested_at` combined with `attestation_frequency` from `ic_control_register`.
+`ic_manual_attestations` lagrer ikke lenger `next_due_date`. Forfallsstatus
+beregnes fra `attested_at` kombinert med `attestation_frequency` fra
+`ic_control_register`.
 
 ```dax
-Manual Controls Overdue =
+Manuelle kontroller forfalt =
 COUNTROWS(
     FILTER(
         ic_control_register,
@@ -383,14 +385,14 @@ COUNTROWS(
 )
 ```
 
-> Requires a relationship between `ic_control_register[control_id]` and
-> `ic_manual_attestations[control_id]`. Controls with no attestations at all
-> are also included (ISBLANK guard).
+> Krever en relasjon mellom `ic_control_register[control_id]` og
+> `ic_manual_attestations[control_id]`. Kontroller uten noen attestasjoner
+> inkluderes også (ISBLANK-vakt).
 
-### Days Since Last Attestation (per control)
+### Dager siden siste attestasjon (per kontroll)
 
 ```dax
-Days Since Last Attestation =
+Dager siden siste attestasjon =
 DATEDIFF(
     CALCULATE(
         MAX( ic_manual_attestations[attested_at] ),
@@ -401,18 +403,18 @@ DATEDIFF(
 )
 ```
 
-> Use as a calculated column on `ic_control_register`, or in a table visual
-> showing each manual control with its latest attestation age.
+> Brukes som en beregnet kolonne på `ic_control_register`, eller i en tabellvisning
+> som viser hver manuelle kontroll med alder på siste attestasjon.
 
 ---
 
-## Translytical Task Flow Configuration
+## Konfigurasjon for Translytical Task Flow
 
-Fabric Translytical Task Flow replaces Power Automate for both IC notebooks.
-The task flow embeds an interactive panel directly in the Power BI report
-and calls a Fabric notebook with parameters bound from the selected row.
+Fabric Translytical Task Flow erstatter Power Automate for begge IC-notebookene.
+Task flow-en innebygger et interaktivt panel direkte i Power BI-rapporten
+og kaller en Fabric-notebook med parametere bundet fra den valgte raden.
 
-### Task Flow 1 — IC Exception Transitions (nb_ic_01_manage_exceptions)
+### Task Flow 1 — IC-avviksovergang (nb_ic_01_manage_exceptions)
 
 **Report page:** IC Exceptions (table visual of `ic_exceptions`)
 
@@ -432,7 +434,7 @@ and calls a Fabric notebook with parameters bound from the selected row.
 
 ---
 
-### Task Flow 2 — Manual Control Attestation (nb_ic_02_attest_manual_control)
+### Task Flow 2 — Attestasjon av manuelle kontroller (nb_ic_02_attest_manual_control)
 
 **Report page:** Manual Controls Register (table visual of `ic_control_register` filtered to `execution_type = Manual`)
 

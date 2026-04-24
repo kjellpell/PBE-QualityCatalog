@@ -250,7 +250,7 @@ Good example: ActualEndDate must be on or after StartDate
 
 ## Rule ID Guidelines
 
-Use domain prefixes consistently:
+Use domain prefixes consistently, for example:
 
 - PROC for process rules
 - MIL for milestone rules
@@ -262,6 +262,30 @@ Rule IDs must always be set explicitly in every rule block (`rule_id: PROC-001`)
 
 ---
 
+## Primary Key Column Guidelines
+
+`pk_column` identifies which source column is stored as `primary_key_value` in the
+violations table (`dq_violations`). This value is what links a violation back to a
+specific record in the source data.
+
+**Every rule group must use exactly one `pk_column` across all its rules.**
+
+The violations table is related to the source entity table in the Power BI semantic
+model using `primary_key_value`. Because a single column cannot hold two different
+types of keys, mixing `pk_column` values within the same rule group breaks that
+relationship and makes drill-through impossible.
+
+| Rule group | Source table | `pk_column` to use |
+|---|---|---|
+| Process | Saksbehandling.prosesser | `Prosess_id` |
+| Invoice | Saksbehandling.fakturalinjer | `Fakturanr` |
+
+If you need to validate records from a different source table, create a **new rule group**
+rather than mixing keys in an existing one. Ask IT if you are unsure which group a new
+rule belongs to.
+
+---
+
 ## Before You Save: Checklist
 
 - Rule ID is unique
@@ -270,6 +294,7 @@ Rule IDs must always be set explicitly in every rule block (`rule_id: PROC-001`)
 - Required parameters are included
 - Severity, category, and owner are set
 - Description explains business purpose
+- `pk_column` matches the single primary key used by all other rules in this rule group
 
 ---
 
@@ -280,6 +305,7 @@ Rule IDs must always be set explicitly in every rule block (`rule_id: PROC-001`)
 - Reusing an existing rule_id
 - SQL returning normal rows instead of violating rows
 - Severity set too low for high-impact checks
+- Using a different `pk_column` than the rest of the rule group — this breaks the semantic model relationship
 
 ---
 

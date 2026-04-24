@@ -2,7 +2,7 @@
 # This file is NOT loaded at runtime; the Lakehouse copy is always used.
 """Shared configuration for PBE Quality Catalog runtime."""
 
-DEFAULT_SCHEMA = "default"
+DEFAULT_SCHEMA = "dbo"
 
 
 RULES_DIR = "rules"
