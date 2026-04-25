@@ -983,6 +983,10 @@ class ValidateSequenceOrderExpectation:
             else:
                 seq_values.append(str(item))
 
+        allow_loops = params.get("allow_loops", False)
+        if allow_loops:
+            flexible_set = set(seq_values)  # every step is flexible when allow_loops is True
+
         if total == 0:
             return _passed_result(total), _empty_violations(spark)
         if len(seq_values) < 2:
@@ -1833,6 +1837,262 @@ class ValidateColumnExclusionsExpectation:
 
 
 # =============================================================================
+# Active-reference validator
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# validate_active_reference
+# Validates that every non-null value in source_column exists in a reference
+# table AND that the matching row in the reference table is "active" according
+# to a configurable flag column and value.
+# Generalised form of "handler must be an active employee".
+# -----------------------------------------------------------------------------
+class ValidateActiveReferenceExpectation:
+    """
+    Validates that all non-null values in 'source_column' exist in the
+    reference table and match a row where active_column equals active_value.
+
+    YAML parameters:
+      source_column          - column in the source table whose values are checked
+      pk_column              - primary key column for violation reporting
+      reference:
+        table                - fully-qualified reference table name
+        column               - column in the reference table to join on
+        active_column        - column in the reference table holding the active flag
+        active_value         - value that means "active" (string or boolean)
+    """
+
+    def validate(self, df: DataFrame, rule: dict, spark, ref_cache: dict = None) -> tuple:
+        params    = rule.get("parameters", {})
+        src_col   = params.get("source_column")
+        pk_col    = params.get("pk_column") or src_col
+        ref_block = params.get("reference", {})
+        ref_table  = ref_block.get("table")
+        ref_col    = ref_block.get("column")
+        active_col = ref_block.get("active_column")
+        active_val = ref_block.get("active_value")
+
+        if not src_col or not ref_table or not ref_col or not active_col or active_val is None:
+            return (
+                _error_result(
+                    "Parameters 'source_column', 'reference.table', 'reference.column', "
+                    "'reference.active_column', and 'reference.active_value' are all required."
+                ),
+                _empty_violations(spark),
+            )
+
+        if src_col not in df.columns:
+            return (
+                _error_result(f"Column '{src_col}' not found in source DataFrame."),
+                _empty_violations(spark),
+            )
+
+        # Build active reference set, using cache when available.
+        cache_key = (ref_table, ref_col, active_col, str(active_val))
+        if ref_cache is not None and cache_key in ref_cache:
+            active_ref_df = ref_cache[cache_key]
+        else:
+            try:
+                raw_ref = spark.read.table(ref_table)
+            except Exception as exc:
+                return (
+                    _error_result(f"Could not load reference table '{ref_table}': {exc}"),
+                    _empty_violations(spark),
+                )
+
+            # Build the active-row filter: support boolean, numeric, and
+            # case-insensitive string comparison.
+            if isinstance(active_val, bool):
+                active_filter = F.col(active_col) == active_val
+            elif isinstance(active_val, (int, float)):
+                active_filter = F.col(active_col) == active_val
+            else:
+                active_filter = (
+                    F.lower(F.col(active_col).cast("string"))
+                    == F.lower(F.lit(str(active_val)))
+                )
+
+            active_ref_df = (
+                raw_ref.filter(active_filter)
+                .select(F.col(ref_col).cast("string").alias("_active_ref_key"))
+                .distinct()
+            )
+            if ref_cache is not None:
+                ref_cache[cache_key] = active_ref_df
+
+        evaluated = df.filter(F.col(src_col).isNotNull())
+        total     = evaluated.count()
+
+        if total == 0:
+            return _passed_result(0), _empty_violations(spark)
+
+        violations_df = evaluated.alias("src").join(
+            active_ref_df,
+            F.col("src." + src_col).cast("string") == F.col("_active_ref_key"),
+            how="left_anti",
+        )
+        failed = violations_df.count()
+        passed = total - failed
+
+        expected_cond = (
+            f"{src_col} must reference an active row in "
+            f"{ref_table}.{ref_col} where {active_col} = {active_val}"
+        )
+
+        violations_out = violations_df.select(
+            F.col(pk_col).cast("string").alias("primary_key_value"),
+            F.lit(src_col).alias("violated_column"),
+            F.col(src_col).cast("string").alias("actual_value"),
+            F.lit(expected_cond).alias("expected_condition"),
+            F.concat(
+                F.lit("Value '"),
+                F.col(src_col).cast("string"),
+                F.lit(f"' not found or inactive in {ref_table}.{ref_col}"),
+            ).alias("violation_detail"),
+        )
+
+        result = {
+            "total_rows":  total,
+            "passed_rows": passed,
+            "failed_rows": failed,
+            "success_pct": _safe_pct(passed, total),
+            "status":      "PASSED" if failed == 0 else "FAILED",
+            "details": (
+                f"{failed} value(s) in '{src_col}' not found or inactive "
+                f"in {ref_table}.{ref_col} (active filter: {active_col} = {active_val})."
+                if failed > 0
+                else (
+                    f"All {total} non-null '{src_col}' values reference an active row "
+                    f"in {ref_table}.{ref_col}."
+                )
+            ),
+        }
+        return result, violations_out
+
+
+# =============================================================================
+# Time-in-state validator
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# validate_time_in_state
+# Flags rows that have been in an "open" state for too long.
+# "Open" is defined as open_when_column IS NULL (the common case) or equals
+# a specific open_when_value.
+# Generalised form of "open case must not exceed 30 days" and
+# "unpaid invoice must not exceed 60 days".
+# -----------------------------------------------------------------------------
+class ValidateTimeInStateExpectation:
+    """
+    Flags rows that have been in an open state for more than max_days days.
+
+    YAML parameters:
+      start_column       - date/timestamp column marking when the state began
+      open_when_column   - column checked to decide if the row is still open
+      open_when_value    - value that means "open"; use "null" (or Python None)
+                           to mean IS NULL (default behaviour)
+      pk_column          - primary key column for violation reporting
+      max_days           - maximum number of days allowed in the open state
+    """
+
+    def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
+        params         = rule.get("parameters", {})
+        start_col      = params.get("start_column")
+        open_when_col  = params.get("open_when_column")
+        open_when_val  = params.get("open_when_value")
+        pk_col         = params.get("pk_column")
+        max_days       = params.get("max_days")
+
+        if not start_col or not open_when_col or not pk_col or max_days is None:
+            return (
+                _error_result(
+                    "Parameters 'start_column', 'open_when_column', 'pk_column', "
+                    "and 'max_days' are all required."
+                ),
+                _empty_violations(spark),
+            )
+
+        if start_col not in df.columns:
+            return (
+                _error_result(f"Column '{start_col}' not found in source DataFrame."),
+                _empty_violations(spark),
+            )
+
+        if open_when_col not in df.columns:
+            return (
+                _error_result(f"Column '{open_when_col}' not found in source DataFrame."),
+                _empty_violations(spark),
+            )
+
+        try:
+            max_days = int(max_days)
+        except (TypeError, ValueError):
+            return (
+                _error_result(
+                    f"Parameter 'max_days' must be a valid integer, got: {max_days!r}."
+                ),
+                _empty_violations(spark),
+            )
+
+        # Build the "open" filter: IS NULL or matches specific value.
+        is_open_when_null = open_when_val is None or (
+            isinstance(open_when_val, str) and open_when_val.lower() == "null"
+        )
+        if is_open_when_null:
+            open_filter = F.col(open_when_col).isNull()
+        else:
+            open_filter = F.col(open_when_col) == open_when_val
+
+        open_rows = df.filter(open_filter & F.col(start_col).isNotNull())
+        total     = open_rows.count()
+
+        if total == 0:
+            return _passed_result(0), _empty_violations(spark)
+
+        evaluated = open_rows.withColumn(
+            "_days_open", F.datediff(F.current_date(), F.col(start_col))
+        )
+
+        violations_df = evaluated.filter(F.col("_days_open") > max_days)
+        failed = violations_df.count()
+        passed = total - failed
+
+        if failed == 0:
+            return _passed_result(total), _empty_violations(spark)
+
+        expected_cond = f"Days in open state must not exceed {max_days}"
+
+        violations_out = violations_df.select(
+            F.col(pk_col).cast("string").alias("primary_key_value"),
+            F.lit(start_col).alias("violated_column"),
+            F.col("_days_open").cast("string").alias("actual_value"),
+            F.lit(expected_cond).alias("expected_condition"),
+            F.concat(
+                F.lit("Open for "),
+                F.col("_days_open").cast("string"),
+                F.lit(" days (started "),
+                F.col(start_col).cast("string"),
+                F.lit(f"), exceeds limit of {max_days} days"),
+            ).alias("violation_detail"),
+        )
+
+        result = {
+            "total_rows":  total,
+            "passed_rows": passed,
+            "failed_rows": failed,
+            "success_pct": _safe_pct(passed, total),
+            "status":      "FAILED",
+            "details": (
+                f"{failed} row(s) have been in the open state for more than "
+                f"{max_days} day(s) (open filter: {open_when_col} "
+                + ("IS NULL" if is_open_when_null else f"= {open_when_val}")
+                + ")."
+            ),
+        }
+        return result, violations_out
+
+
+# =============================================================================
 # Registry — maps YAML expectation names to validator classes.
 #
 # Only generic canonical names are registered here.  No table-specific
@@ -1900,4 +2160,14 @@ CUSTOM_EXPECTATION_REGISTRY = {
     # Group aggregate match validators
     # -------------------------------------------------------------------------
     "validate_group_aggregate_match":       ValidateGroupAggregateMatchExpectation,
+
+    # -------------------------------------------------------------------------
+    # Active reference validators
+    # -------------------------------------------------------------------------
+    "validate_active_reference":            ValidateActiveReferenceExpectation,
+
+    # -------------------------------------------------------------------------
+    # Time-in-state validators
+    # -------------------------------------------------------------------------
+    "validate_time_in_state":               ValidateTimeInStateExpectation,
 }
