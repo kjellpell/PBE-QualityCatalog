@@ -1897,7 +1897,7 @@ class ValidateActiveReferenceExpectation:
         else:
             try:
                 raw_ref = spark.read.table(ref_table)
-                missing_ref_cols = [c for c in (ref_col, active_col) if c not in raw_ref.columns]
+                missing_ref_cols = [c for c in (ref_col, active_col) if c is not None and c not in raw_ref.columns]
                 if missing_ref_cols:
                     return (
                         _error_result(
