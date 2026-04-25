@@ -20,10 +20,22 @@
 #                                    pk_column
 #                      validate_sequence_order
 #                        parameters: value_column, group_column, sort_column,
-#                                    expected_sequence (ordered list)
+#                                    expected_sequence (ordered list),
+#                                    completion_gate (optional sub-block:
+#                                      value_column, value, sort_column —
+#                                      only checks sequence for groups that
+#                                      have reached the gate),
+#                                    allow_loops (optional boolean, default false —
+#                                      when true, allows a value to appear more
+#                                      than once in the sequence without being
+#                                      flagged)
 #                      validate_paired_presence
 #                        parameters: value_column, group_column,
-#                                    required_pairs ([[start, stop], ...])
+#                                    required_pairs ([[start, stop], ...]),
+#                                    completion_gate (optional sub-block:
+#                                      value_column, value, sort_column —
+#                                      only checks pairs for groups that
+#                                      have reached the gate)
 #                      validate_no_orphan
 #                        parameters: value_column, group_column,
 #                                    pairs ([[start_type, stop_type], ...])
@@ -224,4 +236,33 @@ rules:
       pk_column: prosess_id
     severity: high
     category: Uniqueness
+    owner: IT
+
+  # ---------------------------------------------------------------------------
+  # Sequence with repeated steps
+  # ---------------------------------------------------------------------------
+
+  - rule_id: MIL-009
+    name: Milestones with repeated steps must still follow the defined sequence
+    description: >
+      Some processes allow a milestone step (e.g. Behandling) to repeat before
+      the sequence continues. When allow_loops is true the engine accepts
+      repeated occurrences of a step without flagging them as out-of-order,
+      while still enforcing that steps do not jump backwards in the sequence.
+    expectation: validate_sequence_order
+    parameters:
+      value_column: Milepel
+      group_column: prosess_id
+      sort_column: StartDate
+      expected_sequence:
+        - Startbehandling
+        - Behandling
+        - Stoppbehandling
+      allow_loops: true
+      completion_gate:
+        value_column: Milepel
+        value: Stoppbehandling
+        sort_column: EndDate
+    severity: high
+    category: Business Logic
     owner: IT

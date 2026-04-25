@@ -41,7 +41,7 @@ rules:
     category: Segregation of Duties
     owner: Finansteam
     control_ref: COSO-CC5.2
-    control_type: Preventive
+    control_type: Detective
     risk_domain: Financial
     remediation_due_days: 2
 

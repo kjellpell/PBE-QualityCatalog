@@ -33,6 +33,13 @@
 #        Cross-table: validate_foreign_key
 #                       parameters: column, pk_column,
 #                                   reference: {table, column}
+#                     validate_active_reference
+#                       parameters: source_column, pk_column,
+#                                   reference: {table, column,
+#                                              active_column, active_value}
+#                     validate_time_in_state
+#                       parameters: start_column, open_when_column,
+#                                   open_when_value, pk_column, max_days
 #        SQL fallback: sql / sql_validation
 #   3. For rules that target a specific column, set the top-level "column" field.
 #      For multi-column or parameterised rules, use a "parameters" block.
@@ -101,11 +108,11 @@ rules:
       a missing credit-note classification.
     expectation: validate_conditional_column_value
     parameters:
-      condition_column: linje_belop      # column to check the trigger condition on
-      condition_operator: "<"            # trigger when value is less than condition_value
-      condition_value: 0                 # trigger on negative amounts
-      required_column: Faktura_type      # column that must equal required_value
-      required_value: Kreditnota         # only this type permits negative amounts
+      condition_column: linje_belop
+      condition_operator: "<"
+      condition_value: 0
+      required_column: Faktura_type
+      required_value: Kreditnota
       pk_column: Fakturanr
     severity: high
     category: Business Logic
@@ -172,4 +179,48 @@ rules:
       HAVING SUM(linje_belop) = 0
     severity: medium
     category: Aggregate
+    owner: Finansteam
+
+  # ---------------------------------------------------------------------------
+  # Active reference validations
+  # ---------------------------------------------------------------------------
+
+  - rule_id: INV-008
+    name: ApprovedBy must reference an active employee
+    description: >
+      Every approver recorded on an invoice line must exist as an active employee
+      in the employee register. An invoice approved by a person who has left the
+      organisation is a control violation and must be reviewed.
+    expectation: validate_active_reference
+    parameters:
+      source_column: ApprovedBy
+      pk_column: Fakturanr
+      reference:
+        table: Saksbehandling.Ansatte
+        column: AnsattKode
+        active_column: Status
+        active_value: Aktiv
+    severity: critical
+    category: Referential Integrity
+    owner: Finansteam
+
+  # ---------------------------------------------------------------------------
+  # Time-in-state validations
+  # ---------------------------------------------------------------------------
+
+  - rule_id: INV-009
+    name: Unpaid invoices must not exceed 60 days outstanding
+    description: >
+      An invoice line with no PaymentDate (unpaid) must not have been outstanding
+      for more than 60 days since InvoiceDate. Invoices exceeding this threshold
+      indicate a payment process failure and require escalation.
+    expectation: validate_time_in_state
+    parameters:
+      start_column: InvoiceDate
+      open_when_column: PaymentDate
+      open_when_value: null
+      pk_column: Fakturanr
+      max_days: 60
+    severity: high
+    category: Business Logic
     owner: Finansteam
