@@ -1098,10 +1098,13 @@ class ValidateSequenceOrderExpectation:
             .join(last_val,  on=group_col, how="inner")
         )
 
-        seq_str       = " \u2192 ".join(seq_values)
-        flexible_note = (
-            f" (flexible: {', '.join(sorted(flexible_set))})" if flexible_set else ""
-        )
+        seq_str = " \u2192 ".join(seq_values)
+        if allow_loops:
+            flexible_note = " (allow_loops: true)"
+        elif flexible_set:
+            flexible_note = f" (flexible: {', '.join(sorted(flexible_set))})"
+        else:
+            flexible_note = ""
 
         violations_out = violations_info.select(
             F.col(group_col).cast("string").alias("primary_key_value"),
@@ -1863,10 +1866,10 @@ class ValidateActiveReferenceExpectation:
     """
 
     def validate(self, df: DataFrame, rule: dict, spark, ref_cache: dict = None) -> tuple:
-        params    = rule.get("parameters", {})
-        src_col   = params.get("source_column")
-        pk_col    = params.get("pk_column") or src_col
-        ref_block = params.get("reference", {})
+        params     = rule.get("parameters", {})
+        src_col    = params.get("source_column")
+        pk_col     = params.get("pk_column") or src_col
+        ref_block  = params.get("reference", {})
         ref_table  = ref_block.get("table")
         ref_col    = ref_block.get("column")
         active_col = ref_block.get("active_column")
@@ -1894,6 +1897,14 @@ class ValidateActiveReferenceExpectation:
         else:
             try:
                 raw_ref = spark.read.table(ref_table)
+                missing_ref_cols = [c for c in (ref_col, active_col) if c not in raw_ref.columns]
+                if missing_ref_cols:
+                    return (
+                        _error_result(
+                            f"Column(s) {missing_ref_cols} not found in reference table '{ref_table}'."
+                        ),
+                        _empty_violations(spark),
+                    )
             except Exception as exc:
                 return (
                     _error_result(f"Could not load reference table '{ref_table}': {exc}"),
@@ -1902,15 +1913,16 @@ class ValidateActiveReferenceExpectation:
 
             # Build the active-row filter: support boolean, numeric, and
             # case-insensitive string comparison.
-            if isinstance(active_val, bool):
-                active_filter = F.col(active_col) == active_val
-            elif isinstance(active_val, (int, float)):
-                active_filter = F.col(active_col) == active_val
-            else:
+            if isinstance(active_val, str):
+                # Case-insensitive string comparison
                 active_filter = (
                     F.lower(F.col(active_col).cast("string"))
-                    == F.lower(F.lit(str(active_val)))
+                    == F.lower(F.lit(active_val))
                 )
+            else:
+                # bool (must be checked before int since bool is a subclass of int),
+                # int, float — all use direct equality
+                active_filter = F.col(active_col) == active_val
 
             active_ref_df = (
                 raw_ref.filter(active_filter)
@@ -2034,6 +2046,14 @@ class ValidateTimeInStateExpectation:
                 _empty_violations(spark),
             )
 
+        if max_days < 0:
+            return (
+                _error_result(
+                    f"Parameter 'max_days' must be a non-negative integer, got: {max_days}."
+                ),
+                _empty_violations(spark),
+            )
+
         # Build the "open" filter: IS NULL or matches specific value.
         is_open_when_null = open_when_val is None or (
             isinstance(open_when_val, str) and open_when_val.lower() == "null"
@@ -2081,7 +2101,7 @@ class ValidateTimeInStateExpectation:
             "passed_rows": passed,
             "failed_rows": failed,
             "success_pct": _safe_pct(passed, total),
-            "status":      "FAILED",
+            "status":      "PASSED" if failed == 0 else "FAILED",
             "details": (
                 f"{failed} row(s) have been in the open state for more than "
                 f"{max_days} day(s) (open filter: {open_when_col} "
