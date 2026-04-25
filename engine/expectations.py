@@ -1900,9 +1900,11 @@ class ValidateActiveReferenceExpectation:
                     _empty_violations(spark),
                 )
 
-            # Build the active-row filter: support both boolean and
+            # Build the active-row filter: support boolean, numeric, and
             # case-insensitive string comparison.
             if isinstance(active_val, bool):
+                active_filter = F.col(active_col) == active_val
+            elif isinstance(active_val, (int, float)):
                 active_filter = F.col(active_col) == active_val
             else:
                 active_filter = (
@@ -2022,10 +2024,21 @@ class ValidateTimeInStateExpectation:
                 _empty_violations(spark),
             )
 
-        max_days = int(max_days)
+        try:
+            max_days = int(max_days)
+        except (TypeError, ValueError):
+            return (
+                _error_result(
+                    f"Parameter 'max_days' must be a valid integer, got: {max_days!r}."
+                ),
+                _empty_violations(spark),
+            )
 
         # Build the "open" filter: IS NULL or matches specific value.
-        if open_when_val is None or (isinstance(open_when_val, str) and open_when_val.lower() == "null"):
+        is_open_when_null = open_when_val is None or (
+            isinstance(open_when_val, str) and open_when_val.lower() == "null"
+        )
+        if is_open_when_null:
             open_filter = F.col(open_when_col).isNull()
         else:
             open_filter = F.col(open_when_col) == open_when_val
@@ -2072,7 +2085,7 @@ class ValidateTimeInStateExpectation:
             "details": (
                 f"{failed} row(s) have been in the open state for more than "
                 f"{max_days} day(s) (open filter: {open_when_col} "
-                + ("IS NULL" if (open_when_val is None or (isinstance(open_when_val, str) and open_when_val.lower() == "null")) else f"= {open_when_val}")
+                + ("IS NULL" if is_open_when_null else f"= {open_when_val}")
                 + ")."
             ),
         }
