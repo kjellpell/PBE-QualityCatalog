@@ -220,6 +220,128 @@ This fails when `Stoppbehandling` OR `Kansellert` exists for a group that has no
 
 ---
 
+### 7. Active reference check (referenced record must be active)
+
+Use `validate_active_reference` when a column references another table and the referenced row must not only exist but also be marked as active. This is the correct expectation for checks like "handler must be an active employee" or "approver must still be employed".
+
+```yaml
+- rule_id: PROC-009
+  name: Saksbehandler_kode must reference an active employee
+  description: >
+    Every handler assigned to a process must exist as an active employee.
+    A handler who has left the organisation must not remain assigned to open cases.
+  expectation: validate_active_reference
+  parameters:
+    source_column: Saksbehandler_kode
+    pk_column: Saksnummer
+    reference:
+      table: Saksbehandling.Ansatte
+      column: AnsattKode
+      active_column: Status
+      active_value: Aktiv
+  severity: high
+  category: Referential Integrity
+  owner: Saksteam
+```
+
+Key parameters:
+- `source_column` — the column in your table that holds the reference value
+- `reference.table` — the table that holds the valid active records
+- `reference.column` — the column in the reference table to match against
+- `reference.active_column` — the column that holds the active/inactive flag
+- `reference.active_value` — the value that means "active" (works for both text and true/false)
+
+Use this instead of `validate_foreign_key` when you need to check both existence AND active status.
+
+---
+
+### 8. Time-in-state check (record has been open too long)
+
+Use `validate_time_in_state` when a record that has not yet been closed (no end date, no payment date, etc.) must not remain in that state beyond a defined number of days.
+
+```yaml
+- rule_id: PROC-010
+  name: Open cases must not exceed 30 days without closure
+  description: >
+    A process with no ActualEndDate must not have been running for more than
+    30 days since StartDate. Cases exceeding this threshold require review.
+  expectation: validate_time_in_state
+  parameters:
+    start_column: StartDate
+    open_when_column: ActualEndDate
+    open_when_value: null
+    pk_column: Saksnummer
+    max_days: 30
+  severity: high
+  category: Business Logic
+  owner: Saksteam
+```
+
+Another example — unpaid invoices:
+
+```yaml
+- rule_id: INV-009
+  name: Unpaid invoices must not exceed 60 days outstanding
+  description: >
+    An invoice with no PaymentDate must not have been outstanding for more
+    than 60 days since InvoiceDate.
+  expectation: validate_time_in_state
+  parameters:
+    start_column: InvoiceDate
+    open_when_column: PaymentDate
+    open_when_value: null
+    pk_column: Fakturanr
+    max_days: 60
+  severity: high
+  category: Business Logic
+  owner: Finansteam
+```
+
+Key parameters:
+- `start_column` — when the record entered the state (e.g. StartDate, InvoiceDate)
+- `open_when_column` — the column that is empty when the record is still open
+- `open_when_value` — use `null` to mean "column is empty", or provide a specific value
+- `max_days` — the maximum number of days the record is allowed to remain in this state
+
+---
+
+### 9. Sequence with repeated steps (allow_loops)
+
+Use `validate_sequence_order` with `allow_loops: true` when a step in the sequence is allowed to repeat before the sequence continues. Without `allow_loops`, any repeated step is flagged as a violation.
+
+```yaml
+- rule_id: MIL-009
+  name: Milestones with repeated steps must still follow the defined sequence
+  description: >
+    Some processes allow a milestone step (e.g. Behandling) to repeat before
+    the sequence continues. When allow_loops is true, repeated steps are
+    accepted without being flagged as out-of-order.
+  expectation: validate_sequence_order
+  parameters:
+    value_column: Milepel
+    group_column: prosess_id
+    sort_column: StartDate
+    expected_sequence:
+      - Startbehandling
+      - Behandling
+      - Stoppbehandling
+    allow_loops: true
+    completion_gate:
+      value_column: Milepel
+      value: Stoppbehandling
+      sort_column: EndDate
+  severity: high
+  category: Business Logic
+  owner: IT
+```
+
+Use `allow_loops: false` (or omit it) when each step must appear exactly once.
+
+> **What is completion_gate?**
+> The `completion_gate` is an optional filter that limits which groups are evaluated. Only groups that have reached the gate value (e.g. have a `Stoppbehandling` with a non-null `EndDate`) are included. Groups that are still in progress are skipped. This avoids false positives for processes that are not yet finished.
+
+---
+
 ## Severity Guidance
 
 - critical:
@@ -306,6 +428,8 @@ rule belongs to.
 - SQL returning normal rows instead of violating rows
 - Severity set too low for high-impact checks
 - Using a different `pk_column` than the rest of the rule group — this breaks the semantic model relationship
+- Using `validate_foreign_key` when the referenced record could be inactive — use `validate_active_reference` instead
+- Setting `open_when_value` to a string when the column uses a date — use `null` for date columns with no end date
 
 ---
 
@@ -313,7 +437,7 @@ rule belongs to.
 
 Ask IT when:
 
-- You need a new expectation type not already available
+- You need an expectation type not listed in this guide
 - You are unsure whether to use YAML parameters or SQL
 - Preflight fails due to missing source tables/config
 - You need help with technical run failures

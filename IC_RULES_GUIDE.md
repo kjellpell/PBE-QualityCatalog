@@ -213,6 +213,20 @@ See `rules/ic_process_rules.yaml` and `rules/ic_invoice_rules.yaml` for working 
 - Sequence / timing controls (`validate_column_comparison` with `>=`)
 - Completeness before state transition (`sql` expectation with correlated subquery)
 - Budget ceiling check (`sql` expectation with JOIN)
+- Active reference validation (`validate_active_reference`) — checks that a referenced employee or resource is still active
+- Time-in-state validation (`validate_time_in_state`) — flags cases or invoices that have been open beyond their SLA threshold
+
+---
+
+## Using Active Reference and Time-in-State Rules as IC Controls
+
+These two expectations are particularly relevant for internal controls:
+
+**`validate_active_reference`** is suited to controls that require ongoing validity of an assignment — for example, ensuring that a case handler or invoice approver is still an active employee. A handler who has left the organisation but remains assigned to an open case is a control gap.
+
+**`validate_time_in_state`** is suited to SLA and timeliness controls — for example, ensuring that open cases are reviewed within 30 days or that unpaid invoices are escalated within 60 days. Pair with `remediation_due_days` to set an SLA on fixing the violation once it is detected.
+
+Both expectations generalise across tables and columns — the same expectation works for process handlers, invoice approvers, or any other reference relationship or time threshold in your domain.
 
 ---
 

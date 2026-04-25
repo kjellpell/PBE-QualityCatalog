@@ -20,6 +20,8 @@ Core capabilities:
 - Run metrics for observability and support
 - Current-state issue tracking (Active and Resolved)
 - Clear IT/business ownership split
+- Active reference validation (checks existence AND active status in a reference table)
+- Time-in-state validation (flags records open beyond a configurable day threshold)
 
 ---
 
@@ -50,7 +52,7 @@ PBE-QualityCatalog/
 │   ├── resolution.py
 │   ├── runtime.py
 │   └── validation_runner.py
-├── rules/                          (temporary migration source - will be removed)
+├── rules/                          (YAML rule files — loaded directly by validation engine)
 │   ├── ic_invoice_rules.yaml
 │   ├── ic_process_rules.yaml
 │   ├── invoice_rules.yaml
@@ -226,6 +228,10 @@ Business authoring guidance is in RULES_GUIDE.md.
   rerun nb_dq_00_setup.py and verify Delta support.
 - Unexpected expectation errors:
   validate expectation names, parameters, and source columns in rule_catalog.
+- `validate_active_reference` errors:
+  confirm reference table name, column names, and that `active_value` matches the exact value used in the reference table (including capitalisation).
+- `validate_time_in_state` errors:
+  confirm `start_column` is a date or timestamp column, and that `open_when_column` exists in the source table.
 
 ---
 
