@@ -69,7 +69,7 @@ rules:
       FROM Saksbehandling.Prosesser p
       WHERE p.Status = 'Closed'
         AND EXISTS (
-          SELECT 1 FROM Saksbehandling.Milepeler m
+          SELECT 1 FROM Saksbehandling.Milepel m
           WHERE m.Saksnummer = p.Saksnummer
             AND m.Required    = true
             AND m.CompletedAt IS NULL

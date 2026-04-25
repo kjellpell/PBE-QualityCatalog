@@ -13,7 +13,7 @@
 #                                    operator (>, <, >=, <=, ==, !=),
 #                                    pk_column
 #                      validate_not_null_when
-#                        parameters: condition_column, condition_operator (== or IS NOT NULL),
+#                        parameters: condition_column, condition_operator (== or IS NOT NULL or IS NULL),
 #                                    condition_value, check_columns (list), pk_column
 #                      validate_aggregate_rule
 #                        parameters: column, aggregate (sum/count/avg/min/max),
@@ -29,6 +29,13 @@
 #        Cross-table:  validate_foreign_key
 #                        parameters: column, pk_column,
 #                                    reference: {table, column}
+#                      validate_active_reference
+#                        parameters: source_column, pk_column,
+#                                    reference: {table, column,
+#                                               active_column, active_value}
+#                      validate_time_in_state
+#                        parameters: start_column, open_when_column,
+#                                    open_when_value, pk_column, max_days
 #   3. For rules that target a specific column, set the top-level "column" field.
 #      For multi-column or parameterised rules, use a "parameters" block.
 #   4. Optionally set "category" for grouping (e.g. "Completeness",
@@ -89,10 +96,16 @@ rules:
   - rule_id: PROC-003
     name: Saksbehandler_kode cannot be null for open cases
     description: >
-      All open (active) processes must be assigned to a handler.
-      Unassigned open cases represent a governance gap.
-    expectation: expect_column_values_to_not_be_null
-    column: Saksbehandler_kode
+      Every process where ActualEndDate is null (i.e. the case is still open)
+      must be assigned to a handler. Unassigned open cases represent a
+      governance gap.
+    expectation: validate_not_null_when
+    parameters:
+      condition_column: ActualEndDate
+      condition_operator: IS NULL
+      check_columns:
+        - Saksbehandler_kode
+      pk_column: Saksnummer
     severity: high
     category: Completeness
     owner: Saksteam
@@ -190,4 +203,48 @@ rules:
       pk_column: Saksnummer
     severity: critical
     category: Uniqueness
+    owner: Saksteam
+
+  # ---------------------------------------------------------------------------
+  # Active reference validations
+  # ---------------------------------------------------------------------------
+
+  - rule_id: PROC-009
+    name: Saksbehandler_kode must reference an active employee
+    description: >
+      Every handler code assigned to a process must exist as an active employee
+      in the employee register. A handler who has left the organisation must not
+      remain assigned to open cases.
+    expectation: validate_active_reference
+    parameters:
+      source_column: Saksbehandler_kode
+      pk_column: Saksnummer
+      reference:
+        table: Saksbehandling.Ansatte
+        column: AnsattKode
+        active_column: Status
+        active_value: Aktiv
+    severity: high
+    category: Referential Integrity
+    owner: Saksteam
+
+  # ---------------------------------------------------------------------------
+  # Time-in-state validations
+  # ---------------------------------------------------------------------------
+
+  - rule_id: PROC-010
+    name: Open cases must not exceed 30 days without closure
+    description: >
+      A process that has no ActualEndDate (still open) must not have been
+      running for more than 30 days since StartDate. Cases exceeding this
+      threshold require review and reassignment or closure.
+    expectation: validate_time_in_state
+    parameters:
+      start_column: StartDate
+      open_when_column: ActualEndDate
+      open_when_value: null
+      pk_column: Saksnummer
+      max_days: 30
+    severity: high
+    category: Business Logic
     owner: Saksteam
