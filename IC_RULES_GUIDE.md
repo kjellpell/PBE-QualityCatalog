@@ -62,6 +62,29 @@ Do not reuse rule IDs. If a rule is retired, leave its ID unused.
 
 ---
 
+## How To Add A Rule
+
+1. Pick the next IC rule ID in your domain (for example `IC-PROC-012`).
+2. Choose an expectation — see `RULES_GUIDE.md` for the full reference, or use the starter examples below.
+3. Use `column` for single-column checks, or `parameters` for multi-column/advanced checks.
+4. Set severity, category, owner, description, and at least one IC identifier field (`control_ref`, `control_type`, or `risk_domain`).
+5. Ensure `pk_column` is correct for the rule group.
+
+Canonical conditional parameter design:
+
+- Use `operator` for condition/comparison operators.
+- Use `value` only when the selected operator needs a value.
+- Do not use legacy keys such as `condition_operator` or `condition_value`.
+
+PK guidance:
+
+- Prefer setting `pk_column` once at catalog level (header).
+- Rules inherit that PK automatically when `parameters.pk_column` is omitted.
+- Set `parameters.pk_column` on a rule only when that specific rule needs a different identifier.
+- Do not mix `pk_column` values within a rule group — one rule group must use one consistent PK across all its rules, or Power BI drill-through breaks.
+
+---
+
 ## The Four IC-Only YAML Fields
 
 Add these fields below the standard `owner:` field in any rule you want treated as an IC rule.
@@ -146,6 +169,61 @@ rules:
 
 ---
 
+## Catalog-Level Optional Settings
+
+IC catalogs support the same optional header settings as DQ catalogs.
+
+### `catalog_filter`
+
+Limits source rows before rules run. Useful for scoping IC checks to recent or active records only.
+
+Date range form:
+
+```yaml
+catalog_filter:
+  type: date_range
+  date_column: CreatedDate
+  lookback_days: 90
+  include_nulls: false
+```
+
+Custom predicate form:
+
+```yaml
+catalog_filter:
+  type: custom
+  where_clause: "Status IN ('Open', 'Pending')"
+```
+
+### `joins`
+
+Pre-joins additional tables before validation. Required when IC rules need columns from a related table.
+
+```yaml
+joins:
+  - table: Saksbehandling.saker
+    on: Saksnummer
+    how: left
+    select:
+      - Saksnummer
+      - Status
+      - Saksbehandler_kode
+```
+
+Each join entry supports:
+- `table` (required)
+- `how` (optional, default `left`)
+- Either `on` OR both `left_on` + `right_on`
+- `select` (optional list of columns from the join table)
+
+Notes:
+
+- Catalog filters can be overridden at runtime via `CATALOG_FILTER_OVERRIDES` in runtime config.
+- Column names used in `catalog_filter` and rule parameters are contract-checked in preflight.
+- See `RULES_GUIDE.md` for additional examples.
+
+---
+
 ## IC Exception Lifecycle
 
 When a violation is first seen, it is inserted into `ic_exceptions` with `ic_status = Open`.
@@ -227,6 +305,19 @@ These two expectations are particularly relevant for internal controls:
 **`validate_time_in_state`** is suited to SLA and timeliness controls — for example, ensuring that open cases are reviewed within 30 days or that unpaid invoices are escalated within 60 days. Pair with `remediation_due_days` to set an SLA on fixing the violation once it is detected.
 
 Both expectations generalise across tables and columns — the same expectation works for process handlers, invoice approvers, or any other reference relationship or time threshold in your domain.
+
+---
+
+## Good Naming Guidelines
+
+A good IC rule name is:
+
+- Short
+- Specific
+- Clear to a non-technical control reviewer
+- Explicit about the expected behavior
+
+Good example: `ApprovedBy must not equal CreatedBy`
 
 ---
 
