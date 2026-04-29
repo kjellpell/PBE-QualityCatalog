@@ -309,6 +309,26 @@ def _align_df_to_table_schema(df, table_name: str):
     return aligned.select(*target_names)
 
 
+def _apply_default_pk_column(rule: dict, catalog_pk_col: str | None) -> dict:
+    """Return a rule copy with parameters.pk_column defaulted from catalog PK."""
+    if not catalog_pk_col:
+        return rule
+
+    params = rule.get("parameters")
+    if isinstance(params, dict):
+        current_pk = params.get("pk_column")
+        if current_pk not in (None, ""):
+            return rule
+        params_out = dict(params)
+    else:
+        params_out = {}
+
+    params_out["pk_column"] = catalog_pk_col
+    rule_out = dict(rule)
+    rule_out["parameters"] = params_out
+    return rule_out
+
+
 # CELL 6 — Main validation engine
 # -----------------------------------------------------------------------------
 def run_validation(
@@ -342,6 +362,8 @@ def run_validation(
     violation_dfs  = []
 
     for rule in rules:
+        rule = _apply_default_pk_column(rule, pk_col)
+
         rule_id   = rule["rule_id"]
         rule_name = rule["name"]
         exp_name  = rule["expectation"]
