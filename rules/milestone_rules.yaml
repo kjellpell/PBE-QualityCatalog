@@ -40,8 +40,8 @@
 #                        parameters: value_column, group_column,
 #                                    pairs ([[start_type, stop_type], ...])
 #                      validate_not_null_when
-#                        parameters: condition_column, condition_operator (== or IS NOT NULL),
-#                                    condition_value, check_columns (list), pk_column
+#                        parameters: condition_column, operator (== or IS NOT NULL or IS NULL),
+#                                    value (when operator ==), check_columns (list), pk_column
 #        SQL fallback: sql_validation / sql (shorthand)
 #                        parameters: sql (multiline query),
 #                                    pk_column (optional column in result)

@@ -821,8 +821,8 @@ class ValidateNotNullWhenExpectation:
 
     YAML parameters:
       condition_column   - column that triggers the check
-      condition_operator - "==" (equality) or "IS NOT NULL"
-      condition_value    - required when operator is "=="
+            operator           - "==" (equality), "IS NOT NULL", or "IS NULL"
+            value              - required when operator is "=="
       check_columns      - list of columns that must be NOT NULL when triggered
       pk_column          - primary key column
     """
@@ -830,8 +830,8 @@ class ValidateNotNullWhenExpectation:
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params        = rule.get("parameters", {})
         condition_col = params.get("condition_column")
-        condition_op  = params.get("condition_operator", "==")
-        condition_val = params.get("condition_value")
+        condition_op  = params.get("operator", "==")
+        condition_val = params.get("value")
         check_cols    = params.get("check_columns", [])
         pk_col        = params.get("pk_column", "id")
 
@@ -844,18 +844,27 @@ class ValidateNotNullWhenExpectation:
                 _empty_violations(spark),
             )
 
-        if condition_op not in ("==", "IS NOT NULL"):
+        if condition_op not in ("==", "IS NOT NULL", "IS NULL"):
             return (
                 _error_result(
-                    f"Unsupported condition_operator '{condition_op}'. "
-                    "Allowed: '==', 'IS NOT NULL'"
+                    f"Unsupported operator '{condition_op}'. "
+                    "Allowed: '==', 'IS NOT NULL', 'IS NULL'"
                 ),
+                _empty_violations(spark),
+            )
+
+        if condition_op == "==" and condition_val is None:
+            return (
+                _error_result("Parameter 'value' is required when operator is '=='."),
                 _empty_violations(spark),
             )
 
         if condition_op == "IS NOT NULL":
             conditional_rows = df.filter(F.col(condition_col).isNotNull())
             cond_label = f"{condition_col} IS NOT NULL"
+        elif condition_op == "IS NULL":
+            conditional_rows = df.filter(F.col(condition_col).isNull())
+            cond_label = f"{condition_col} IS NULL"
         else:
             conditional_rows = df.filter(F.col(condition_col) == condition_val)
             cond_label = f"{condition_col} == '{condition_val}'"
@@ -1521,8 +1530,8 @@ class ValidateConditionalColumnValueExpectation:
 
     YAML parameters:
       condition_column   - column checked for the trigger condition
-      condition_operator - comparison operator: <, >, <=, >=, ==, !=
-      condition_value    - threshold value for the trigger condition
+            operator           - comparison operator: <, >, <=, >=, ==, !=
+            value              - threshold value for the trigger condition
       required_column    - column that must equal required_value when triggered
       required_value     - the required value for required_column
       pk_column          - primary key column
@@ -1541,8 +1550,8 @@ class ValidateConditionalColumnValueExpectation:
         params = rule.get("parameters", {})
 
         condition_col = params.get("condition_column")
-        condition_op  = params.get("condition_operator", "<")
-        condition_val = params.get("condition_value", 0)
+        condition_op  = params.get("operator", "<")
+        condition_val = params.get("value", 0)
         required_col  = params.get("required_column")
         required_val  = params.get("required_value")
         pk_col        = params.get("pk_column", "id")
@@ -1559,7 +1568,7 @@ class ValidateConditionalColumnValueExpectation:
         if condition_op not in self._CONDITIONS:
             return (
                 _error_result(
-                    f"Unsupported condition_operator '{condition_op}'. "
+                    f"Unsupported operator '{condition_op}'. "
                     f"Allowed: {sorted(self._CONDITIONS)}"
                 ),
                 _empty_violations(spark),

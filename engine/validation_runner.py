@@ -181,6 +181,7 @@ def _load_all_rules() -> list[dict]:
         database:   <str>          # optional
         pk_column:  <str>          # optional, default "id"
         joins:      [...]          # optional
+        catalog_filter: {...}      # optional (date_range/custom)
         rules:      [...]
 
     Files are loaded alphabetically.
@@ -221,6 +222,7 @@ def _load_all_rules() -> list[dict]:
             "database":   doc.get("database", ""),
             "pk_column":  doc.get("pk_column", "id"),
             "joins":      doc.get("joins") or [],
+            "catalog_filter": doc.get("catalog_filter"),
             "rules":      rules,
         }
         catalogs.append(catalog)
@@ -327,6 +329,64 @@ def _apply_default_pk_column(rule: dict, catalog_pk_col: str | None) -> dict:
     rule_out = dict(rule)
     rule_out["parameters"] = params_out
     return rule_out
+
+
+def _resolve_catalog_filter(catalog: dict, runtime_module) -> dict | None:
+    """Resolve effective catalog filter with optional runtime override."""
+    base_filter = catalog.get("catalog_filter")
+    overrides = getattr(runtime_module, "CATALOG_FILTER_OVERRIDES", {}) or {}
+    if not isinstance(overrides, dict):
+        raise ValueError("CATALOG_FILTER_OVERRIDES must be a dict keyed by rule_group.")
+
+    rule_group = catalog.get("rule_group")
+    if rule_group in overrides:
+        return overrides[rule_group]
+    return base_filter
+
+
+def _apply_catalog_filter(source_df, catalog_filter: dict | None, rule_group: str):
+    """Apply catalog-level source filtering and return (filtered_df, description)."""
+    if not catalog_filter:
+        return source_df, None
+    if not isinstance(catalog_filter, dict):
+        raise ValueError(f"[{rule_group}] catalog_filter must be a mapping.")
+
+    filter_type = catalog_filter.get("type")
+    if filter_type == "date_range":
+        date_column = catalog_filter.get("date_column")
+        lookback_days = catalog_filter.get("lookback_days")
+        include_nulls = bool(catalog_filter.get("include_nulls", False))
+
+        if not date_column or not isinstance(date_column, str):
+            raise ValueError(f"[{rule_group}] catalog_filter.date_column is required for date_range.")
+        if date_column not in source_df.columns:
+            raise ValueError(f"[{rule_group}] catalog_filter.date_column '{date_column}' not found in source columns.")
+        if lookback_days is None:
+            raise ValueError(f"[{rule_group}] catalog_filter.lookback_days is required for date_range.")
+        if int(lookback_days) < 0:
+            raise ValueError(f"[{rule_group}] catalog_filter.lookback_days must be >= 0.")
+
+        cutoff_expr = F.date_sub(F.current_date(), int(lookback_days))
+        predicate = F.col(date_column).cast("date") >= cutoff_expr
+        if include_nulls:
+            predicate = predicate | F.col(date_column).isNull()
+        filtered_df = source_df.filter(predicate)
+        desc = (
+            f"date_range: {date_column} >= current_date()-{int(lookback_days)}"
+            + (" (including NULLs)" if include_nulls else "")
+        )
+        return filtered_df, desc
+
+    if filter_type == "custom":
+        where_clause = catalog_filter.get("where_clause")
+        if not where_clause or not isinstance(where_clause, str):
+            raise ValueError(f"[{rule_group}] catalog_filter.where_clause is required for custom filter.")
+        return source_df.filter(F.expr(where_clause)), f"custom: {where_clause}"
+
+    raise ValueError(
+        f"[{rule_group}] Unsupported catalog_filter.type '{filter_type}'. "
+        "Allowed: 'date_range', 'custom'."
+    )
 
 
 # CELL 6 — Main validation engine
@@ -650,11 +710,17 @@ def main() -> tuple[int, int]:
                     f"Expected 'on' or both 'left_on'/'right_on': {join_cfg}"
                 )
 
+        effective_filter = _resolve_catalog_filter(catalog, RUNTIME)
+        source_df, filter_desc = _apply_catalog_filter(source_df, effective_filter, rule_group)
+        if filter_desc:
+            print(f"  Applied catalog filter: {filter_desc}")
+
         # Cache source DataFrame so that each rule in this catalog reads it
         # from memory rather than re-scanning the table (and re-executing any
         # joins) on every rule.
         source_df = source_df.cache()
-        source_df.count()  # materialise the cache before rules run
+        scoped_count = source_df.count()  # materialise the cache before rules run
+        print(f"  Rows after joins/filters: {scoped_count:,}")
 
         try:
             results_df, violations_df = run_validation(

@@ -15,8 +15,8 @@
 #                     expect_column_values_to_be_greater_than
 #                     expect_column_values_to_be_in_set
 #        Generic:     validate_conditional_column_value
-#                       parameters: condition_column, condition_operator (<,>,<=,>=,==,!=),
-#                                   condition_value, required_column, required_value,
+#                       parameters: condition_column, operator (<,>,<=,>=,==,!=),
+#                                   value, required_column, required_value,
 #                                   pk_column
 #                     validate_group_aggregate_match
 #                       parameters: group_column, aggregate_column, reference_column,
@@ -109,8 +109,8 @@ rules:
     expectation: validate_conditional_column_value
     parameters:
       condition_column: linje_belop
-      condition_operator: "<"
-      condition_value: 0
+      operator: "<"
+      value: 0
       required_column: Faktura_type
       required_value: Kreditnota
       pk_column: Fakturanr

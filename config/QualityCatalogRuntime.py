@@ -40,3 +40,24 @@ RETRYABLE_ERROR_MARKERS = [
     "unavailable",
     "throttle",
 ]
+
+# ---------------------------------------------------------------------------
+# Optional catalog-level source filter overrides keyed by rule_group.
+#
+# Example:
+#   CATALOG_FILTER_OVERRIDES = {
+#       "Process": {
+#           "type": "date_range",
+#           "date_column": "ActualEndDate",
+#           "lookback_days": 90,
+#           "include_nulls": True,
+#       },
+#       "Invoice": {
+#           "type": "custom",
+#           "where_clause": "FakturaDato >= date_sub(current_date(), 30)",
+#       },
+#   }
+#
+# Set a rule_group override to None to disable its YAML catalog_filter.
+# ---------------------------------------------------------------------------
+CATALOG_FILTER_OVERRIDES = {}

@@ -159,6 +159,69 @@ def _check_columns_for_catalog(
     return warnings
 
 
+def _check_parameter_contract_for_catalog(catalog: dict, yaml_name: str) -> list[str]:
+    """Validate strict canonical parameter contract for conditional rules."""
+    errors: list[str] = []
+    for rule in catalog.get("rules", []):
+        rule_id = rule.get("rule_id", "?")
+        params = rule.get("parameters") or {}
+        if not isinstance(params, dict):
+            continue
+
+        if "condition_operator" in params:
+            errors.append(
+                f"[{yaml_name} / {rule_id}] Deprecated key 'condition_operator' is not allowed; use 'operator'."
+            )
+        if "condition_value" in params:
+            errors.append(
+                f"[{yaml_name} / {rule_id}] Deprecated key 'condition_value' is not allowed; use 'value'."
+            )
+    return errors
+
+
+def _check_catalog_filter(catalog: dict, source_columns: set[str], yaml_name: str) -> list[str]:
+    """Validate optional catalog_filter block."""
+    errors: list[str] = []
+    rule_group = catalog.get("rule_group", "?")
+    filt = catalog.get("catalog_filter")
+    if filt is None:
+        return errors
+    if not isinstance(filt, dict):
+        return [f"[{yaml_name} / {rule_group}] catalog_filter must be a mapping."]
+
+    ftype = filt.get("type")
+    if ftype not in {"date_range", "custom"}:
+        return [
+            f"[{yaml_name} / {rule_group}] Unsupported catalog_filter.type '{ftype}'. "
+            "Allowed: date_range, custom."
+        ]
+
+    if ftype == "date_range":
+        date_col = filt.get("date_column")
+        lookback = filt.get("lookback_days")
+        if not date_col or not isinstance(date_col, str):
+            errors.append(f"[{yaml_name} / {rule_group}] catalog_filter.date_column is required for date_range.")
+        elif date_col not in source_columns:
+            errors.append(
+                f"[{yaml_name} / {rule_group}] catalog_filter.date_column '{date_col}' not found in source table."
+            )
+        if lookback is None:
+            errors.append(f"[{yaml_name} / {rule_group}] catalog_filter.lookback_days is required for date_range.")
+        else:
+            try:
+                if int(lookback) < 0:
+                    errors.append(f"[{yaml_name} / {rule_group}] catalog_filter.lookback_days must be >= 0.")
+            except Exception:
+                errors.append(f"[{yaml_name} / {rule_group}] catalog_filter.lookback_days must be an integer.")
+
+    if ftype == "custom":
+        where_clause = filt.get("where_clause")
+        if not where_clause or not isinstance(where_clause, str):
+            errors.append(f"[{yaml_name} / {rule_group}] catalog_filter.where_clause is required for custom.")
+
+    return errors
+
+
 def main() -> None:
     config_module, config_path = load_config_module("QualityCatalogConfig")
     runtime_module, runtime_path = load_config_module("QualityCatalogRuntime")
@@ -198,6 +261,7 @@ def main() -> None:
     spark = SparkSession.builder.getOrCreate()
     missing_sources: list[str] = []
     column_warnings: list[str] = []
+    contract_errors: list[str] = []
 
     for yaml_path in yaml_files:
         with open(yaml_path, "r", encoding="utf-8") as handle:
@@ -217,11 +281,21 @@ def main() -> None:
             column_warnings.extend(
                 _check_columns_for_catalog(catalog, source_cols, yaml_path.name)
             )
+            contract_errors.extend(
+                _check_parameter_contract_for_catalog(catalog, yaml_path.name)
+            )
+            contract_errors.extend(
+                _check_catalog_filter(catalog, source_cols, yaml_path.name)
+            )
         except Exception as exc:
             print(f"  Warning: could not read schema for {full_table}: {exc}")
 
     if missing_sources:
         raise RuntimeError(f"Missing source tables: {sorted(set(missing_sources))}")
+
+    if contract_errors:
+        msg = "\n".join(contract_errors)
+        raise RuntimeError(f"Preflight failed due to rule contract errors:\n{msg}")
 
     if column_warnings:
         print("\n[PREFLIGHT] Column reference warnings (rules will error at runtime):")

@@ -13,8 +13,8 @@
 #                                    operator (>, <, >=, <=, ==, !=),
 #                                    pk_column
 #                      validate_not_null_when
-#                        parameters: condition_column, condition_operator (== or IS NOT NULL or IS NULL),
-#                                    condition_value, check_columns (list), pk_column
+#                        parameters: condition_column, operator (== or IS NOT NULL or IS NULL),
+#                                    value (when operator ==), check_columns (list), pk_column
 #                      validate_aggregate_rule
 #                        parameters: column, aggregate (sum/count/avg/min/max),
 #                                    operator (>,<,>=,<=,==,!=), threshold
@@ -54,6 +54,12 @@ description: Data quality rules for the main process / case records (Prosesser)
 # and pass the primary key column to run_validation().
 pk_column: Saksnummer
 
+# Optional source scoping during validation.
+# Use date_range when a reliable date column exists, otherwise use custom.
+catalog_filter:
+  type: custom
+  where_clause: "Status IN ('Open', 'Pending')"
+
 # Optional pre-joins applied before validation.
 # Each entry specifies a table to join, the join key, join strategy, and
 # (optionally) a list of columns to select from the joined table.
@@ -64,6 +70,7 @@ joins:
     select:
       - Saksnummer
       - Status
+      - Saksbehandler_kode
 
 rules:
 
@@ -102,7 +109,7 @@ rules:
     expectation: validate_not_null_when
     parameters:
       condition_column: ActualEndDate
-      condition_operator: IS NULL
+      operator: IS NULL
       check_columns:
         - Saksbehandler_kode
       pk_column: Saksnummer

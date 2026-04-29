@@ -374,8 +374,8 @@ class TestValidateNotNullWhenExpectation:
             "expectation": "validate_not_null_when",
             "parameters": {
                 "condition_column":   "status",
-                "condition_operator": "==",
-                "condition_value":    "Closed",
+                "operator":           "==",
+                "value":              "Closed",
                 "check_columns":      ["start_dt", "stop_dt"],
                 "pk_column":          "id",
             },
@@ -396,8 +396,8 @@ class TestValidateNotNullWhenExpectation:
             "expectation": "validate_not_null_when",
             "parameters": {
                 "condition_column":   "status",
-                "condition_operator": "==",
-                "condition_value":    "Closed",
+                "operator":           "==",
+                "value":              "Closed",
                 "check_columns":      ["start_dt", "stop_dt"],
                 "pk_column":          "id",
             },
@@ -419,9 +419,32 @@ class TestValidateNotNullWhenExpectation:
             "expectation": "validate_not_null_when",
             "parameters": {
                 "condition_column":   "stop_dt",
-                "condition_operator": "IS NOT NULL",
+                "operator":           "IS NOT NULL",
                 "check_columns":      ["start_dt"],
                 "pk_column":          "id",
+            },
+        }
+        result, viols = ValidateNotNullWhenExpectation().validate(df, rule, spark)
+        assert result["status"] == "FAILED"
+        assert viols.count() == 1
+
+    def test_is_null_condition(self, spark):
+        from engine.expectations import ValidateNotNullWhenExpectation
+        # When stop_dt IS NULL, start_dt must not be null
+        df = self._make_df(spark, [
+            ("1", "X", None, None),           # stop null + start null -> violation
+            ("2", "X", "2024-01-01", None),
+            ("3", "X", None, "2024-06-01"),
+        ])
+        rule = {
+            "rule_id": "T-NNW",
+            "name": "test",
+            "expectation": "validate_not_null_when",
+            "parameters": {
+                "condition_column": "stop_dt",
+                "operator": "IS NULL",
+                "check_columns": ["start_dt"],
+                "pk_column": "id",
             },
         }
         result, viols = ValidateNotNullWhenExpectation().validate(df, rule, spark)
@@ -1186,8 +1209,8 @@ class TestValidateConditionalColumnValueExpectation:
             "expectation": "validate_conditional_column_value",
             "parameters": {
                 "condition_column":   "amount",
-                "condition_operator": "<",
-                "condition_value":    0,
+                "operator":           "<",
+                "value":              0,
                 "required_column":    "record_type",
                 "required_value":     "Credit",
                 "pk_column":          "id",
