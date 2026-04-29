@@ -19,6 +19,8 @@ IC_RUN_RESULTS_TABLE      = "ic_run_results"
 IC_EXCEPTIONS_TABLE       = "ic_exceptions"
 IC_CONTROL_REGISTER_TABLE = "ic_control_register"
 IC_ATTESTATIONS_TABLE     = "ic_manual_attestations"
+IC_ATTESTATION_AUTHORIZED_EMAILS = ""
+IC_EXCEPTION_MANAGEMENT_AUTHORIZED_EMAILS = ""
 
 # Power Automate HTTP endpoint for email notifications on new IC exceptions.
 # Store the actual URL in the file below — not in source code.

@@ -29,7 +29,7 @@ notes            = mssparkutils.notebook.getParam("notes",            defaultVal
 # ---------------------------------------------------------------------------
 # CELL 2 — Identity from Fabric session context
 # ---------------------------------------------------------------------------
-attested_by = mssparkutils.runtime.context.get("userName")
+attested_by = (mssparkutils.runtime.context.get("userEmailAddress") or mssparkutils.runtime.context.get("userName") or "").strip().lower()
 assert attested_by, "Could not resolve caller identity from Fabric session"
 
 # ---------------------------------------------------------------------------
@@ -56,9 +56,20 @@ except ValueError:
 import sys
 sys.path.insert(0, "/lakehouse/default/Files/Configs")
 from QualityCatalogConfig import (  # noqa: E402
+    IC_ATTESTATION_AUTHORIZED_EMAILS,
     IC_CONTROL_REGISTER_TABLE,
     IC_ATTESTATIONS_TABLE,
 )
+
+authorized_emails = {e.strip().lower() for e in str(IC_ATTESTATION_AUTHORIZED_EMAILS).split(";") if e.strip()}
+if not authorized_emails:
+    raise RuntimeError(
+        "[AUTH] QualityCatalogConfig.IC_ATTESTATION_AUTHORIZED_EMAILS must contain at least one semicolon-separated e-mail."
+    )
+if attested_by not in authorized_emails:
+    raise PermissionError(
+        "User '{0}' is not authorized for manual attestations. Update QualityCatalogConfig.IC_ATTESTATION_AUTHORIZED_EMAILS to grant access.".format(attested_by)
+    )
 
 control = (
     spark.table(IC_CONTROL_REGISTER_TABLE)

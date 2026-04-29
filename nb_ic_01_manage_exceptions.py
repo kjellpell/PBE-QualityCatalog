@@ -35,7 +35,7 @@ waiver_reason = mssparkutils.notebook.getParam("waiver_reason", defaultValue="")
 # ---------------------------------------------------------------------------
 # CELL 2 — Resolve caller identity from Fabric session context
 # ---------------------------------------------------------------------------
-actioned_by = mssparkutils.runtime.context.get("userName")
+actioned_by = (mssparkutils.runtime.context.get("userEmailAddress") or mssparkutils.runtime.context.get("userName") or "").strip().lower()
 assert actioned_by, "Could not resolve caller identity from Fabric session"
 
 # ---------------------------------------------------------------------------
@@ -56,7 +56,20 @@ if new_status == "Waived":
 # ---------------------------------------------------------------------------
 import sys
 sys.path.insert(0, "/lakehouse/default/Files/Configs")
-from QualityCatalogConfig import IC_EXCEPTIONS_TABLE  # noqa: E402
+from QualityCatalogConfig import (  # noqa: E402
+    IC_EXCEPTION_MANAGEMENT_AUTHORIZED_EMAILS,
+    IC_EXCEPTIONS_TABLE,
+)
+
+authorized_emails = {e.strip().lower() for e in str(IC_EXCEPTION_MANAGEMENT_AUTHORIZED_EMAILS).split(";") if e.strip()}
+if not authorized_emails:
+    raise RuntimeError(
+        "[AUTH] QualityCatalogConfig.IC_EXCEPTION_MANAGEMENT_AUTHORIZED_EMAILS must contain at least one semicolon-separated e-mail."
+    )
+if actioned_by not in authorized_emails:
+    raise PermissionError(
+        "User '{0}' is not authorized to manage IC exceptions. Update QualityCatalogConfig.IC_EXCEPTION_MANAGEMENT_AUTHORIZED_EMAILS to grant access.".format(actioned_by)
+    )
 
 now = datetime.now(timezone.utc)
 
