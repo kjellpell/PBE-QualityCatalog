@@ -79,9 +79,48 @@ _vr_spec = importlib.util.spec_from_file_location("validation_runner", str(RUNNE
 _vr_mod = importlib.util.module_from_spec(_vr_spec)
 _vr_spec.loader.exec_module(_vr_mod)  # runs config loading, SparkSession setup, globals
 
-results_count, violations_count = _vr_mod.main()
+try:
+    results_count, violations_count = _vr_mod.main()
 
-finished = datetime.now(timezone.utc)
+    finished = datetime.now(timezone.utc)
+    _vr_mod.write_execution_metric(
+        spark,
+        _vr_mod.TARGETS["execution_metrics_table"],
+        {
+            "script_name": "nb_dq_03_run_validation",
+            "status": "Succeeded",
+            "dry_run": _vr_mod.RUNTIME.DRY_RUN,
+            "output_target": _vr_mod.TARGETS["results_table"],
+            "artifact_target": _vr_mod.TARGETS["violations_table"],
+            "row_count": int(results_count),
+            "started_at_utc": started,
+            "finished_at_utc": finished,
+            "duration_seconds": float((finished - started).total_seconds()),
+            "is_retryable": False,
+            "error_message": None,
+        },
+    )
+except Exception as exc:
+    finished = datetime.now(timezone.utc)
+    _vr_mod.write_execution_metric(
+        spark,
+        _vr_mod.TARGETS["execution_metrics_table"],
+        {
+            "script_name": "nb_dq_03_run_validation",
+            "status": "Failed",
+            "dry_run": _vr_mod.RUNTIME.DRY_RUN,
+            "output_target": _vr_mod.TARGETS["results_table"],
+            "artifact_target": _vr_mod.TARGETS["violations_table"],
+            "row_count": 0,
+            "started_at_utc": started,
+            "finished_at_utc": finished,
+            "duration_seconds": float((finished - started).total_seconds()),
+            "is_retryable": _vr_mod.classify_retryable_error(str(exc), _vr_mod.RUNTIME),
+            "error_message": str(exc)[:4000],
+        },
+    )
+    raise
+
 print(f"Validation runner finished at {finished.isoformat()}")
 print(f"Duration seconds: {(finished - started).total_seconds():.1f}")
 
