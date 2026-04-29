@@ -2,9 +2,8 @@
 
 This guide shows how to create and update data quality rules in plain language.
 
-Rules are managed in the `rule_catalog` Delta table. The YAML files in the `rules/` folder
-are one-time migration source artifacts used to populate `rule_catalog` — they are not
-read by the validation engine at runtime.
+Rules are authored in YAML files in the `rules/` folder. The validation runner loads
+those YAML files at runtime.
 
 ---
 
@@ -34,12 +33,120 @@ If data breaks a rule, it appears in violation output for follow-up.
 
 ## Where Rules Are Managed
 
-Rules are stored in the `rule_catalog` Delta table. Each row is one rule.
+Rules are managed in YAML catalogs under `rules/`.
 
-The YAML files in the `rules/` folder were the original source for the initial
-migration into `rule_catalog` and are **not** used by the validation engine at runtime.
-To add or update rules after the initial migration, insert or update rows directly
-in `rule_catalog`. Ask IT for guidance if needed.
+Each YAML file represents one rule group (for example Process, Invoice, Milestone).
+The validation engine reads those YAML files directly during execution.
+
+To add or update rules, edit the relevant YAML file and run validation.
+The runtime source of truth for rules is the YAML files.
+
+---
+
+## How To Add A Rule
+
+1. Pick the next rule_id in your rule group (for example PROC-011).
+2. Choose an expectation.
+3. Use `column` for single-column checks, or `parameters` for multi-column/advanced checks.
+4. Set severity, category, owner, and a clear business description.
+5. Ensure `pk_column` is correct for the rule group.
+6. Save the YAML and run validation.
+
+Canonical conditional parameter design:
+
+- Use `operator` for condition/comparison operators.
+- Use `value` only when the selected operator needs a value.
+- Do not use legacy keys such as `condition_operator` or `condition_value`.
+
+PK guidance:
+
+- Prefer setting `pk_column` once at catalog level (header).
+- Rules inherit that PK automatically when `parameters.pk_column` is omitted.
+- Set `parameters.pk_column` on a rule only when that specific rule needs a different identifier.
+
+---
+
+## Catalog-Level Settings (Header)
+
+Each YAML catalog starts with a header block before `rules:`.
+These settings apply to all rules in that catalog.
+
+### Required header settings
+
+- `rule_group`
+  - Logical name shown in outputs (for example `Process`, `Invoice`, `Milestone`).
+- `table`
+  - Source table name (for example `Prosesser`).
+- `rules`
+  - List of rule entries.
+
+### Strongly recommended header settings
+
+- `database`
+  - Schema/database name used with `table` (for example `Saksbehandling`).
+  - Engine resolves source as `database.table`.
+- `pk_column`
+  - Main identifier for violations in this catalog.
+  - If omitted, runtime defaults to `id`.
+- `description`
+  - Human-readable catalog summary.
+
+### Optional header settings
+
+- `catalog_filter`
+  - Limits source rows before rules run.
+  - Supported forms:
+    - `type: date_range`
+      - `date_column` (required)
+      - `lookback_days` (required, integer >= 0)
+      - `include_nulls` (optional, default `false`)
+    - `type: custom`
+      - `where_clause` (required SQL predicate)
+
+- `joins`
+  - Pre-joins additional tables before validation.
+  - Each join entry supports:
+    - `table` (required)
+    - `how` (optional, default `left`)
+    - Either `on` OR both `left_on` + `right_on`
+    - `select` (optional list of columns from join table)
+
+Notes:
+
+- Catalog filters can be overridden at runtime via `CATALOG_FILTER_OVERRIDES` in runtime config.
+- Column names used in `catalog_filter` and rule parameters are contract-checked in preflight.
+
+### Complete header example
+
+```yaml
+rule_group: Process
+table: Prosesser
+database: Saksbehandling
+description: Data quality rules for process records
+pk_column: Saksnummer
+
+catalog_filter:
+  type: custom
+  where_clause: "Status IN ('Open', 'Pending')"
+
+joins:
+  - table: Saksbehandling.saker
+    on: Saksnummer
+    how: left
+    select:
+      - Saksnummer
+      - Status
+      - Saksbehandler_kode
+
+rules:
+  - rule_id: PROC-001
+    name: Saksnummer cannot be null
+    expectation: expect_column_values_to_not_be_null
+    column: Saksnummer
+    severity: critical
+    category: Completeness
+    owner: Saksteam
+```
 
 ---
 
@@ -59,6 +166,299 @@ Use this as a starting point:
 ```
 
 Some rule types use parameters instead of a single column field.
+
+---
+
+## Expectation Reference
+
+This section lists the core expectations, their required settings, and practical examples.
+
+Quick overview (one sentence each):
+
+- `expect_column_values_to_not_be_null`: Fails rows where a required field is null.
+- `expect_column_values_to_be_greater_than`: Fails rows where a numeric/date value is not greater than a threshold.
+- `expect_column_values_to_be_in_set`: Fails rows where a value is outside an approved value list.
+- `validate_column_comparison`: Compares two columns in the same row and fails rows where the operator condition is not met.
+- `validate_not_null_when`: Requires one or more columns to be non-null when a condition on another column is true.
+- `validate_aggregate_rule`: Evaluates an aggregate (such as sum or count) and fails when it violates the threshold condition.
+- `validate_conditional_column_value`: Enforces that when one column meets a condition, another column must have a specific value.
+- `expect_row_count_to_be_between`: Fails when the total row count is outside a configured min/max interval.
+- `expect_unique_combination_of_columns`: Fails duplicate rows for a configured composite key.
+- `validate_foreign_key`: Fails rows whose reference value does not exist in the target table.
+- `validate_active_reference`: Fails rows whose reference exists but is not active (or does not exist).
+- `validate_time_in_state`: Fails rows that stay open longer than allowed based on start/open conditions.
+- `validate_sequence_order`: Fails groups where milestone/event order breaks the expected sequence.
+- `validate_paired_presence`: Fails groups where required start/stop milestone pairs are incomplete.
+- `validate_no_orphan`: Fails groups where a stop-type milestone exists without its required start-type milestone.
+- `sql_validation` / `sql`: Runs custom SQL that returns only violating rows.
+
+### Core Built-In Expectations
+
+1. `expect_column_values_to_not_be_null`
+
+Required:
+- `column`
+
+Example:
+
+```yaml
+- rule_id: PROC-011
+  name: StartDate must be present
+  expectation: expect_column_values_to_not_be_null
+  column: StartDate
+  severity: high
+  category: Completeness
+  owner: Saksteam
+```
+
+2. `expect_column_values_to_be_greater_than`
+
+Required:
+- `column`
+- `parameters.value`
+
+Example:
+
+```yaml
+- rule_id: INV-013
+  name: linje_belop must be greater than zero
+  expectation: expect_column_values_to_be_greater_than
+  column: linje_belop
+  parameters:
+    value: 0
+  severity: medium
+  category: Business Logic
+  owner: Finansteam
+```
+
+3. `expect_column_values_to_be_in_set`
+
+Required:
+- `column`
+- `parameters.value_set` (list)
+
+Example:
+
+```yaml
+- rule_id: INV-010
+  name: Faktura_type must be approved
+  expectation: expect_column_values_to_be_in_set
+  column: Faktura_type
+  parameters:
+    value_set:
+      - Standard
+      - Kreditnota
+  severity: medium
+  category: Business Logic
+  owner: Finansteam
+```
+
+### Generic Expectations
+
+1. `validate_column_comparison`
+
+Required:
+- `parameters.column_A`
+- `parameters.column_B`
+- `parameters.operator` (`>`, `<`, `>=`, `<=`, `==`, `!=`)
+
+Optional:
+- `parameters.pk_column` (falls back to catalog-level `pk_column`)
+
+Example:
+
+```yaml
+- rule_id: PROC-012
+  name: ActualEndDate must be on or after StartDate
+  expectation: validate_column_comparison
+  parameters:
+    column_A: ActualEndDate
+    column_B: StartDate
+    operator: ">="
+    pk_column: Saksnummer
+  severity: high
+  category: Business Logic
+  owner: Saksteam
+```
+
+2. `validate_not_null_when`
+
+Required:
+- `parameters.condition_column`
+- `parameters.operator` (`==`, `IS NOT NULL`, `IS NULL`)
+- `parameters.check_columns` (list)
+
+Optional:
+- `parameters.pk_column` (falls back to catalog-level `pk_column`)
+
+Conditional:
+- `parameters.value` is required when `operator == "=="`.
+
+Example:
+
+```yaml
+- rule_id: PROC-003
+  name: Saksbehandler_kode cannot be null for open cases
+  expectation: validate_not_null_when
+  parameters:
+    condition_column: ActualEndDate
+    operator: IS NULL
+    check_columns:
+      - Saksbehandler_kode
+    pk_column: Saksnummer
+  severity: high
+  category: Completeness
+  owner: Saksteam
+```
+
+3. `validate_aggregate_rule`
+
+Required:
+- `parameters.aggregate` (`sum`, `count`, `avg`, `min`, `max`)
+- `parameters.operator` (`>`, `<`, `>=`, `<=`, `==`, `!=`)
+- `parameters.threshold`
+
+Conditional:
+- `parameters.column` is required for all aggregates except `count`.
+
+Example:
+
+```yaml
+- rule_id: INV-014
+  name: Total invoice amount must be positive
+  expectation: validate_aggregate_rule
+  parameters:
+    column: linje_belop
+    aggregate: sum
+    operator: ">"
+    threshold: 0
+  severity: medium
+  category: Aggregate
+  owner: Finansteam
+```
+
+4. `validate_conditional_column_value`
+
+Required:
+- `parameters.condition_column`
+- `parameters.operator` (`>`, `<`, `>=`, `<=`, `==`, `!=`)
+- `parameters.value`
+- `parameters.required_column`
+- `parameters.required_value`
+
+Optional:
+- `parameters.pk_column` (falls back to catalog-level `pk_column`)
+
+Example:
+
+```yaml
+- rule_id: INV-004
+  name: Negative amounts only allowed on credit notes
+  expectation: validate_conditional_column_value
+  parameters:
+    condition_column: linje_belop
+    operator: "<"
+    value: 0
+    required_column: Faktura_type
+    required_value: Kreditnota
+    pk_column: Fakturanr
+  severity: high
+  category: Business Logic
+  owner: Finansteam
+```
+
+### SQL Fallback
+
+1. `sql_validation`
+2. `sql` (shorthand alias)
+
+Required:
+- `parameters.sql` for `sql_validation`
+- top-level `sql` for shorthand form
+
+Optional:
+- `pk_column`
+
+Example:
+
+```yaml
+- rule_id: INV-012
+  name: Invoice totals cannot be zero
+  expectation: sql
+  sql: |
+    SELECT Fakturanr, SUM(linje_belop) AS total_belop
+    FROM Saksbehandling.Fakturalinjer
+    GROUP BY Fakturanr
+    HAVING SUM(linje_belop) = 0
+  severity: medium
+  category: Aggregate
+  owner: Finansteam
+```
+
+SQL rule guidance:
+- SQL must return only violating rows.
+- If SQL returns 0 rows, the rule passes.
+
+### Aggregate / Uniqueness Expectations
+
+1. `expect_row_count_to_be_between`
+
+Required:
+- `parameters.min_value`
+- `parameters.max_value`
+
+2. `expect_unique_combination_of_columns`
+
+Required:
+- `parameters.columns` (list)
+
+Recommended:
+- `parameters.pk_column`
+
+### Cross-Table Expectations
+
+1. `validate_foreign_key`
+
+Required:
+- `parameters.column`
+- `parameters.reference.table`
+- `parameters.reference.column`
+
+Optional:
+- `parameters.pk_column`
+
+Recommended:
+- Set `parameters.pk_column` explicitly for FK rules when the FK column is not the best violation identifier.
+
+2. `validate_active_reference`
+
+Required:
+- `parameters.source_column`
+- `parameters.reference.table`
+- `parameters.reference.column`
+- `parameters.reference.active_column`
+- `parameters.reference.active_value`
+
+Optional:
+- `parameters.pk_column` (falls back to `source_column` if omitted)
+
+3. `validate_time_in_state`
+
+Required:
+- `parameters.start_column`
+- `parameters.open_when_column`
+- `parameters.open_when_value`
+- `parameters.pk_column`
+- `parameters.max_days`
+
+### Sequence / Pair Expectations
+
+1. `validate_sequence_order`
+2. `validate_paired_presence`
+3. `validate_no_orphan`
+
+These are used mainly for milestone-process integrity patterns and support
+group-based sequence/pair validation.
 
 ---
 
@@ -399,7 +799,7 @@ relationship and makes drill-through impossible.
 
 | Rule group | Source table | `pk_column` to use |
 |---|---|---|
-| Process | Saksbehandling.prosesser | `Prosess_id` |
+| Process | Saksbehandling.Prosesser | `Saksnummer` |
 | Invoice | Saksbehandling.fakturalinjer | `Fakturanr` |
 
 If you need to validate records from a different source table, create a **new rule group**
@@ -425,22 +825,15 @@ rule belongs to.
 - Typos in column names
 - Missing required parameters
 - Reusing an existing rule_id
+- Misusing `pk_column` (repeating it per rule or overriding one rule with a different key) instead of keeping one consistent catalog-level key per rule group
 - SQL returning normal rows instead of violating rows
+- SQL not returning a stable identifier column when follow-up/drill-through is needed
 - Severity set too low for high-impact checks
-- Using a different `pk_column` than the rest of the rule group — this breaks the semantic model relationship
 - Using `validate_foreign_key` when the referenced record could be inactive — use `validate_active_reference` instead
 - Setting `open_when_value` to a string when the column uses a date — use `null` for date columns with no end date
-
----
-
-## When To Ask IT For Help
-
-Ask IT when:
-
-- You need an expectation type not listed in this guide
-- You are unsure whether to use YAML parameters or SQL
-- Preflight fails due to missing source tables/config
-- You need help with technical run failures
+- Using `operator: "=="` in `validate_not_null_when` but forgetting `value`
+- Misconfiguring `catalog_filter` (for example missing `lookback_days` for `date_range`)
+- Defining a join without `on` (or `left_on` + `right_on`), which causes the join to be skipped
 
 ---
 
