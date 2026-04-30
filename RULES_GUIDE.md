@@ -7,6 +7,22 @@ those YAML files at runtime.
 
 ---
 
+## Read This First: Safe Testing With DRY_RUN
+
+Before enabling new or changed rules, run at least one validation with `DRY_RUN = True`.
+
+In dry run mode, outputs are written to temporary tables instead of production tables:
+
+- `dq_run_results_tmp`
+- `dq_violations_tmp`
+- `default.dq_execution_metrics_tmp`
+
+This prevents polluting production violation tables while validating rule behavior.
+Only switch to production mode (`DRY_RUN = False`) after preflight passes and dry-run
+results look correct.
+
+---
+
 ## Who This Guide Is For
 
 This guide is for business users who own rule content and quality policy.
@@ -822,18 +838,19 @@ rule belongs to.
 
 ## Common Mistakes To Avoid
 
+- Running new/changed rules directly with `DRY_RUN = False`, which can pollute production violation tables and create noisy follow-up work
 - Typos in column names
 - Missing required parameters
 - Reusing an existing rule_id
-- Misusing `pk_column` (repeating it per rule or overriding one rule with a different key) instead of keeping one consistent catalog-level key per rule group
-- SQL returning normal rows instead of violating rows
-- SQL not returning a stable identifier column when follow-up/drill-through is needed
+- Misusing `pk_column`, repeating it per rule or overriding one rule, instead of keeping one consistent catalog-level key per rule group
 - Severity set too low for high-impact checks
 - Using `validate_foreign_key` when the referenced record could be inactive — use `validate_active_reference` instead
 - Setting `open_when_value` to a string when the column uses a date — use `null` for date columns with no end date
 - Using `operator: "=="` in `validate_not_null_when` but forgetting `value`
 - Misconfiguring `catalog_filter` (for example missing `lookback_days` for `date_range`)
 - Defining a join without `on` (or `left_on` + `right_on`), which causes the join to be skipped
+- SQL returning normal rows instead of violating rows
+- SQL not returning a stable identifier column when follow-up/drill-through is needed
 
 ---
 

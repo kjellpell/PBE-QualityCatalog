@@ -9,6 +9,22 @@ or update rules.
 
 ---
 
+## Read This First: Safe Testing With DRY_RUN
+
+Before enabling or changing IC rules, run at least one validation with `DRY_RUN = True`.
+
+In dry run mode, outputs are written to temporary tables instead of production tables:
+
+- `dq_run_results_tmp`
+- `dq_violations_tmp`
+- `default.dq_execution_metrics_tmp`
+
+This prevents polluting production exception/violation tables while validating rule logic.
+Only switch to production mode (`DRY_RUN = False`) after preflight passes and dry-run
+results look correct.
+
+---
+
 ## Who This Guide Is For
 
 This guide is for control owners and risk managers who define internal control requirements.
@@ -340,6 +356,7 @@ Good example: `ApprovedBy must not equal CreatedBy`
 
 | Mistake | Effect | Fix |
 |---------|--------|-----|
+| Running new/changed rules directly with `DRY_RUN = False` | Bad logic can pollute production violation/exception tables and create noisy remediation work | Run preflight first and execute at least one dry run before production mode |
 | Using `PROC-` prefix instead of `IC-PROC-` | Rule ID collides with DQ rules in process_rules.yaml | Use `IC-PROC-` for IC rules |
 | Not setting any IC identifier field | Rule treated as DQ, violations go to dq_violations only, no 4-state lifecycle | Add at least one of control_ref, control_type, risk_domain |
 | Column name typo in parameters | Preflight warns; rule runs as ERROR | Run preflight and check warnings |
