@@ -1,364 +1,227 @@
 # IC Rules Guide For Control Owners
 
-This guide explains how to write and maintain Internal Control (IC) rules.
+This guide explains how to define Internal Control (IC) rules with the canonical naming model.
 
-IC rules use the same engine as data quality rules. Rules are managed in the `rule_catalog`
-Delta table — the YAML files in `rules/` are one-time migration source artifacts and are
-**not** read by the validation engine at runtime. No Python code changes are needed to add
-or update rules.
+IC rules use the same validation engine as DQ rules, but produce IC exception lifecycle output.
 
----
+## Start Here
 
-## Read This First: Safe Testing With DRY_RUN
-
-Before enabling or changing IC rules, run at least one validation with `DRY_RUN = True`.
-
-In dry run mode, outputs are written to temporary tables instead of production tables:
-
-- `dq_run_results_tmp`
-- `dq_violations_tmp`
-- `default.dq_execution_metrics_tmp`
-
-This prevents polluting production exception/violation tables while validating rule logic.
-Only switch to production mode (`DRY_RUN = False`) after preflight passes and dry-run
-results look correct.
-
----
-
-## Who This Guide Is For
-
-This guide is for control owners and risk managers who define internal control requirements.
-
-For data quality rules (completeness, format, referential integrity), use `RULES_GUIDE.md` instead.
-
-For engine, deployment, or runtime details, use `README.md`.
-
----
-
-## What An IC Rule Is
-
-An IC rule is an automated check that verifies an internal control is operating effectively.
+Use this guide when the intent is control effectiveness, not only data quality.
 
 Examples:
+- Segregation of duties
+- Timeliness/SLA controls
+- Mandatory completion before state transition
+- Active assignment controls
 
-- The person who approves a payment is not the same person who requested it (segregation of duties)
-- A case cannot be closed until all mandatory milestones are completed
-- An invoice is not paid before it is approved
+Use [RULES_GUIDE.md](RULES_GUIDE.md) for shared expectation patterns.
+Use [README.md](README.md) for runtime/deployment.
 
-When data fails an IC rule, the violation is recorded in `ic_exceptions` and enters a lifecycle that requires human sign-off before it is closed.
+## Fabric Notebook Workflow
 
----
+1. Update IC rule definitions in your managed source.
+2. Run [nb_dq_01_preflight.py](nb_dq_01_preflight.py).
+3. Run with `DRY_RUN = True`.
+4. Review `ic_exceptions_tmp` and DQ temp outputs.
+5. Switch to `DRY_RUN = False` only after sign-off.
 
-## How IC Rules Differ From DQ Rules
+## What Makes A Rule IC
 
-| Aspect | DQ Rule | IC Rule |
-|--------|---------|---------|
-| Purpose | Data quality (completeness, format, consistency) | Control effectiveness |
-| Output tables | `dq_run_results`, `dq_violations` | Both the above **plus** `ic_run_results`, `ic_exceptions` |
-| Exception lifecycle | Active → Resolved (automatic when data is fixed) | Open → Remediated → Verified (or Waived) — humans must sign off |
-| "Not seen in current run" | Auto-resolves | Stays Open — not auto-closed |
-| Extra YAML fields | None | `control_ref`, `control_type`, `risk_domain`, `remediation_due_days` |
+A rule is treated as IC when at least one IC identifier is present:
+- `control_ref`
+- `control_type`
+- `risk_domain`
 
-A rule is treated as IC if it carries at least one of: `control_ref`, `control_type`, `risk_domain`.
+Without these, the rule behaves as a standard DQ rule.
 
----
+## IC vs DQ Behavior
 
-## Rule ID Naming Convention
+| Aspect | DQ | IC |
+|---|---|---|
+| Purpose | Data quality | Control effectiveness |
+| Extra output | None | `ic_run_results`, `ic_exceptions` |
+| Auto-close when issue disappears | Yes (`dq_violations`) | No, human transition required |
+| Lifecycle | Active/Resolved | Open/Remediated/Verified/Waived |
 
-IC rule IDs use the `IC-` prefix followed by a domain shortcode and a number:
+## IC Rule ID Convention
 
 | Domain | Prefix | Example |
-|--------|--------|---------|
-| Process / case management | `IC-PROC-` | `IC-PROC-001` |
-| Invoice / finance | `IC-INV-` | `IC-INV-001` |
-| IT / access | `IC-IT-` | `IC-IT-001` |
-| HR / people | `IC-HR-` | `IC-HR-001` |
+|---|---|---|
+| Process | `IC-PROC-` | `IC-PROC-001` |
+| Invoice | `IC-INV-` | `IC-INV-001` |
+| IT | `IC-IT-` | `IC-IT-001` |
+| HR | `IC-HR-` | `IC-HR-001` |
 
-Do not reuse rule IDs. If a rule is retired, leave its ID unused.
+Do not reuse retired IDs.
 
----
+## Canonical Contract For IC Rules
 
-## How To Add A Rule
+IC rules use the same canonical expectation and parameter naming as DQ rules.
 
-1. Pick the next IC rule ID in your domain (for example `IC-PROC-012`).
-2. Choose an expectation — see `RULES_GUIDE.md` for the full reference, or use the starter examples below.
-3. Use `column` for single-column checks, or `parameters` for multi-column/advanced checks.
-4. Set severity, category, owner, description, and at least one IC identifier field (`control_ref`, `control_type`, or `risk_domain`).
-5. Ensure `pk_column` is correct for the rule group.
+### Operator taxonomy
 
-Canonical conditional parameter design:
+| Operator family | Allowed values | Typical IC use |
+|---|---|---|
+| Trigger operators | `IS NULL`, `IS NOT NULL`, `==` | "If case is open then owner required" |
+| Comparison operators | `>`, `<`, `>=`, `<=`, `==`, `!=` | SoD, date ordering, thresholds |
 
-- Use `operator` for condition/comparison operators.
-- Use `value` only when the selected operator needs a value.
-- Do not use legacy keys such as `condition_operator` or `condition_value`.
+## IC-Only Fields
 
-PK guidance:
-
-- Prefer setting `pk_column` once at catalog level (header).
-- Rules inherit that PK automatically when `parameters.pk_column` is omitted.
-- Set `parameters.pk_column` on a rule only when that specific rule needs a different identifier.
-- Do not mix `pk_column` values within a rule group — one rule group must use one consistent PK across all its rules, or Power BI drill-through breaks.
-
----
-
-## The Four IC-Only YAML Fields
-
-Add these fields below the standard `owner:` field in any rule you want treated as an IC rule.
+Add below standard rule metadata.
 
 ```yaml
-control_ref: COSO-CC5.2         # optional — framework reference (free text)
-control_type: Detective          # optional — Preventive | Detective | Corrective
-risk_domain: Financial           # optional — Financial | Operational | Compliance | IT
-remediation_due_days: 5          # optional — positive integer, SLA in calendar days
+control_ref: COSO-CC5.2
+control_type: Detective
+risk_domain: Operational
+remediation_due_days: 5
 ```
 
-### `control_ref`
-Free text reference to a control framework, standard, or policy. Examples:
-- `COSO-CC5.2` (COSO Internal Control — Monitoring Activities)
-- `ISO27001-A.9.4` (ISO 27001 — System and Application Access Control)
-- `SOX-302` (Sarbanes-Oxley Section 302)
+### Field meanings
 
-No validation is enforced — use whichever taxonomy your organisation follows.
+| Field | Purpose |
+|---|---|
+| `control_ref` | Framework/policy reference |
+| `control_type` | `Preventive`, `Detective`, or `Corrective` |
+| `risk_domain` | `Financial`, `Operational`, `Compliance`, or `IT` |
+| `remediation_due_days` | SLA days from first detection |
 
-### `control_type`
-Classifies when the control acts:
-- `Preventive` — stops a violation from occurring
-- `Detective` — identifies a violation after it has occurred
-- `Corrective` — restores normal operation after a violation
+## Starter IC Patterns
 
-A warning is logged if an unexpected value is used, but the run will not fail.
-
-### `risk_domain`
-The risk category this control addresses:
-- `Financial` — financial reporting accuracy, payment controls
-- `Operational` — process completeness, SLA compliance
-- `Compliance` — regulatory or legal requirements
-- `IT` — access, change management, data integrity
-
-### `remediation_due_days`
-Integer. The number of calendar days from when the exception is first seen to when it must be resolved. Used to compute `remediation_due_date` in `ic_exceptions`. Leave blank if there is no SLA.
-
----
-
-## Severity Guidance
-
-| Severity | Use when |
-|----------|----------|
-| `critical` | Regulatory requirement, financial reporting risk, or fraud risk |
-| `high` | Material operational risk, significant compliance exposure |
-| `medium` | Control weakness with limited immediate impact |
-| `low` | Process improvement opportunity |
-
----
-
-## Full Rule Template
+### Pattern 1: Segregation of duties
 
 ```yaml
-rule_group: IC-Process        # your domain group name (IC- prefix recommended)
-table: Prosesser              # source table name (without database prefix)
-database: Saksbehandling      # source database / schema
-pk_column: Saksnummer         # primary key column — stored as primary_key_value in ic_exceptions
-
-rules:
-
-  - rule_id: IC-PROC-001
-    name: Short human-readable title
-    description: >
-      Why this control matters and what it is checking.
-      One or two sentences is enough.
-    expectation: validate_column_comparison   # or sql, or any supported expectation
-    parameters:
-      column_A: ApprovedBy
-      column_B: CreatedBy
-      operator: "!="
-      pk_column: Saksnummer
-    severity: critical
-    category: Segregation of Duties
-    owner: Saksteam
-
-    # IC-only fields — remove any you do not need
-    control_ref: COSO-CC5.2
-    control_type: Detective
-    risk_domain: Operational
-    remediation_due_days: 3
+- rule_id: IC-INV-001
+  name: Approver cannot equal creator
+  description: Requesting and approving the same transaction is not allowed.
+  expectation: field_comparison
+  parameters:
+    left_column: ApprovedBy
+    right_column: CreatedBy
+    operator: "!="
+    pk_column: Fakturanr
+  severity: critical
+  category: Segregation of Duties
+  owner: Finansteam
+  control_ref: COSO-CC5.2
+  control_type: Detective
+  risk_domain: Financial
+  remediation_due_days: 3
 ```
 
----
-
-## Catalog-Level Optional Settings
-
-IC catalogs support the same optional header settings as DQ catalogs.
-
-### `catalog_filter`
-
-Limits source rows before rules run. Useful for scoping IC checks to recent or active records only.
-
-Date range form:
+### Pattern 2: Open case requires assignment
 
 ```yaml
-catalog_filter:
-  type: date_range
-  date_column: CreatedDate
-  lookback_days: 90
-  include_nulls: false
-```
-
-Custom predicate form:
-
-```yaml
-catalog_filter:
-  type: custom
-  where_clause: "Status IN ('Open', 'Pending')"
-```
-
-### `joins`
-
-Pre-joins additional tables before validation. Required when IC rules need columns from a related table.
-
-```yaml
-joins:
-  - table: Saksbehandling.saker
-    on: Saksnummer
-    how: left
-    select:
-      - Saksnummer
-      - Status
+- rule_id: IC-PROC-002
+  name: Open cases must have active handler
+  description: Unassigned open cases indicate control break in operational ownership.
+  expectation: not_null_when
+  parameters:
+    when_column: ActualEndDate
+    operator: IS NULL
+    checked_columns:
       - Saksbehandler_kode
+    pk_column: Saksnummer
+  severity: high
+  category: Ownership Control
+  owner: Saksteam
+  control_ref: COSO-CC1.1
+  control_type: Preventive
+  risk_domain: Operational
+  remediation_due_days: 5
 ```
 
-Each join entry supports:
-- `table` (required)
-- `how` (optional, default `left`)
-- Either `on` OR both `left_on` + `right_on`
-- `select` (optional list of columns from the join table)
+### Pattern 3: Active assignment control
 
-Notes:
+```yaml
+- rule_id: IC-PROC-003
+  name: Assigned handler must be active employee
+  description: Open workload cannot remain assigned to inactive employees.
+  expectation: reference_active
+  parameters:
+    source_column: Saksbehandler_kode
+    reference_table: HR.Employees
+    reference_column: EmployeeCode
+    reference_active_column: IsActive
+    reference_active_value: true
+    pk_column: Saksnummer
+  severity: critical
+  category: Access Control
+  owner: Saksteam
+  control_ref: ISO27001-A.9.2.5
+  control_type: Detective
+  risk_domain: IT
+  remediation_due_days: 2
+```
 
-- Catalog filters can be overridden at runtime via `CATALOG_FILTER_OVERRIDES` in runtime config.
-- Column names used in `catalog_filter` and rule parameters are contract-checked in preflight.
-- See `RULES_GUIDE.md` for additional examples.
+### Pattern 4: Timeliness/SLA
 
----
+```yaml
+- rule_id: IC-PROC-004
+  name: Open cases older than SLA are violations
+  description: Open cases must be handled within SLA window.
+  expectation: state_duration_within_limit
+  parameters:
+    start_column: StartDate
+    open_state_column: ActualEndDate
+    open_state_value: null
+    max_days: 30
+    pk_column: Saksnummer
+  severity: high
+  category: SLA Control
+  owner: Saksteam
+  control_ref: OPS-SLA-001
+  control_type: Detective
+  risk_domain: Operational
+  remediation_due_days: 7
+```
+
+### Pattern 5: Custom control query
+
+```yaml
+- rule_id: IC-INV-005
+  name: Payments must not precede approval
+  description: Any payment earlier than approval date is a control violation.
+  expectation: sql_violations
+  parameters:
+    sql: |
+      SELECT Fakturanr
+      FROM Finance.InvoicePayments
+      WHERE PaymentDate < ApprovalDate
+  severity: critical
+  category: Payment Control
+  owner: Finansteam
+  control_ref: SOX-302
+  control_type: Detective
+  risk_domain: Financial
+  remediation_due_days: 1
+```
 
 ## IC Exception Lifecycle
 
-When a violation is first seen, it is inserted into `ic_exceptions` with `ic_status = Open`.
+`ic_exceptions` transitions:
+- `Open` to `Remediated`
+- `Open` to `Verified`
+- `Open` to `Waived`
+- `Remediated` to `Verified`
 
-```
-Open  ──────────────────────►  Verified
-  │   (human via Power BI)       ▲
-  │                              │ (also from Remediated)
-  ├───────────────────────────►  Remediated
-  │   (human via Power BI)
-  │
-  └───────────────────────────►  Waived
-      (human via Power BI,
-       requires waiver_reason ≥ 10 chars)
-```
+The engine does not auto-close IC exceptions. Human workflow is required.
 
-**The engine never closes an IC exception.** If a violation disappears from the source data, the Open row stays Open until a human transitions it. This is intentional — it ensures a human verifies the fix, not just that the data changed.
+## Checklist Before Save
 
-If a Verified or Waived exception re-appears in a later run, a brand-new Open exception is created. The closed row is not modified.
-
-**Who transitions exceptions:**
-- `Open → Remediated`: control owner (confirms fix has been applied)
-- `Remediated → Verified`: second reviewer (confirms the fix is effective)
-- `Open → Verified`: reviewer (skipping remediation, direct sign-off)
-- `Open → Waived`: risk owner (with documented waiver reason)
-
-Transitions are made from the IC Exceptions page in Power BI using the Translytical Task Flow panel.
-
----
-
-## Automated Controls vs Manual Controls
-
-**Automated controls** (this guide) are rules in `rule_catalog` that the engine checks against live data on every run.
-
-**Manual controls** are controls that cannot be automated — e.g. a manager sign-off meeting, a quarterly review process. They are registered in `ic_control_register` (maintained manually) and attested periodically via the Manual Controls page in Power BI. The attestation notebook (`nb_ic_02_attest_manual_control`) records the attested_by, period_covered, report_link, and optionally downloads the evidence file.
-
-To register a manual control, insert a row directly into `ic_control_register`:
-
-```sql
-INSERT INTO ic_control_register VALUES (
-  'IC-MAN-001',                -- control_id
-  'Quarterly access review',   -- name
-  'Manager reviews all active user accounts quarterly and revokes excess access.',
-  'ISO27001-A.9.2.5',          -- control_ref
-  'Manual',                    -- execution_type
-  'Detective',                 -- control_type
-  'IT',                        -- risk_domain
-  'Medium',                    -- inherent_risk
-  'IT-Security',               -- control_owner
-  'Quarterly',                 -- review_frequency
-  'Quarterly',                 -- attestation_frequency
-  NULL,                        -- last_design_review_at
-  true,                        -- active
-  current_timestamp(),
-  current_timestamp()
-)
-```
-
----
-
-## Starter Examples
-
-See `rules/ic_process_rules.yaml` and `rules/ic_invoice_rules.yaml` for working examples covering:
-- Segregation of duties (`validate_column_comparison` with `!=`)
-- Sequence / timing controls (`validate_column_comparison` with `>=`)
-- Completeness before state transition (`sql` expectation with correlated subquery)
-- Budget ceiling check (`sql` expectation with JOIN)
-- Active reference validation (`validate_active_reference`) — checks that a referenced employee or resource is still active
-- Time-in-state validation (`validate_time_in_state`) — flags cases or invoices that have been open beyond their SLA threshold
-
----
-
-## Using Active Reference and Time-in-State Rules as IC Controls
-
-These two expectations are particularly relevant for internal controls:
-
-**`validate_active_reference`** is suited to controls that require ongoing validity of an assignment — for example, ensuring that a case handler or invoice approver is still an active employee. A handler who has left the organisation but remains assigned to an open case is a control gap.
-
-**`validate_time_in_state`** is suited to SLA and timeliness controls — for example, ensuring that open cases are reviewed within 30 days or that unpaid invoices are escalated within 60 days. Pair with `remediation_due_days` to set an SLA on fixing the violation once it is detected.
-
-Both expectations generalise across tables and columns — the same expectation works for process handlers, invoice approvers, or any other reference relationship or time threshold in your domain.
-
----
-
-## Good Naming Guidelines
-
-A good IC rule name is:
-
-- Short
-- Specific
-- Clear to a non-technical control reviewer
-- Explicit about the expected behavior
-
-Good example: `ApprovedBy must not equal CreatedBy`
-
----
-
-## Checklist Before Saving
-
-- [ ] Rule ID starts with `IC-` and does not exist in any other rule file
-- [ ] `rule_group` starts with `IC-` (e.g. `IC-Process`, `IC-Invoice`)
-- [ ] `table` and `database` match an actual table in the Fabric metastore
-- [ ] `pk_column` is the primary key column of the source table
-- [ ] At least one of `control_ref`, `control_type`, `risk_domain` is set (otherwise the rule is treated as a DQ rule)
-- [ ] `control_type` is one of `Preventive`, `Detective`, `Corrective`
-- [ ] `risk_domain` is one of `Financial`, `Operational`, `Compliance`, `IT`
-- [ ] `remediation_due_days` is a positive integer or absent
-- [ ] Column names in `parameters` match actual column names in the source table (run preflight to check)
-- [ ] Severity is appropriate (`critical` for regulatory/financial risk, `high` for operational risk)
-
----
+- Rule ID uses IC prefix and is unique
+- Canonical expectation name is used
+- Canonical parameter names are used
+- At least one IC identifier field is set
+- `control_type` and `risk_domain` values are valid
+- `remediation_due_days` is integer if used
+- Rule passes preflight and dry-run
 
 ## Common Mistakes
 
-| Mistake | Effect | Fix |
-|---------|--------|-----|
-| Running new/changed rules directly with `DRY_RUN = False` | Bad logic can pollute production violation/exception tables and create noisy remediation work | Run preflight first and execute at least one dry run before production mode |
-| Using `PROC-` prefix instead of `IC-PROC-` | Rule ID collides with DQ rules in process_rules.yaml | Use `IC-PROC-` for IC rules |
-| Not setting any IC identifier field | Rule treated as DQ, violations go to dq_violations only, no 4-state lifecycle | Add at least one of control_ref, control_type, risk_domain |
-| Column name typo in parameters | Preflight warns; rule runs as ERROR | Run preflight and check warnings |
-| `remediation_due_days` as string (`"5"`) | Type error at runtime | Use integer: `5`, not `"5"` |
-| Providing an SSO-protected URL as report_link | Evidence file download fails (warning logged) | Use an "Anyone with the link" SharePoint share link |
+| Mistake | Impact | Fix |
+|---|---|---|
+| Missing IC identifier fields | Rule treated as DQ only | Add `control_ref` or `control_type` or `risk_domain` |
+| Unknown names in parameters | Preflight failure | Check ARCHITECTURE.md for canonical keys |
+| Wrong `pk_column` | Hard to trace incidents | Use stable business key per group |
+| Running production first | Noisy exceptions | Dry-run and review first |
+| `report_link` points to restricted URL | Evidence retrieval warning | Use accessible share link |

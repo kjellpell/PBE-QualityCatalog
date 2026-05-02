@@ -161,6 +161,29 @@ def write_execution_metric(spark, table_name: str, payload: dict) -> None:
     try:
         df.write.mode("append").saveAsTable(table_name)
     except Exception as exc:
+        message = str(exc)
+        if "." in table_name and any(marker in message.upper() for marker in (
+            "SCHEMA_NOT_FOUND",
+            "DATABASE_NOT_FOUND",
+            "REQUIRES_SINGLE_PART_NAMESPACE",
+            "TABLE_OR_VIEW_NOT_FOUND",
+        )):
+            fallback_table = _safe_table_name(table_name.split(".")[-1])
+            try:
+                df.write.mode("append").saveAsTable(fallback_table)
+                print(
+                    "Warning: metrics table namespace was not available for "
+                    f"'{table_name}'; wrote metric to fallback table "
+                    f"'{fallback_table}'."
+                )
+                return
+            except Exception as fallback_exc:
+                print(
+                    f"Warning: failed to write execution metric to '{table_name}' "
+                    f"and fallback '{fallback_table}': {fallback_exc}"
+                )
+                return
+
         print(
             f"Warning: failed to write execution metric to '{table_name}': {exc}"
         )

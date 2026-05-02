@@ -100,19 +100,49 @@ except ModuleNotFoundError:
 
 # Column-name keys that can be referenced in a rule's top-level fields or
 # parameters.  Checked against the actual source table columns in preflight.
+# All keys use canonical names per ARCHITECTURE.md "Expectation Naming Contract".
 _RULE_COLUMN_KEYS = {
     "column",
-    "column_A",
-    "column_B",
+    "left_column",
+    "right_column",
     "pk_column",
     "group_column",
-    "value_column",
-    "sort_column",
-    "condition_column",
+    "event_column",
+    "order_column",
+    "when_column",
     "required_column",
     "aggregate_column",
     "reference_column",
-    "check_columns",        # list
+    "checked_columns",
+    "source_column",
+    "open_state_column",
+    "reference_table",
+    "reference_active_column",
+}
+
+# Per-expectation required canonical parameter keys.
+# Preflight rejects any rule missing a required key for its expectation.
+_REQUIRED_PARAMETER_KEYS: dict[str, list[str]] = {
+    "not_null":                   ["column"],
+    "not_null_when":              ["when_column", "checked_columns"],
+    "comparison":                 ["left_column", "right_column", "operator"],
+    "value_when":                 ["when_column", "required_column", "required_value"],
+    "reference_exists":           ["column", "reference_table", "reference_column"],
+    "reference_active":           ["source_column", "reference_table", "reference_column",
+                                   "reference_active_column", "reference_active_value"],
+    "aggregate_threshold":        ["threshold"],
+    "row_count_in_range":         ["min_value", "max_value"],
+    "combination_unique":         ["columns"],
+    "state_duration_within_limit": ["start_column", "open_state_column", "pk_column", "max_days"],
+    "sequence_ordered":           ["event_column", "group_column", "order_column", "expected_sequence"],
+    "pairs_present":              ["event_column", "group_column", "required_pairs"],
+    "stops_paired_with_starts":   ["event_column", "group_column", "pairs"],
+    "gate_complete":              ["event_column", "group_column", "value_to_check"],
+    "columns_excluded":           ["condition"],
+    "group_aggregate_matches":    ["group_column", "aggregate_column", "reference_column"],
+    "sql_violations":             [],  # sql may be top-level or in parameters
+    "value_in_list":              ["column", "allowed_values"],
+    "greater_than":               ["column", "threshold"],
 }
 
 
@@ -159,23 +189,63 @@ def _check_columns_for_catalog(
     return warnings
 
 
+def _check_nested_reference(rule: dict, yaml_name: str, rule_id: str) -> list[str]:
+    """Detect legacy nested 'reference:' block that the engine no longer reads.
+    Authors must flatten it to reference_table / reference_column etc."""
+    errors: list[str] = []
+    params = rule.get("parameters") or {}
+    if not isinstance(params, dict):
+        return errors
+    if "reference" in params and isinstance(params["reference"], dict):
+        exp = rule.get("expectation", "?")
+        errors.append(
+            f"[{yaml_name} / {rule_id}] Expectation '{exp}' has a nested 'parameters.reference:' "
+            f"block which the engine does not read. Flatten it to top-level parameter keys: "
+            f"reference_table, reference_column"
+            + (", reference_active_column, reference_active_value" if exp in ("reference_active",) else "")
+            + ". See ARCHITECTURE.md 'Expectation Naming Contract'."
+        )
+    return errors
+
+
+def _check_required_parameter_keys(rule: dict, yaml_name: str, rule_id: str) -> list[str]:
+    """Validate that all required canonical parameter keys are present for the expectation."""
+    errors: list[str] = []
+    exp = rule.get("expectation", "")
+    required = _REQUIRED_PARAMETER_KEYS.get(exp)
+    if required is None:
+        return errors  # unknown expectation — handled elsewhere
+
+    params = rule.get("parameters") or {}
+    # Some rules (e.g. not_null, sql_violations) declare their key at top level
+    top_level = {k: rule.get(k) for k in ("column", "sql")}
+
+    for key in required:
+        val = params.get(key) if isinstance(params, dict) else None
+        # Allow top-level fallback for 'column'
+        if val is None and key == "column":
+            val = rule.get("column")
+        if val is None or val == "" or val == []:
+            errors.append(
+                f"[{yaml_name} / {rule_id}] Expectation '{exp}' is missing required "
+                f"parameter '{key}'. See ARCHITECTURE.md 'Expectation Naming Contract'."
+            )
+    return errors
+
+
 def _check_parameter_contract_for_catalog(catalog: dict, yaml_name: str) -> list[str]:
-    """Validate strict canonical parameter contract for conditional rules."""
+    """Validate canonical parameter contract for all rules in a catalog.
+    Checks for legacy nested reference: blocks and missing required canonical parameter keys."""
     errors: list[str] = []
     for rule in catalog.get("rules", []):
         rule_id = rule.get("rule_id", "?")
-        params = rule.get("parameters") or {}
-        if not isinstance(params, dict):
-            continue
 
-        if "condition_operator" in params:
-            errors.append(
-                f"[{yaml_name} / {rule_id}] Deprecated key 'condition_operator' is not allowed; use 'operator'."
-            )
-        if "condition_value" in params:
-            errors.append(
-                f"[{yaml_name} / {rule_id}] Deprecated key 'condition_value' is not allowed; use 'value'."
-            )
+        # Check for legacy nested reference: block (engine ignores it silently)
+        errors.extend(_check_nested_reference(rule, yaml_name, rule_id))
+
+        # Check that all required canonical keys are present
+        errors.extend(_check_required_parameter_keys(rule, yaml_name, rule_id))
+
     return errors
 
 

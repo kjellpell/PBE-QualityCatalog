@@ -98,14 +98,14 @@ def _resolve_gate_groups(df: DataFrame, gate: dict, group_col: str):
     have passed the completion gate.
 
     A group passes the gate when at least one of its rows satisfies:
-      - value_column == value  (the designated completion marker)
-      - sort_column  IS NOT NULL (optional; when provided the marker row must
+      - event_column == value  (the designated completion marker)
+      - order_column IS NOT NULL (optional; when provided the marker row must
         have a non-null value in this column to be considered done)
 
     Parameters (from the YAML ``completion_gate`` block):
-      value_column - column holding the marker value
+      event_column - column holding the marker value (canonical name)
       value        - the value that signals group completion
-      sort_column  - (optional) column that must be non-null on the marker row;
+      order_column - (optional) column that must be non-null on the marker row; (canonical name)
                      when omitted any row with the marker value closes the group
 
     If the gate block is absent or empty, the original DataFrame is returned
@@ -114,9 +114,9 @@ def _resolve_gate_groups(df: DataFrame, gate: dict, group_col: str):
     if not gate:
         return df
 
-    gate_value_col = gate.get("value_column")
+    gate_value_col = gate.get("event_column")
     gate_value     = gate.get("value")
-    gate_sort_col  = gate.get("sort_column")
+    gate_sort_col  = gate.get("order_column")
 
     if not gate_value_col or gate_value is None:
         return df
@@ -214,12 +214,12 @@ class ColumnComparisonExpectation:
     does not satisfy the condition.  Only rows where both columns are non-null
     are evaluated.
 
-    YAML parameters:
-      column_A  - name of the left-hand column
-      column_B  - name of the right-hand column
-      operator  - comparison operator: >, <, >=, <=, ==, !=
-      pk_column - primary key column used to identify violating rows
-                  (default: "id")
+    YAML parameters (canonical names):
+      left_column   - name of the left-hand column (was: column_A)
+      right_column  - name of the right-hand column (was: column_B)
+      operator      - comparison operator: >, <, >=, <=, ==, !=
+      pk_column     - primary key column used to identify violating rows
+                      (default: "id")
     """
 
     _VIOLATION_FILTERS = {
@@ -233,15 +233,15 @@ class ColumnComparisonExpectation:
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params   = rule.get("parameters", {})
-        col_a    = params.get("column_A")
-        col_b    = params.get("column_B")
+        col_a    = params.get("left_column")
+        col_b    = params.get("right_column")
         operator = params.get("operator")
         pk_col   = params.get("pk_column", "id")
 
         if not col_a or not col_b or not operator:
             return (
                 _error_result(
-                    "Parameters 'column_A', 'column_B', and 'operator' are all required."
+                    "Parameters 'left_column', 'right_column', and 'operator' are all required."
                 ),
                 _empty_violations(spark),
             )
@@ -590,21 +590,19 @@ class ForeignKeyExpectation:
     """
     Validates that all non-null values in 'column' exist in the reference table.
 
-    YAML parameters:
-      column           - column in the source table to check
-      pk_column        - primary key column (default: same as 'column')
-      reference:
-        table          - fully-qualified reference table
-        column         - column in the reference table holding valid values
+    YAML parameters (canonical names):
+      column               - column in the source table to check
+      pk_column            - primary key column (default: same as 'column')
+      reference_table      - fully-qualified reference table (was: reference.table)
+      reference_column     - column in the reference table holding valid values (was: reference.column)
     """
 
     def validate(self, df: DataFrame, rule: dict, spark, ref_cache: dict = None) -> tuple:
-        params    = rule.get("parameters", {})
-        column    = params.get("column")
-        pk_col    = params.get("pk_column") or column
-        ref_block = params.get("reference", {})
-        ref_table = ref_block.get("table")
-        ref_col   = ref_block.get("column")
+        params     = rule.get("parameters", {})
+        column     = params.get("column")
+        pk_col     = params.get("pk_column") or column
+        ref_table  = params.get("reference_table")
+        ref_col    = params.get("reference_column")
 
         if not column or not ref_table or not ref_col:
             return (
@@ -807,7 +805,7 @@ class ValidateAggregateRuleExpectation:
 
 # -----------------------------------------------------------------------------
 # validate_not_null_when
-# Validates that check_columns are NOT NULL whenever condition_column satisfies
+# Validates that checked_columns are NOT NULL whenever trigger_column satisfies
 # the configured condition.
 #
 # This single generic expectation replaces the former table-specific:
@@ -816,29 +814,29 @@ class ValidateAggregateRuleExpectation:
 # -----------------------------------------------------------------------------
 class ValidateNotNullWhenExpectation:
     """
-    Validates that all check_columns are not null when condition_column
+    Validates that all checked_columns are not null when when_column
     satisfies the trigger condition.
 
-    YAML parameters:
-      condition_column   - column that triggers the check
-            operator           - "==" (equality), "IS NOT NULL", or "IS NULL"
-            value              - required when operator is "=="
-      check_columns      - list of columns that must be NOT NULL when triggered
+    YAML parameters (canonical names):
+      when_column        - column that triggers the check (was: trigger_column, condition_column)
+      operator           - "==" (equality), "IS NOT NULL", or "IS NULL"
+      value              - required when operator is "=="
+      checked_columns    - list of columns that must be NOT NULL when triggered (was: check_columns)
       pk_column          - primary key column
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params        = rule.get("parameters", {})
-        condition_col = params.get("condition_column")
+        condition_col = params.get("when_column")
         condition_op  = params.get("operator", "==")
         condition_val = params.get("value")
-        check_cols    = params.get("check_columns", [])
+        check_cols    = params.get("checked_columns", [])
         pk_col        = params.get("pk_column", "id")
 
         if not condition_col or not check_cols:
             return (
                 _error_result(
-                    "Parameters 'condition_column' and 'check_columns' "
+                    "Parameters 'when_column' and 'checked_columns' "
                     "(non-empty list) are required."
                 ),
                 _empty_violations(spark),
@@ -929,15 +927,15 @@ class ValidateNotNullWhenExpectation:
 # -----------------------------------------------------------------------------
 class ValidateSequenceOrderExpectation:
     """
-    Checks that values in value_column appear in the specified expected_sequence
+    Checks that values in event_column appear in the specified expected_sequence
     order for each group identified by group_column.
 
-    YAML parameters:
-      value_column      - column holding the sequence value names
-      group_column      - column that identifies the group
-      sort_column       - column used to determine the order of rows within each
-                          group; can be any sortable type (date, numeric, string)
-      expected_sequence - ordered list of sequence steps; two formats supported:
+    YAML parameters (canonical names):
+      event_column       - column holding the sequence value names (was: value_column)
+      group_column       - column that identifies the group
+      order_column       - column used to determine the order of rows within each
+                          group; can be any sortable type (date, numeric, string) (was: sort_column)
+      expected_sequence  - ordered list of sequence steps; two formats supported:
 
           Simple string list (all steps are strict):
               expected_sequence: ["Start", "Middle", "End"]
@@ -953,17 +951,17 @@ class ValidateSequenceOrderExpectation:
           are permitted before the sequence advances to the next step.  Strict
           steps (flexible omitted or false) must not repeat.
 
-      completion_gate   - (optional) only evaluate groups that are "done":
-          value_column  - column holding the completion marker value
+      completion_gate    - (optional) only evaluate groups that are "done":
+          event_column   - column holding the completion marker value
           value         - the value that signals the group is closed
-          sort_column   - (optional) column that must be non-null on the marker row
+          order_column   - (optional) column that must be non-null on the marker row
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params       = rule.get("parameters", {})
-        value_col    = params.get("value_column")
+        value_col    = params.get("event_column")
         group_col    = params.get("group_column")
-        sort_col     = params.get("sort_column")
+        sort_col     = params.get("order_column")
         raw_sequence = params.get("expected_sequence", [])
         gate         = params.get("completion_gate", {})
 
@@ -1160,23 +1158,23 @@ class ValidatePairedPresenceExpectation:
     """
     Validates that each required pair of values both exist within the same group.
 
-    YAML parameters:
-      value_column    - column holding the values to check
-      group_column    - column that identifies the group
-      required_pairs  - list of pairs; each pair is [start_value, stop_value] or
-                        [start_value, [stop_value1, stop_value2, ...]].
-                        In the multi-stop form the pair is satisfied when at least
-                        one of the stop values exists in the group alongside the
-                        start value.
-      completion_gate - (optional) only evaluate groups that are "done":
-          value_column  - column holding the completion marker value
+    YAML parameters (canonical names):
+      event_column       - column holding the values to check (was: value_column)
+      group_column       - column that identifies the group
+      required_pairs     - list of pairs; each pair is [start_marker, stop_marker] or
+                           [start_marker, [stop_marker1, stop_marker2, ...]].
+                           In the multi-stop form the pair is satisfied when at least
+                           one of the stop values exists in the group alongside the
+                           start value.
+      completion_gate    - (optional) only evaluate groups that are "done":
+          event_column   - column holding the completion marker value
           value         - the value that signals the group is closed
-          sort_column   - (optional) column that must be non-null on the marker row
+          order_column   - (optional) column that must be non-null on the marker row
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params         = rule.get("parameters", {})
-        value_col      = params.get("value_column") or params.get("milestone_column")
+        value_col      = params.get("event_column")
         group_col      = params.get("group_column")
         required_pairs = params.get("required_pairs", [])
         gate           = params.get("completion_gate", {})
@@ -1306,25 +1304,25 @@ class ValidatePairedPresenceExpectation:
 # -----------------------------------------------------------------------------
 class ValidateGateExpectation:
     """
-    Validates that each group has at least one row where value_column equals
+    Validates that each group has at least one row where event_column equals
     value_to_check.
 
-    YAML parameters:
-      value_column   - column holding the value to check
+    YAML parameters (canonical names):
+      event_column   - column holding the value to check (was: value_column)
       group_column   - column that identifies the group
       value_to_check - the required value that must be present in each group
-      sort_column    - (optional) when provided, only rows where sort_column
-                       IS NOT NULL are considered for the check
+      order_column   - (optional) when provided, only rows where order_column
+                       IS NOT NULL are considered for the check (was: sort_column)
       trigger        - (optional) human-readable label for the gate; used in
                        violation details (default: "Approval completed")
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params         = rule.get("parameters", {})
-        value_col      = params.get("value_column")
+        value_col      = params.get("event_column")
         group_col      = params.get("group_column")
         value_to_check = params.get("value_to_check")
-        sort_col       = params.get("sort_column")
+        sort_col       = params.get("order_column")
         trigger        = params.get("trigger", "Approval completed")
 
         if not value_col:
@@ -1416,18 +1414,18 @@ class ValidateNoOrphanExpectation:
     """
     Detects groups where a stop-type value exists without its start-type pair.
 
-    YAML parameters:
-      value_column - column holding the type/name values
-      group_column - column identifying the group
-      pairs        - list of pairs; each pair is [start_type, stop_type] or
-                     [start_type, [stop_type1, stop_type2, ...]].
-                     In the multi-stop form, the presence of ANY stop value
-                     without the corresponding start value is a violation.
+    YAML parameters (canonical names):
+      event_column   - column holding the type/name values (was: value_column)
+      group_column   - column identifying the group
+      pairs          - list of pairs; each pair is [start_marker, stop_marker] or
+                       [start_marker, [stop_marker1, stop_marker2, ...]].
+                       In the multi-stop form, the presence of ANY stop value
+                       without the corresponding start value is a violation.
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params    = rule.get("parameters", {})
-        value_col = params.get("value_column") or params.get("milestone_column")
+        value_col = params.get("event_column") or params.get("milestone_column")
         group_col = params.get("group_column")
         pairs     = params.get("pairs", [])
 
@@ -1520,18 +1518,18 @@ class ValidateNoOrphanExpectation:
 
 # -----------------------------------------------------------------------------
 # validate_conditional_column_value
-# When condition_column satisfies a condition, required_column must equal
+# When trigger_column satisfies a condition, required_column must equal
 # required_value.  Replaces the former table-specific expect_refund_validation.
 # -----------------------------------------------------------------------------
 class ValidateConditionalColumnValueExpectation:
     """
     Validates that required_column equals required_value on all rows where
-    condition_column satisfies the configured condition.
+    when_column satisfies the configured condition.
 
-    YAML parameters:
-      condition_column   - column checked for the trigger condition
-            operator           - comparison operator: <, >, <=, >=, ==, !=
-            value              - threshold value for the trigger condition
+    YAML parameters (canonical names):
+      when_column        - column checked for the trigger condition (was: trigger_column, condition_column)
+      operator           - comparison operator: <, >, <=, >=, ==, !=
+      value              - threshold value for the trigger condition
       required_column    - column that must equal required_value when triggered
       required_value     - the required value for required_column
       pk_column          - primary key column
@@ -1549,7 +1547,7 @@ class ValidateConditionalColumnValueExpectation:
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params = rule.get("parameters", {})
 
-        condition_col = params.get("condition_column")
+        condition_col = params.get("when_column")
         condition_op  = params.get("operator", "<")
         condition_val = params.get("value", 0)
         required_col  = params.get("required_column")
@@ -1559,7 +1557,7 @@ class ValidateConditionalColumnValueExpectation:
         if not condition_col or not required_col or required_val is None:
             return (
                 _error_result(
-                    "Parameters 'condition_column', 'required_column', and "
+                    "Parameters 'when_column', 'required_column', and "
                     "'required_value' are all required."
                 ),
                 _empty_violations(spark),
@@ -1864,25 +1862,23 @@ class ValidateActiveReferenceExpectation:
     Validates that all non-null values in 'source_column' exist in the
     reference table and match a row where active_column equals active_value.
 
-    YAML parameters:
-      source_column          - column in the source table whose values are checked
-      pk_column              - primary key column for violation reporting
-      reference:
-        table                - fully-qualified reference table name
-        column               - column in the reference table to join on
-        active_column        - column in the reference table holding the active flag
-        active_value         - value that means "active" (string or boolean)
+    YAML parameters (canonical names):
+      source_column            - column in the source table whose values are checked
+      pk_column                - primary key column for violation reporting
+      reference_table          - fully-qualified reference table name (was: reference.table)
+      reference_column         - column in the reference table to join on (was: reference.column)
+      reference_active_column  - column in the reference table holding the active flag (was: reference.active_column)
+      reference_active_value   - value that means "active" (string or boolean) (was: reference.active_value)
     """
 
     def validate(self, df: DataFrame, rule: dict, spark, ref_cache: dict = None) -> tuple:
         params     = rule.get("parameters", {})
         src_col    = params.get("source_column")
         pk_col     = params.get("pk_column") or src_col
-        ref_block  = params.get("reference", {})
-        ref_table  = ref_block.get("table")
-        ref_col    = ref_block.get("column")
-        active_col = ref_block.get("active_column")
-        active_val = ref_block.get("active_value")
+        ref_table  = params.get("reference_table")
+        ref_col    = params.get("reference_column")
+        active_col = params.get("reference_active_column")
+        active_val = params.get("reference_active_value")
 
         if not src_col or not ref_table or not ref_col or not active_col or active_val is None:
             return (
@@ -2007,27 +2003,27 @@ class ValidateTimeInStateExpectation:
     """
     Flags rows that have been in an open state for more than max_days days.
 
-    YAML parameters:
-      start_column       - date/timestamp column marking when the state began
-      open_when_column   - column checked to decide if the row is still open
-      open_when_value    - value that means "open"; use "null" (or Python None)
-                           to mean IS NULL (default behaviour)
-      pk_column          - primary key column for violation reporting
-      max_days           - maximum number of days allowed in the open state
+    YAML parameters (canonical names):
+      start_column         - date/timestamp column marking when the state began
+      open_state_column    - column checked to decide if the row is still open (was: open_when_column)
+      open_state_value     - value that means "open"; use "null" (or Python None)
+                            to mean IS NULL (default behaviour) (was: open_when_value)
+      pk_column            - primary key column for violation reporting
+      max_days             - maximum number of days allowed in the open state
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params         = rule.get("parameters", {})
         start_col      = params.get("start_column")
-        open_when_col  = params.get("open_when_column")
-        open_when_val  = params.get("open_when_value")
+        open_when_col  = params.get("open_state_column")
+        open_when_val  = params.get("open_state_value")
         pk_col         = params.get("pk_column")
         max_days       = params.get("max_days")
 
         if not start_col or not open_when_col or not pk_col or max_days is None:
             return (
                 _error_result(
-                    "Parameters 'start_column', 'open_when_column', 'pk_column', "
+                    "Parameters 'start_column', 'open_state_column', 'pk_column', "
                     "and 'max_days' are all required."
                 ),
                 _empty_violations(spark),
@@ -2131,72 +2127,71 @@ CUSTOM_EXPECTATION_REGISTRY = {
 
     # -------------------------------------------------------------------------
     # Generic cross-table validators (work on any table)
+    # Canonical names effective 2026-05-02 — old names not supported
     # -------------------------------------------------------------------------
-    "validate_column_comparison":           ColumnComparisonExpectation,
-    "expect_column_values_to_not_be_null":  ExpectColumnValuesToNotBeNullExpectation,
-    "sql_validation":                       SqlValidationExpectation,
-    "sql":                                  SqlValidationExpectation,    # shorthand
+    "comparison":                           ColumnComparisonExpectation,
+    "not_null":                             ExpectColumnValuesToNotBeNullExpectation,
+    "sql_violations":                       SqlValidationExpectation,
 
     # -------------------------------------------------------------------------
     # Aggregate validators
     # -------------------------------------------------------------------------
-    "validate_aggregate_rule":              ValidateAggregateRuleExpectation,
-    "expect_column_sum_to_equal":           ColumnSumExpectation,
-    "expect_row_count_to_be_between":       RowCountExpectation,
-    "expect_unique_combination_of_columns": UniqueColumnCombinationExpectation,
+    "aggregate_threshold":                  ValidateAggregateRuleExpectation,
+    "row_count_in_range":                   RowCountExpectation,
+    "combination_unique":                   UniqueColumnCombinationExpectation,
 
     # -------------------------------------------------------------------------
     # Referential integrity
     # -------------------------------------------------------------------------
-    "validate_foreign_key":                 ForeignKeyExpectation,
+    "reference_exists":                     ForeignKeyExpectation,
 
     # -------------------------------------------------------------------------
     # Conditional / dependency validators
     # -------------------------------------------------------------------------
-    "validate_not_null_when":               ValidateNotNullWhenExpectation,
+    "not_null_when":                        ValidateNotNullWhenExpectation,
 
     # -------------------------------------------------------------------------
     # Negative / forbidden-state validators
     # -------------------------------------------------------------------------
-    "validate_column_exclusions":           ValidateColumnExclusionsExpectation,
+    "columns_excluded":                     ValidateColumnExclusionsExpectation,
 
     # -------------------------------------------------------------------------
     # Sequence / ordering validators
     # -------------------------------------------------------------------------
-    "validate_sequence_order":              ValidateSequenceOrderExpectation,
+    "sequence_ordered":                     ValidateSequenceOrderExpectation,
 
     # -------------------------------------------------------------------------
     # Gate / completion validators
     # -------------------------------------------------------------------------
-    "validate_gate":                        ValidateGateExpectation,
+    "gate_complete":                        ValidateGateExpectation,
 
     # -------------------------------------------------------------------------
     # Paired-presence validators
     # -------------------------------------------------------------------------
-    "validate_paired_presence":             ValidatePairedPresenceExpectation,
+    "pairs_present":                        ValidatePairedPresenceExpectation,
 
     # -------------------------------------------------------------------------
     # Orphan / stop-without-start validators
     # -------------------------------------------------------------------------
-    "validate_no_orphan":                   ValidateNoOrphanExpectation,
+    "stops_paired_with_starts":             ValidateNoOrphanExpectation,
 
     # -------------------------------------------------------------------------
     # Conditional column-value validators
     # -------------------------------------------------------------------------
-    "validate_conditional_column_value":    ValidateConditionalColumnValueExpectation,
+    "value_when":                           ValidateConditionalColumnValueExpectation,
 
     # -------------------------------------------------------------------------
     # Group aggregate match validators
     # -------------------------------------------------------------------------
-    "validate_group_aggregate_match":       ValidateGroupAggregateMatchExpectation,
+    "group_aggregate_matches":              ValidateGroupAggregateMatchExpectation,
 
     # -------------------------------------------------------------------------
     # Active reference validators
     # -------------------------------------------------------------------------
-    "validate_active_reference":            ValidateActiveReferenceExpectation,
+    "reference_active":                     ValidateActiveReferenceExpectation,
 
     # -------------------------------------------------------------------------
     # Time-in-state validators
     # -------------------------------------------------------------------------
-    "validate_time_in_state":               ValidateTimeInStateExpectation,
+    "state_duration_within_limit":          ValidateTimeInStateExpectation,
 }

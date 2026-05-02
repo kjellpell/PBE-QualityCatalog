@@ -69,6 +69,72 @@ Use these exact strings — typos will silently break MERGE logic.
 - **IC exception status** (ic_exceptions): `"Open"`, `"Remediated"`, `"Verified"`, `"Waived"`
 - **Execution metric status** (dq_execution_metrics): `"Succeeded"`, `"Failed"`
 
+## Expectation Naming Contract
+
+Effective 2026-05-02: All expectation identifiers and YAML parameter names follow a canonical naming model to improve clarity for business rule authors.
+
+### Expectation IDs
+
+| Expectation | Meaning |
+|---|---|
+| `not_null` | Column must be populated |
+| `not_null_when` | Column must be populated when condition is true |
+| `comparison` | Two columns compared by operator |
+| `value_in_list` | Value must be in allowed list |
+| `greater_than` | Column is greater than threshold |
+| `value_when` | Column must have value X when condition is true |
+| `reference_exists` | Reference must exist in target table |
+| `reference_active` | Reference must exist and be marked active |
+| `aggregate_threshold` | Aggregate satisfies threshold condition |
+| `row_count_in_range` | Row count within min/max bounds |
+| `combination_unique` | Column combination is unique |
+| `state_duration_within_limit` | Time in open state must not exceed max days |
+| `sequence_ordered` | Values appear in expected order |
+| `pairs_present` | Required pairs both exist or both absent |
+| `stops_paired_with_starts` | Stop value cannot exist without start value |
+| `sql_violations` | Custom SQL returns only violating rows |
+| `gate_complete` | Group must contain the required completion marker value |
+| `columns_excluded` | No row must satisfy the forbidden condition |
+| `group_aggregate_matches` | Group aggregate must match a reference column value |
+
+### YAML Parameter Keys
+
+All parameter names use the `_column` suffix to map directly to DataFrame column names. Plural suffix for list-typed parameters. Nested `reference:` blocks are not supported — use the flat keys.
+
+| Parameter key | Used by expectation(s) |
+|---|---|
+| `when_column` | not_null_when, value_when |
+| `checked_columns` | not_null_when |
+| `left_column` | comparison |
+| `right_column` | comparison |
+| `allowed_values` | value_in_list |
+| `event_column` | sequence_ordered, pairs_present, stops_paired_with_starts |
+| `order_column` | sequence_ordered |
+| `start_markers` | pairs_present, stops_paired_with_starts |
+| `stop_markers` | pairs_present, stops_paired_with_starts |
+| `open_state_column` | state_duration_within_limit |
+| `open_state_value` | state_duration_within_limit |
+| `reference_table` | reference_exists, reference_active |
+| `reference_column` | reference_exists, reference_active |
+| `reference_active_column` | reference_active |
+| `reference_active_value` | reference_active |
+| `group_column` | sequence_ordered, pairs_present, stops_paired_with_starts |
+| `source_column` | reference_active, reference_exists |
+| `max_days` | state_duration_within_limit |
+
+### Vocabulary
+
+- Use **column** (not "field") everywhere when referring to a DataFrame/table column.
+- List-typed parameters use **plural** (`checked_columns`, `columns`, `start_markers`, `stop_markers`, `allowed_values`). Scalar-typed parameters use **singular** (`when_column`, `left_column`, `event_column`, etc.).
+- The `when_column` parameter is the column whose value is tested to decide whether the rule applies. The `_when` suffix in an expectation ID signals conditional application (`not_null_when`, `value_when`).
+
+### Notes
+
+- **Engine** (`engine/expectations.py`): Canonical IDs and parameter keys enforced in `CUSTOM_EXPECTATION_REGISTRY` and all expectation classes.
+- **Preflight** (`nb_dq_01_preflight.py`): Detects legacy nested `reference:` blocks; validates required canonical keys per expectation.
+- **YAML catalogs**: All five active rule files use canonical IDs and keys.
+- **IC notebook** (`nb_ic_01_manage_exceptions.py`): Task Flow parameter is `primary_key_value` (matches the column it filters on in `ic_exceptions`).
+
 ## Delta Tables
 
 | Table | Written by | Purpose |

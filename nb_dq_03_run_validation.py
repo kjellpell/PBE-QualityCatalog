@@ -140,6 +140,9 @@ _q = lambda t: f"{_schema}.{t}{_suffix}"
 results_candidates = [_q(_cfg_mod.DQ_RESULTS_TABLE)]
 violations_candidates = [_q(_cfg_mod.DQ_VIOLATIONS_TABLE)]
 metrics_candidates = [_q(_cfg_mod.DQ_EXECUTION_METRICS_TABLE)]
+metrics_bare_name = getattr(_cfg_mod, "DQ_EXECUTION_METRICS_TABLE", "dq_execution_metrics")
+if metrics_bare_name not in metrics_candidates:
+    metrics_candidates.append(metrics_bare_name)
 
 results_table = next((t for t in results_candidates if _table_exists(t)), None)
 violations_table = next((t for t in violations_candidates if _table_exists(t)), None)

@@ -3,7 +3,7 @@
 # Fabric-callable notebook for IC exception status transitions.
 #
 # Triggered by a Fabric Translytical Task Flow embedded in the IC Exceptions
-# page of the Power BI report.  The task flow binds exception_id from the
+# page of the Power BI report.  The task flow binds primary_key_value from the
 # selected ic_exceptions row and asks the user for new_status and (when
 # Waived) a waiver_reason.
 #
@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 # ---------------------------------------------------------------------------
 # CELL 1 — Parameters (bound by Translytical Task Flow)
 # ---------------------------------------------------------------------------
-exception_id  = mssparkutils.notebook.getParam("exception_id")
+primary_key_value = mssparkutils.notebook.getParam("primary_key_value")
 rule_id       = mssparkutils.notebook.getParam("rule_id")
 new_status    = mssparkutils.notebook.getParam("new_status")
 waiver_reason = mssparkutils.notebook.getParam("waiver_reason", defaultValue="")
@@ -41,7 +41,7 @@ assert actioned_by, "Could not resolve caller identity from Fabric session"
 # ---------------------------------------------------------------------------
 # CELL 3 — Validate parameters
 # ---------------------------------------------------------------------------
-assert exception_id, "exception_id is required"
+assert primary_key_value, "primary_key_value is required"
 assert rule_id, "rule_id is required"
 assert new_status in ("Verified", "Waived"), (
     f"new_status must be 'Verified' or 'Waived', got: '{new_status}'"
@@ -82,7 +82,7 @@ if new_status == "Verified":
     # Verified accepts from Open or Remediated.
     dt.update(
         condition=(
-            (F.col("primary_key_value") == exception_id)
+            (F.col("primary_key_value") == primary_key_value)
             & (F.col("rule_id") == rule_id)
             & (F.col("ic_status").isin("Open", "Remediated"))
         ),
@@ -97,7 +97,7 @@ elif new_status == "Waived":
     # Waived accepts from Open only.
     dt.update(
         condition=(
-            (F.col("primary_key_value") == exception_id)
+            (F.col("primary_key_value") == primary_key_value)
             & (F.col("rule_id") == rule_id)
             & (F.col("ic_status") == F.lit("Open"))
         ),
@@ -110,8 +110,8 @@ elif new_status == "Waived":
     )
 
 # If no rows matched the condition (e.g. already terminal, or invalid
-# exception_id) the update silently affects zero rows — this is intentional.
+# primary_key_value) the update silently affects zero rows — this is intentional.
 # The caller (Translytical Task Flow) refreshes the report after completion.
 
-print(f"OK: exception '{exception_id}' transitioned to '{new_status}' by '{actioned_by}'")
+print(f"OK: exception '{primary_key_value}' transitioned to '{new_status}' by '{actioned_by}'")
 mssparkutils.notebook.exit("OK")

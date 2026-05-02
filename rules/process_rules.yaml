@@ -1,257 +1,167 @@
-# =============================================================================
-# PROCESS BUSINESS RULES — maintained by the Case Management Team
-# Table: Saksbehandling.Prosesser
-#
-# How to add a rule:
-#   1. Pick the next rule_id (PROC-NNN).
-#   2. Choose an expectation:
-#        Standard GX:  expect_column_values_to_not_be_null
-#                      expect_column_values_to_be_greater_than
-#                      expect_column_values_to_be_in_set
-#        Generic:      validate_column_comparison
-#                        parameters: column_A, column_B,
-#                                    operator (>, <, >=, <=, ==, !=),
-#                                    pk_column
-#                      validate_not_null_when
-#                        parameters: condition_column, operator (== or IS NOT NULL or IS NULL),
-#                                    value (when operator ==), check_columns (list), pk_column
-#                      validate_aggregate_rule
-#                        parameters: column, aggregate (sum/count/avg/min/max),
-#                                    operator (>,<,>=,<=,==,!=), threshold
-#        SQL fallback: sql_validation
-#                        parameters: sql (multiline query),
-#                                    pk_column (optional column in result)
-#                      sql (shorthand — top-level sql: key, no parameters wrapper)
-#        Aggregate:    expect_row_count_to_be_between
-#                        parameters: min_value, max_value
-#                      expect_unique_combination_of_columns
-#                        parameters: columns (list), pk_column
-#        Cross-table:  validate_foreign_key
-#                        parameters: column, pk_column,
-#                                    reference: {table, column}
-#                      validate_active_reference
-#                        parameters: source_column, pk_column,
-#                                    reference: {table, column,
-#                                               active_column, active_value}
-#                      validate_time_in_state
-#                        parameters: start_column, open_when_column,
-#                                    open_when_value, pk_column, max_days
-#   3. For rules that target a specific column, set the top-level "column" field.
-#      For multi-column or parameterised rules, use a "parameters" block.
-#   4. Optionally set "category" for grouping (e.g. "Completeness",
-#      "Business Logic", "Referential Integrity", "Aggregate").
-#   5. Add the rule block below and save this file.
-#   6. The next validation run will pick it up automatically — no code changes
-#      required.
-# =============================================================================
-
 rule_group: Process
 table: Prosesser
 database: Saksbehandling
 description: Data quality rules for the main process / case records (Prosesser)
-
-# Table configuration used by validation_runner.py to load the source table
-# and pass the primary key column to run_validation().
 pk_column: Saksnummer
-
-# Optional source scoping during validation.
-# Use date_range when a reliable date column exists, otherwise use custom.
 catalog_filter:
   type: custom
-  where_clause: "Status IN ('Open', 'Pending')"
-
-# Optional pre-joins applied before validation.
-# Each entry specifies a table to join, the join key, join strategy, and
-# (optionally) a list of columns to select from the joined table.
+  where_clause: Status IN ('Open', 'Pending')
 joins:
-  - table: Saksbehandling.saker
-    on: Saksnummer
-    how: left
-    select:
-      - Saksnummer
-      - Status
-      - Saksbehandler_kode
-
+- table: Saksbehandling.saker
+  true: Saksnummer
+  how: left
+  select:
+  - Saksnummer
+  - Status
+  - Saksbehandler_kode
 rules:
+- rule_id: PROC-001
+  name: Saksnummer cannot be null
+  description: 'Every row in Prosesser must reference a valid case number. A null
+    Saksnummer means the process cannot be traced back to a case.
 
-  # ---------------------------------------------------------------------------
-  # Null / completeness checks
-  # ---------------------------------------------------------------------------
+    '
+  expectation: not_null
+  column: Saksnummer
+  severity: critical
+  category: Completeness
+  owner: Saksteam
+- rule_id: PROC-002
+  name: Indikator cannot be null
+  description: 'Every process must have a valid indicator (case type / sakstype).
+    Without an indicator the case cannot be categorised or reported correctly.
 
-  - rule_id: PROC-001
-    name: Saksnummer cannot be null
-    description: >
-      Every row in Prosesser must reference a valid case number.
-      A null Saksnummer means the process cannot be traced back to a case.
-    expectation: expect_column_values_to_not_be_null
-    column: Saksnummer
-    severity: critical
-    category: Completeness
-    owner: Saksteam
+    '
+  expectation: not_null
+  column: Indikator
+  severity: high
+  category: Completeness
+  owner: Saksteam
+- rule_id: PROC-003
+  name: Saksbehandler_kode cannot be null for open cases
+  description: 'Every process where ActualEndDate is null (i.e. the case is still
+    open) must be assigned to a handler. Unassigned open cases represent a governance
+    gap.
 
-  - rule_id: PROC-002
-    name: Indikator cannot be null
-    description: >
-      Every process must have a valid indicator (case type / sakstype).
-      Without an indicator the case cannot be categorised or reported correctly.
-    expectation: expect_column_values_to_not_be_null
-    column: Indikator
-    severity: high
-    category: Completeness
-    owner: Saksteam
+    '
+  expectation: not_null_when
+  parameters:
+    when_column: ActualEndDate
+    operator: IS NULL
+    checked_columns:
+    - Saksbehandler_kode
+    pk_column: Saksnummer
+  severity: high
+  category: Completeness
+  owner: Saksteam
+- rule_id: PROC-004
+  name: ExpectedEndDate must be greater than or equal to StartDate
+  description: 'For every process where both dates are set, the expected end date
+    must not precede the start date.  A reversed date range indicates a data entry
+    error that will cause incorrect duration reporting.
 
-  - rule_id: PROC-003
-    name: Saksbehandler_kode cannot be null for open cases
-    description: >
-      Every process where ActualEndDate is null (i.e. the case is still open)
-      must be assigned to a handler. Unassigned open cases represent a
-      governance gap.
-    expectation: validate_not_null_when
-    parameters:
-      condition_column: ActualEndDate
-      operator: IS NULL
-      check_columns:
-        - Saksbehandler_kode
-      pk_column: Saksnummer
-    severity: high
-    category: Completeness
-    owner: Saksteam
+    '
+  expectation: comparison
+  parameters:
+    left_column: ExpectedEndDate
+    right_column: StartDate
+    operator: '>='
+    pk_column: Saksnummer
+  severity: critical
+  category: Business Logic
+  owner: Saksteam
+- rule_id: PROC-005
+  name: ActualEndDate must be greater than or equal to StartDate
+  description: 'For completed processes, the actual end date must not precede the
+    start date.  This guards against transposed or incorrect date recording.
 
-  # ---------------------------------------------------------------------------
-  # Cross-column comparison checks (validate_column_comparison)
-  # Compares two columns using an operator.  Rows where either column is null
-  # are excluded.  Supported operators: >, <, >=, <=, ==, !=
-  # ---------------------------------------------------------------------------
+    '
+  expectation: comparison
+  parameters:
+    left_column: ActualEndDate
+    right_column: StartDate
+    operator: '>='
+    pk_column: Saksnummer
+  severity: high
+  category: Business Logic
+  owner: Saksteam
+- rule_id: PROC-006
+  name: No process with ActualEndDate before StartDate (SQL)
+  description: 'SQL fallback rule: directly queries the database for process rows
+    where ActualEndDate is earlier than StartDate.  Provides a fast, index-backed
+    check for date-order integrity without loading data into memory.
 
-  - rule_id: PROC-004
-    name: ExpectedEndDate must be greater than or equal to StartDate
-    description: >
-      For every process where both dates are set, the expected end date must
-      not precede the start date.  A reversed date range indicates a data
-      entry error that will cause incorrect duration reporting.
-    expectation: validate_column_comparison
-    parameters:
-      column_A: ExpectedEndDate
-      column_B: StartDate
-      operator: ">="
-      pk_column: Saksnummer
-    severity: critical
-    category: Business Logic
-    owner: Saksteam
+    '
+  expectation: sql_violations
+  parameters:
+    sql: "SELECT Saksnummer, StartDate, ActualEndDate\nFROM Saksbehandling.Prosesser\n\
+      WHERE ActualEndDate IS NOT NULL\n  AND StartDate IS NOT NULL\n  AND ActualEndDate\
+      \ < StartDate\n"
+    pk_column: Saksnummer
+  severity: high
+  category: Business Logic
+  owner: Saksteam
+- rule_id: PROC-007
+  name: Process table must contain at least one row
+  description: 'The Prosesser table must never be empty.  Zero rows indicates that
+    either the data load failed or all processes were unexpectedly deleted. Adjust
+    min_value and max_value to match expected data volumes.
 
-  - rule_id: PROC-005
-    name: ActualEndDate must be greater than or equal to StartDate
-    description: >
-      For completed processes, the actual end date must not precede the start
-      date.  This guards against transposed or incorrect date recording.
-    expectation: validate_column_comparison
-    parameters:
-      column_A: ActualEndDate
-      column_B: StartDate
-      operator: ">="
-      pk_column: Saksnummer
-    severity: high
-    category: Business Logic
-    owner: Saksteam
+    '
+  expectation: row_count_in_range
+  parameters:
+    min_value: 1
+    max_value: 10000000
+  severity: critical
+  category: Aggregate
+  owner: Saksteam
+- rule_id: PROC-008
+  name: Saksnummer must be unique across all processes
+  description: 'Each Saksnummer must appear exactly once in Prosesser.  Duplicate
+    case numbers indicate a data ingestion or deduplication issue that will distort
+    all downstream reporting.
 
-  # ---------------------------------------------------------------------------
-  # SQL fallback validations (sql_validation)
-  # Write the query so that every returned row represents a violation.
-  # The validation fails if the query returns one or more rows.
-  # ---------------------------------------------------------------------------
+    '
+  expectation: combination_unique
+  parameters:
+    columns:
+    - Saksnummer
+    pk_column: Saksnummer
+  severity: critical
+  category: Uniqueness
+  owner: Saksteam
+- rule_id: PROC-009
+  name: Saksbehandler_kode must reference an active employee
+  description: 'Every handler code assigned to a process must exist as an active employee
+    in the employee register. A handler who has left the organisation must not remain
+    assigned to open cases.
 
-  - rule_id: PROC-006
-    name: No process with ActualEndDate before StartDate (SQL)
-    description: >
-      SQL fallback rule: directly queries the database for process rows where
-      ActualEndDate is earlier than StartDate.  Provides a fast, index-backed
-      check for date-order integrity without loading data into memory.
-    expectation: sql_validation
-    parameters:
-      sql: |
-        SELECT Saksnummer, StartDate, ActualEndDate
-        FROM Saksbehandling.Prosesser
-        WHERE ActualEndDate IS NOT NULL
-          AND StartDate IS NOT NULL
-          AND ActualEndDate < StartDate
-      pk_column: Saksnummer
-    severity: high
-    category: Business Logic
-    owner: Saksteam
+    '
+  expectation: reference_active
+  parameters:
+    source_column: Saksbehandler_kode
+    pk_column: Saksnummer
+    reference_table: Saksbehandling.Ansatte
+    reference_column: AnsattKode
+    reference_active_column: Status
+    reference_active_value: Aktiv
+  severity: high
+  category: Referential Integrity
+  owner: Saksteam
+- rule_id: PROC-010
+  name: Open cases must not exceed 30 days without closure
+  description: 'A process that has no ActualEndDate (still open) must not have been
+    running for more than 30 days since StartDate. Cases exceeding this threshold
+    require review and reassignment or closure.
 
-  # ---------------------------------------------------------------------------
-  # Aggregate validations
-  # ---------------------------------------------------------------------------
-
-  - rule_id: PROC-007
-    name: Process table must contain at least one row
-    description: >
-      The Prosesser table must never be empty.  Zero rows indicates that
-      either the data load failed or all processes were unexpectedly deleted.
-      Adjust min_value and max_value to match expected data volumes.
-    expectation: expect_row_count_to_be_between
-    parameters:
-      min_value: 1
-      max_value: 10000000
-    severity: critical
-    category: Aggregate
-    owner: Saksteam
-
-  - rule_id: PROC-008
-    name: Saksnummer must be unique across all processes
-    description: >
-      Each Saksnummer must appear exactly once in Prosesser.  Duplicate
-      case numbers indicate a data ingestion or deduplication issue that
-      will distort all downstream reporting.
-    expectation: expect_unique_combination_of_columns
-    parameters:
-      columns:
-        - Saksnummer
-      pk_column: Saksnummer
-    severity: critical
-    category: Uniqueness
-    owner: Saksteam
-
-  # ---------------------------------------------------------------------------
-  # Active reference validations
-  # ---------------------------------------------------------------------------
-
-  - rule_id: PROC-009
-    name: Saksbehandler_kode must reference an active employee
-    description: >
-      Every handler code assigned to a process must exist as an active employee
-      in the employee register. A handler who has left the organisation must not
-      remain assigned to open cases.
-    expectation: validate_active_reference
-    parameters:
-      source_column: Saksbehandler_kode
-      pk_column: Saksnummer
-      reference:
-        table: Saksbehandling.Ansatte
-        column: AnsattKode
-        active_column: Status
-        active_value: Aktiv
-    severity: high
-    category: Referential Integrity
-    owner: Saksteam
-
-  # ---------------------------------------------------------------------------
-  # Time-in-state validations
-  # ---------------------------------------------------------------------------
-
-  - rule_id: PROC-010
-    name: Open cases must not exceed 30 days without closure
-    description: >
-      A process that has no ActualEndDate (still open) must not have been
-      running for more than 30 days since StartDate. Cases exceeding this
-      threshold require review and reassignment or closure.
-    expectation: validate_time_in_state
-    parameters:
-      start_column: StartDate
-      open_when_column: ActualEndDate
-      open_when_value: null
-      pk_column: Saksnummer
-      max_days: 30
-    severity: high
-    category: Business Logic
-    owner: Saksteam
+    '
+  expectation: state_duration_within_limit
+  parameters:
+    start_column: StartDate
+    open_state_column: ActualEndDate
+    open_state_value: null
+    pk_column: Saksnummer
+    max_days: 30
+  severity: high
+  category: Business Logic
+  owner: Saksteam

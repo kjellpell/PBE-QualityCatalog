@@ -1,83 +1,51 @@
-# =============================================================================
-# IC PROCESS RULES — Internal Controls for Case Management (Prosesser)
-# Table: Saksbehandling.Prosesser
-#
-# These rules are tagged with IC-specific fields (control_ref, control_type,
-# risk_domain, remediation_due_days) and are processed alongside DQ rules:
-#   - Summary rows go to both dq_run_results AND ic_run_results
-#   - Violations go to ic_exceptions (4-state lifecycle)
-#
-# Rule IDs use the IC-PROC- prefix (not PROC-) to avoid collision with
-# data quality rules in process_rules.yaml.
-#
-# See IC_RULES_GUIDE.md for full authoring guidance.
-# =============================================================================
-
 rule_group: IC-Process
 table: Prosesser
 database: Saksbehandling
 description: Internal control rules for case process records
-
 pk_column: Saksnummer
-
 joins:
-  - table: Saksbehandling.saker
-    on: Saksnummer
-    how: left
-    select:
-      - Saksnummer
-      - Status
-
+- table: Saksbehandling.saker
+  true: Saksnummer
+  how: left
+  select:
+  - Saksnummer
+  - Status
 rules:
+- rule_id: IC-PROC-001
+  name: No self-approval on process cases
+  description: 'The case handler who creates a process record must not be the same
+    person who approves it. Segregation of duties control (COSO CC5.2).
 
-  # ---------------------------------------------------------------------------
-  # Segregation of Duties
-  # ---------------------------------------------------------------------------
+    '
+  expectation: comparison
+  parameters:
+    left_column: ApprovedBy
+    right_column: CreatedBy
+    operator: '!='
+    pk_column: Saksnummer
+  severity: critical
+  category: Segregation of Duties
+  owner: Saksteam
+  control_ref: COSO-CC5.2
+  control_type: Detective
+  risk_domain: Operational
+  remediation_due_days: 3
+- rule_id: IC-PROC-002
+  name: All mandatory milestones completed before case closure
+  description: 'A case may not have status Closed unless all required milestone steps
+    are recorded as complete.  Any open mandatory milestone on a closed case is a
+    process control violation.
 
-  - rule_id: IC-PROC-001
-    name: No self-approval on process cases
-    description: >
-      The case handler who creates a process record must not be the same person
-      who approves it. Segregation of duties control (COSO CC5.2).
-    expectation: validate_column_comparison
-    parameters:
-      column_A: ApprovedBy
-      column_B: CreatedBy
-      operator: "!="
-      pk_column: Saksnummer
-    severity: critical
-    category: Segregation of Duties
-    owner: Saksteam
-    control_ref: COSO-CC5.2
-    control_type: Detective
-    risk_domain: Operational
-    remediation_due_days: 3
-
-  # ---------------------------------------------------------------------------
-  # Completeness / Closure
-  # ---------------------------------------------------------------------------
-
-  - rule_id: IC-PROC-002
-    name: All mandatory milestones completed before case closure
-    description: >
-      A case may not have status Closed unless all required milestone steps
-      are recorded as complete.  Any open mandatory milestone on a closed case
-      is a process control violation.
-    expectation: sql
-    sql: |
-      SELECT p.Saksnummer
-      FROM Saksbehandling.Prosesser p
-      WHERE p.Status = 'Closed'
-        AND EXISTS (
-          SELECT 1 FROM Saksbehandling.Milepel m
-          WHERE m.Saksnummer = p.Saksnummer
-            AND m.Required    = true
-            AND m.CompletedAt IS NULL
-        )
-    severity: high
-    category: Completeness
-    owner: Saksteam
-    control_ref: COSO-CC4.1
-    control_type: Preventive
-    risk_domain: Operational
-    remediation_due_days: 5
+    '
+  expectation: sql_violations
+  sql: "SELECT p.Saksnummer\nFROM Saksbehandling.Prosesser p\nWHERE p.Status = 'Closed'\n\
+    \  AND EXISTS (\n    SELECT 1 FROM Saksbehandling.Milepel m\n    WHERE m.Saksnummer\
+    \ = p.Saksnummer\n      AND m.Required    = true\n      AND m.CompletedAt IS NULL\n\
+    \  )\n"
+  severity: high
+  category: Completeness
+  owner: Saksteam
+  control_ref: COSO-CC4.1
+  control_type: Preventive
+  risk_domain: Operational
+  remediation_due_days: 5
