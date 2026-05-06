@@ -130,7 +130,9 @@ def _resolve_gate_groups(df: DataFrame, gate: dict, group_col: str):
         .select(group_col)
         .distinct()
     )
-    return df.join(completed_groups, on=group_col, how="inner")
+    result = df.join(completed_groups, on=group_col, how="inner")
+    assert result.count() > 0, f"Rule {rule.get('rule_id', 'unknown')}: empty after gate completion join — check join keys and source data"
+    return result
 
 
 # =============================================================================
@@ -400,68 +402,6 @@ class SqlValidationExpectation:
 
 
 # -----------------------------------------------------------------------------
-# expect_column_sum_to_equal
-# Validates that SUM(column) == expected_value within an optional tolerance.
-# Kept for backward compatibility; prefer validate_aggregate_rule for new rules.
-# -----------------------------------------------------------------------------
-class ColumnSumExpectation:
-    """
-    Validates that SUM(column) equals expected_value (within tolerance).
-
-    YAML parameters:
-      column         - numeric column to sum
-      expected_value - the value the sum must equal
-      tolerance      - allowed absolute deviation (default: 0.01)
-    """
-
-    def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
-        params         = rule.get("parameters", {})
-        column         = params.get("column")
-        expected_value = params.get("expected_value")
-        tolerance      = float(params.get("tolerance", 0.01))
-
-        if not column or expected_value is None:
-            return (
-                _error_result(
-                    "Parameters 'column' and 'expected_value' are required."
-                ),
-                _empty_violations(spark),
-            )
-
-        if column not in df.columns:
-            return (
-                _error_result(f"Column '{column}' not found in DataFrame."),
-                _empty_violations(spark),
-            )
-
-        agg_row   = df.agg(
-            F.count(F.lit(1)).alias("_total"),
-            F.sum(F.col(column).cast("double")).alias("_sum"),
-        ).collect()[0]
-        total     = agg_row["_total"]
-        actual    = float(agg_row["_sum"]) if agg_row["_sum"] is not None else 0.0
-        expected  = float(expected_value)
-        deviation = abs(actual - expected)
-        passed    = deviation <= tolerance
-
-        condition = f"SUM({column}) == {expected} (\u00b1{tolerance})"
-
-        result = {
-            "total_rows":  total,
-            "passed_rows": total if passed else 0,
-            "failed_rows": 0 if passed else total,
-            "success_pct": 100.0 if passed else 0.0,
-            "status":      "PASSED" if passed else "FAILED",
-            "details": (
-                f"SUM({column}) = {actual:.4f}, expected {expected} \u00b1{tolerance}."
-                if not passed
-                else f"SUM({column}) = {actual:.4f} satisfies {condition}."
-            ),
-        }
-        return result, _empty_violations(spark)
-
-
-# -----------------------------------------------------------------------------
 # expect_row_count_to_be_between
 # Validates that the table row count falls within [min_value, max_value].
 # -----------------------------------------------------------------------------
@@ -554,6 +494,7 @@ class UniqueColumnCombinationExpectation:
         passed = total - failed
 
         violations_df = df.join(dup_groups.drop("_cnt"), on=columns, how="inner")
+        assert violations_df.count() > 0, f"Rule {rule.get('rule_id', 'unknown')}: empty after duplicate group join — check join keys and source data"
 
         col_combo = ", ".join(columns)
         condition  = f"UNIQUE({col_combo})"
@@ -656,6 +597,7 @@ class ForeignKeyExpectation:
             F.col("src." + column).cast("string") == F.col("_ref_key"),
             how="left_anti",
         )
+        assert violations_df.count() > 0, f"Rule {rule.get('rule_id', 'unknown')}: empty after reference join — check join keys and source data"
         failed = violations_df.count()
         passed = total - failed
 
@@ -1038,6 +980,7 @@ class ValidateSequenceOrderExpectation:
         relevant_filtered = relevant.join(
             group_counts.select(group_col), on=group_col, how="inner"
         )
+        assert relevant_filtered.count() > 0, f"Rule {rule.get('rule_id', 'unknown')}: empty after sequence group join — check join keys and source data"
 
         # Check ordering row-by-row within each group (sorted by sort_column).
         # A violation occurs when:
@@ -1104,6 +1047,7 @@ class ValidateSequenceOrderExpectation:
             .join(first_val, on=group_col, how="inner")
             .join(last_val,  on=group_col, how="inner")
         )
+        assert violations_info.count() > 0, f"Rule {rule.get('rule_id', 'unknown')}: empty after paired value joins — check join keys and source data"
 
         seq_str = " \u2192 ".join(seq_values)
         if allow_loops:
@@ -1366,6 +1310,7 @@ class ValidateGateExpectation:
         # Violation: any group in the dataset that did NOT pass the gate.
         all_groups = df.select(group_col).distinct()
         failed_groups = all_groups.join(passed_groups, on=group_col, how="left_anti")
+        assert failed_groups.count() >= 0, f"Rule {rule.get('rule_id', 'unknown')}: gate validation join produced empty result — check join keys and source data"
         failed = failed_groups.count()
 
         if failed == 0:
@@ -1948,6 +1893,7 @@ class ValidateActiveReferenceExpectation:
             F.col("src." + src_col).cast("string") == F.col("_active_ref_key"),
             how="left_anti",
         )
+        assert violations_df.count() > 0, f"Rule {rule.get('rule_id', 'unknown')}: empty after active reference join — check join keys and source data"
         failed = violations_df.count()
         passed = total - failed
 

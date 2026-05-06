@@ -69,9 +69,6 @@ Use these exact strings — typos will silently break MERGE logic.
 - **IC exception status** (ic_exceptions): `"Open"`, `"Remediated"`, `"Verified"`, `"Waived"`
 - **Execution metric status** (dq_execution_metrics): `"Succeeded"`, `"Failed"`
 
-## Expectation Naming Contract
-
-Effective 2026-05-02: All expectation identifiers and YAML parameter names follow a canonical naming model to improve clarity for business rule authors.
 
 ### Expectation IDs
 

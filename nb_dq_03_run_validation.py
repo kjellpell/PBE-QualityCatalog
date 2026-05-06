@@ -29,7 +29,6 @@ REQUIRED_FILES = [
     ENGINE_DIR / "runtime.py",
     ENGINE_DIR / "expectations.py",
     ENGINE_DIR / "resolution.py",
-    ENGINE_DIR / "yaml_rules.py",
     RUNNER_PATH,
     CONFIG_DIR / "QualityCatalogConfig.py",
     CONFIG_DIR / "QualityCatalogRuntime.py",

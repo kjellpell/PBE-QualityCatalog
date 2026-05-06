@@ -76,9 +76,7 @@ try:
     from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
     from engine.resolution import (
         VIOLATION_SCHEMA,
-        IC_EXCEPTION_SCHEMA,
         _apply_resolution_tracking,
-        _apply_ic_resolution_tracking,
     )
     from engine.runtime import (
         classify_retryable_error,
@@ -114,9 +112,7 @@ except ModuleNotFoundError:
 
     CUSTOM_EXPECTATION_REGISTRY = expectations_module.CUSTOM_EXPECTATION_REGISTRY
     VIOLATION_SCHEMA = resolution_module.VIOLATION_SCHEMA
-    IC_EXCEPTION_SCHEMA = resolution_module.IC_EXCEPTION_SCHEMA
     _apply_resolution_tracking = resolution_module._apply_resolution_tracking
-    _apply_ic_resolution_tracking = resolution_module._apply_ic_resolution_tracking
 
     classify_retryable_error = runtime_module.classify_retryable_error
     load_config_module = runtime_module.load_config_module
@@ -431,19 +427,19 @@ def run_validation(
         owner     = rule.get("owner", "")
 
         params    = rule.get("parameters", {})
-        column_a  = params.get("column_A") if exp_name == "validate_column_comparison" else None
-        column_b  = params.get("column_B") if exp_name == "validate_column_comparison" else None
-        operator  = params.get("operator")  if exp_name == "validate_column_comparison" else None
+        column_a  = params.get("column_A") if exp_name == "comparison" else None
+        column_b  = params.get("column_B") if exp_name == "comparison" else None
+        operator  = params.get("operator")  if exp_name == "comparison" else None
         sql_query = (
             params.get("sql") or rule.get("sql")
-            if exp_name in ("sql_validation", "sql")
+            if exp_name == "sql_violations"
             else None
         )
 
         rule_category    = rule.get("category") or rule.get("rule_category")
         ref_block        = params.get("reference", {})
-        reference_table  = ref_block.get("table")  if exp_name == "validate_foreign_key" else None
-        reference_column = ref_block.get("column") if exp_name == "validate_foreign_key" else None
+        reference_table  = ref_block.get("table")  if exp_name == "reference_exists" else None
+        reference_column = ref_block.get("column") if exp_name == "reference_exists" else None
 
         print(f"  → [{rule_id}] {rule_name} ({exp_name}) ... ", end="")
         _rule_start = time.perf_counter()
@@ -626,25 +622,6 @@ def main() -> tuple[int, int]:
     all_catalogs = _load_all_rules()
     if not all_catalogs and RUNTIME.FAIL_ON_EMPTY_RULES:
         raise RuntimeError("No rule catalogs loaded from YAML files.")
-
-    # Pre-compute IC rule metadata so we can enrich violations after the main loop.
-    # A rule is IC if it carries at least one of the IC_IDENTIFIER_FIELDS.
-    _ic_id_fields = getattr(CONFIG, "IC_IDENTIFIER_FIELDS", ["control_ref", "control_type", "risk_domain"])
-    ic_rule_meta: dict[str, dict] = {}
-    for _cat in all_catalogs:
-        for _rule in _cat.get("rules", []):
-            if any(_rule.get(f) for f in _ic_id_fields):
-                ic_rule_meta[_rule["rule_id"]] = {
-                    "control_ref":          _rule.get("control_ref"),
-                    "control_type":         _rule.get("control_type"),
-                    "risk_domain":          _rule.get("risk_domain"),
-                    "remediation_due_days": _as_int_or_none(_rule.get("remediation_due_days")),
-                    "owner_email":          _rule.get("owner_email"),
-                }
-    ic_rule_ids = set(ic_rule_meta.keys())
-    if ic_rule_ids:
-        print(f"  IC rules detected: {sorted(ic_rule_ids)}")
-
     result_dfs    = []
     violation_dfs = []
 
@@ -700,9 +677,11 @@ def main() -> tuple[int, int]:
 
             if join_on not in (None, ""):
                 source_df = source_df.join(join_df, on=join_on, how=join_how)
+                assert source_df.count() > 0, f"Rule {rule_id}: empty after join on {join_on} — check join keys and source data"
                 print(f"  Joined with {join_table} on {join_on} ({join_how})")
             elif left_on and right_on:
                 source_df = source_df.join(join_df, source_df[left_on] == join_df[right_on], how=join_how)
+                assert source_df.count() > 0, f"Rule {rule_id}: empty after join on {left_on}={right_on} — check join keys and source data"
                 print(f"  Joined with {join_table} on {left_on}={right_on} ({join_how})")
             else:
                 print(
@@ -777,84 +756,6 @@ def main() -> tuple[int, int]:
     # ------------------------------------------------------------------
     # IC dual-write: results → ic_run_results, violations → ic_exceptions
     # ------------------------------------------------------------------
-    if ic_rule_ids:
-        # Build a metadata DataFrame to join IC-specific fields onto violations.
-        _ic_meta_schema = StructType([
-            StructField("rule_id",               StringType(),  False),
-            StructField("control_ref",           StringType(),  True),
-            StructField("control_type",          StringType(),  True),
-            StructField("risk_domain",           StringType(),  True),
-            StructField("remediation_due_days",  IntegerType(), True),
-            StructField("owner_email",           StringType(),  True),
-        ])
-        _ic_meta_rows = [
-            (
-                rid,
-                m["control_ref"],
-                m["control_type"],
-                m["risk_domain"],
-                _as_int_or_none(m["remediation_due_days"]),
-                m["owner_email"],
-            )
-            for rid, m in ic_rule_meta.items()
-        ]
-        ic_meta_df = spark.createDataFrame(_ic_meta_rows, schema=_ic_meta_schema)
-
-        # Filter violations to IC rules only.
-        ic_base_violations = all_violations_combined.filter(
-            F.col("rule_id").isin(ic_rule_ids)
-        )
-        ic_violations_count = ic_base_violations.count()
-
-        if ic_violations_count > 0:
-            # Enrich with IC metadata and lifecycle columns, reordering to match
-            # IC_EXCEPTION_SCHEMA so that MERGE INSERT * works correctly.
-            ic_violations = (
-                ic_base_violations
-                .join(ic_meta_df, on="rule_id", how="left")
-                .withColumn("ic_status",   F.lit("Open"))
-                .withColumn("first_seen_at", F.lit(RUN_TIMESTAMP).cast("timestamp"))
-                .withColumn(
-                    "remediation_due_date",
-                    F.expr(
-                        "CASE WHEN remediation_due_days IS NOT NULL "
-                        "THEN date_add(to_date(first_seen_at), "
-                        "     cast(remediation_due_days AS INT)) "
-                        "ELSE NULL END"
-                    ).cast("date"),
-                )
-                # Human-set workflow fields — engine always writes NULL
-                .withColumn("remediated_by",  F.lit(None).cast("string"))
-                .withColumn("remediated_at",  F.lit(None).cast("timestamp"))
-                .withColumn("verified_by",    F.lit(None).cast("string"))
-                .withColumn("verified_at",    F.lit(None).cast("timestamp"))
-                .withColumn("waived_by",      F.lit(None).cast("string"))
-                .withColumn("waived_at",      F.lit(None).cast("timestamp"))
-                .withColumn("waiver_reason",  F.lit(None).cast("string"))
-                # Drop DQ-only columns not present in IC_EXCEPTION_SCHEMA
-                .drop("issue_status", "resolution_timestamp")
-                # Select in IC_EXCEPTION_SCHEMA column order for clean INSERT *
-                .select([f.name for f in IC_EXCEPTION_SCHEMA.fields])
-            )
-
-            _apply_ic_resolution_tracking(
-                ic_violations,
-                spark_session=spark,
-                ic_exceptions_table=TARGETS["ic_exceptions_table"],
-                run_timestamp=RUN_TIMESTAMP,
-            )
-            print(f"  {TARGETS['ic_exceptions_table']} : {ic_violations_count} IC violations processed.")
-        else:
-            print(f"  {TARGETS['ic_exceptions_table']} : 0 IC violations this run.")
-
-        # Write IC run summaries (subset of dq_run_results rows for IC rules).
-        # No separate cache — filter from already-cached all_results_combined.
-        ic_results = all_results_combined.filter(F.col("rule_id").isin(ic_rule_ids))
-        ic_results_count = ic_results.count()
-        ic_results_to_write = _align_df_to_table_schema(ic_results, TARGETS["ic_results_table"])
-        ic_results_to_write.write.mode("append").saveAsTable(TARGETS["ic_results_table"])
-        print(f"  {TARGETS['ic_results_table']} : {ic_results_count} IC summary rows appended.")
-
     print("\n=== DATA QUALITY RUN SUMMARY ===")
     spark.createDataFrame([(RUN_ID,)], ["_run_id"]).createOrReplaceTempView("_dq_run_id")
     spark.sql(
