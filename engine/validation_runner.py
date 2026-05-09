@@ -12,8 +12,7 @@
 #        c. Collect per-row violation details.
 #   4. Write summary rows to dq_run_results (Delta table).
 #   5. Write violation rows to dq_violations via MERGE-based resolution tracking.
-#   6. Write IC exceptions to ic_exceptions (for IC-flagged rules).
-#   7. Write execution metrics to dq_execution_metrics.
+#   6. Write execution metrics to dq_execution_metrics.
 #
 # Schedule: nightly (after source tables are refreshed).
 # Prerequisites: nb_dq_00_setup.py must have been run at least once.
@@ -436,7 +435,7 @@ def run_validation(
             else None
         )
 
-        rule_category    = rule.get("category") or rule.get("rule_category")
+        rule_category    = rule.get("rule_category")
         ref_block        = params.get("reference", {})
         reference_table  = ref_block.get("table")  if exp_name == "reference_exists" else None
         reference_column = ref_block.get("column") if exp_name == "reference_exists" else None
@@ -561,10 +560,6 @@ def run_validation(
     return results_df, all_violations
 
 
-def _empty_ic_exceptions():
-    return spark.createDataFrame([], IC_EXCEPTION_SCHEMA)
-
-
 def _as_int_or_none(value):
     if value in (None, ""):
         return None
@@ -660,9 +655,6 @@ def main() -> tuple[int, int]:
             join_select = join_cfg.get("select")
             join_on = (
                 join_cfg.get("on")
-                or join_cfg.get("true")
-                or join_cfg.get("True")
-                or join_cfg.get(True)
             )
             left_on = join_cfg.get("left_on")
             right_on = join_cfg.get("right_on")
@@ -677,11 +669,9 @@ def main() -> tuple[int, int]:
 
             if join_on not in (None, ""):
                 source_df = source_df.join(join_df, on=join_on, how=join_how)
-                assert source_df.count() > 0, f"Rule {rule_id}: empty after join on {join_on} — check join keys and source data"
                 print(f"  Joined with {join_table} on {join_on} ({join_how})")
             elif left_on and right_on:
                 source_df = source_df.join(join_df, source_df[left_on] == join_df[right_on], how=join_how)
-                assert source_df.count() > 0, f"Rule {rule_id}: empty after join on {left_on}={right_on} — check join keys and source data"
                 print(f"  Joined with {join_table} on {left_on}={right_on} ({join_how})")
             else:
                 print(
@@ -753,9 +743,6 @@ def main() -> tuple[int, int]:
     )
     print(f"  {TARGETS['violations_table']} : {violations_count} violations processed.")
 
-    # ------------------------------------------------------------------
-    # IC dual-write: results → ic_run_results, violations → ic_exceptions
-    # ------------------------------------------------------------------
     print("\n=== DATA QUALITY RUN SUMMARY ===")
     spark.createDataFrame([(RUN_ID,)], ["_run_id"]).createOrReplaceTempView("_dq_run_id")
     spark.sql(

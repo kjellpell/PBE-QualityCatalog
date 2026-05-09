@@ -23,10 +23,8 @@ Use this checklist to run, verify, and triage the Quality Catalog quickly.
 
 ## First-Time Or Schema-Update Setup
 
-1. Install Great Expectations in the Spark environment:
-   - great-expectations==1.3.10
-2. Run nb_dq_00_setup.py.
-3. Re-run preflight before scheduling.
+1. Run nb_dq_00_setup.py.
+2. Re-run preflight before scheduling.
 
 ---
 

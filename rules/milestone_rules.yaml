@@ -13,7 +13,7 @@ rules:
   expectation: not_null
   column: Milepel
   severity: critical
-  category: Completeness
+  rule_category: Completeness
   owner: IT
 - rule_id: MIL-002
   name: prosess_id cannot be null
@@ -24,7 +24,7 @@ rules:
   expectation: not_null
   column: prosess_id
   severity: critical
-  category: Completeness
+  rule_category: Completeness
   owner: IT
 - rule_id: MIL-003
   name: Milestones must follow the defined sequence
@@ -47,7 +47,7 @@ rules:
       value: Stoppbehandling
       order_column: EndDate
   severity: high
-  category: Business Logic
+  rule_category: Business Logic
   owner: IT
 - rule_id: MIL-004
   name: Milestone pairs must both be present
@@ -68,7 +68,7 @@ rules:
       value: Stoppbehandling
       order_column: EndDate
   severity: critical
-  category: Business Logic
+  rule_category: Business Logic
   owner: IT
 - rule_id: MIL-005
   name: Stop milestone without start milestone is invalid
@@ -84,7 +84,7 @@ rules:
     - - Startbehandling
       - Stoppbehandling
   severity: high
-  category: Business Logic
+  rule_category: Business Logic
   owner: IT
 - rule_id: MIL-006
   name: No milestone with EndDate before StartDate (SQL)
@@ -100,7 +100,7 @@ rules:
       GROUP BY Milepel\nHAVING COUNT(1) > 0\n"
     pk_column: Milepel
   severity: critical
-  category: Business Logic
+  rule_category: Business Logic
   owner: IT
 - rule_id: MIL-007
   name: prosess_id must exist in Prosesser table
@@ -116,7 +116,7 @@ rules:
     reference_table: Saksbehandling.Prosesser
     reference_column: prosess_id
   severity: critical
-  category: Referential Integrity
+  rule_category: Referential Integrity
   owner: IT
 - rule_id: MIL-008
   name: Unique combination of prosess_id and Milepel type
@@ -133,7 +133,7 @@ rules:
     - Milepel
     pk_column: prosess_id
   severity: high
-  category: Uniqueness
+  rule_category: Uniqueness
   owner: IT
 - rule_id: MIL-009
   name: Milestones with repeated steps must still follow the defined sequence
@@ -158,5 +158,5 @@ rules:
       value: Stoppbehandling
       order_column: EndDate
   severity: high
-  category: Business Logic
+  rule_category: Business Logic
   owner: IT

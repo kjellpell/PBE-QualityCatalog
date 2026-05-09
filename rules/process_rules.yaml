@@ -8,7 +8,7 @@ catalog_filter:
   where_clause: Status IN ('Open', 'Pending')
 joins:
 - table: Saksbehandling.saker
-  true: Saksnummer
+  on: Saksnummer
   how: left
   select:
   - Saksnummer
@@ -24,7 +24,7 @@ rules:
   expectation: not_null
   column: Saksnummer
   severity: critical
-  category: Completeness
+  rule_category: Completeness
   owner: Saksteam
 - rule_id: PROC-002
   name: Indikator cannot be null
@@ -35,7 +35,7 @@ rules:
   expectation: not_null
   column: Indikator
   severity: high
-  category: Completeness
+  rule_category: Completeness
   owner: Saksteam
 - rule_id: PROC-003
   name: Saksbehandler_kode cannot be null for open cases
@@ -52,7 +52,7 @@ rules:
     - Saksbehandler_kode
     pk_column: Saksnummer
   severity: high
-  category: Completeness
+  rule_category: Completeness
   owner: Saksteam
 - rule_id: PROC-004
   name: ExpectedEndDate must be greater than or equal to StartDate
@@ -68,7 +68,7 @@ rules:
     operator: '>='
     pk_column: Saksnummer
   severity: critical
-  category: Business Logic
+  rule_category: Business Logic
   owner: Saksteam
 - rule_id: PROC-005
   name: ActualEndDate must be greater than or equal to StartDate
@@ -83,7 +83,7 @@ rules:
     operator: '>='
     pk_column: Saksnummer
   severity: high
-  category: Business Logic
+  rule_category: Business Logic
   owner: Saksteam
 - rule_id: PROC-006
   name: No process with ActualEndDate before StartDate (SQL)
@@ -99,7 +99,7 @@ rules:
       \ < StartDate\n"
     pk_column: Saksnummer
   severity: high
-  category: Business Logic
+  rule_category: Business Logic
   owner: Saksteam
 - rule_id: PROC-007
   name: Process table must contain at least one row
@@ -113,7 +113,7 @@ rules:
     min_value: 1
     max_value: 10000000
   severity: critical
-  category: Aggregate
+  rule_category: Aggregate
   owner: Saksteam
 - rule_id: PROC-008
   name: Saksnummer must be unique across all processes
@@ -128,7 +128,7 @@ rules:
     - Saksnummer
     pk_column: Saksnummer
   severity: critical
-  category: Uniqueness
+  rule_category: Uniqueness
   owner: Saksteam
 - rule_id: PROC-009
   name: Saksbehandler_kode must reference an active employee
@@ -146,7 +146,7 @@ rules:
     reference_active_column: Status
     reference_active_value: Aktiv
   severity: high
-  category: Referential Integrity
+  rule_category: Referential Integrity
   owner: Saksteam
 - rule_id: PROC-010
   name: Open cases must not exceed 30 days without closure
@@ -163,5 +163,5 @@ rules:
     pk_column: Saksnummer
     max_days: 30
   severity: high
-  category: Business Logic
+  rule_category: Business Logic
   owner: Saksteam

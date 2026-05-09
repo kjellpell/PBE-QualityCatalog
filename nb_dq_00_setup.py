@@ -1,6 +1,6 @@
 # =============================================================================
 # NB_DQ_00_SETUP.py
-# Creates all Delta tables used by the GX Core data quality framework.
+# Creates all Delta tables used by the Quality Catalog data quality framework.
 # Run once before the first validation run.
 # Safe to re-run — all statements use CREATE TABLE IF NOT EXISTS, and
 # ALTER TABLE ... ADD COLUMNS IF NOT EXISTS is used so the script can also
@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS dq_run_results (
     expectation     STRING,
     severity        STRING,
     owner           STRING,
+    owner_email          STRING,
     total_rows      BIGINT,
     passed_rows     BIGINT,
     failed_rows     BIGINT,
@@ -58,7 +59,11 @@ CREATE TABLE IF NOT EXISTS dq_run_results (
     rule_category        STRING,
     reference_table      STRING,
     reference_column     STRING,
-    rule_duration_seconds DOUBLE
+    rule_duration_seconds DOUBLE,
+    control_ref          STRING,
+    control_type         STRING,
+    risk_domain          STRING,
+    remediation_due_days INT
 )
 USING DELTA
 """)
@@ -74,6 +79,11 @@ for _col_def in [
     "reference_table      STRING",
     "reference_column     STRING",
     "rule_duration_seconds DOUBLE",
+    "owner_email          STRING",
+    "control_ref          STRING",
+    "control_type         STRING",
+    "risk_domain          STRING",
+    "remediation_due_days INT",
 ]:
     try:
         spark.sql(

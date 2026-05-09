@@ -130,9 +130,7 @@ def _resolve_gate_groups(df: DataFrame, gate: dict, group_col: str):
         .select(group_col)
         .distinct()
     )
-    result = df.join(completed_groups, on=group_col, how="inner")
-    assert result.count() > 0, f"Rule {rule.get('rule_id', 'unknown')}: empty after gate completion join — check join keys and source data"
-    return result
+    return df.join(completed_groups, on=group_col, how="inner")
 
 
 # =============================================================================
@@ -494,7 +492,6 @@ class UniqueColumnCombinationExpectation:
         passed = total - failed
 
         violations_df = df.join(dup_groups.drop("_cnt"), on=columns, how="inner")
-        assert violations_df.count() > 0, f"Rule {rule.get('rule_id', 'unknown')}: empty after duplicate group join — check join keys and source data"
 
         col_combo = ", ".join(columns)
         condition  = f"UNIQUE({col_combo})"
@@ -548,8 +545,8 @@ class ForeignKeyExpectation:
         if not column or not ref_table or not ref_col:
             return (
                 _error_result(
-                    "Parameters 'column', 'reference.table', and "
-                    "'reference.column' are all required."
+                    "Parameters 'column', 'reference_table', and "
+                    "'reference_column' are all required."
                 ),
                 _empty_violations(spark),
             )
@@ -597,7 +594,6 @@ class ForeignKeyExpectation:
             F.col("src." + column).cast("string") == F.col("_ref_key"),
             how="left_anti",
         )
-        assert violations_df.count() > 0, f"Rule {rule.get('rule_id', 'unknown')}: empty after reference join — check join keys and source data"
         failed = violations_df.count()
         passed = total - failed
 
@@ -980,7 +976,6 @@ class ValidateSequenceOrderExpectation:
         relevant_filtered = relevant.join(
             group_counts.select(group_col), on=group_col, how="inner"
         )
-        assert relevant_filtered.count() > 0, f"Rule {rule.get('rule_id', 'unknown')}: empty after sequence group join — check join keys and source data"
 
         # Check ordering row-by-row within each group (sorted by sort_column).
         # A violation occurs when:
@@ -1047,8 +1042,6 @@ class ValidateSequenceOrderExpectation:
             .join(first_val, on=group_col, how="inner")
             .join(last_val,  on=group_col, how="inner")
         )
-        assert violations_info.count() > 0, f"Rule {rule.get('rule_id', 'unknown')}: empty after paired value joins — check join keys and source data"
-
         seq_str = " \u2192 ".join(seq_values)
         if allow_loops:
             flexible_note = " (allow_loops: true)"
@@ -1310,7 +1303,6 @@ class ValidateGateExpectation:
         # Violation: any group in the dataset that did NOT pass the gate.
         all_groups = df.select(group_col).distinct()
         failed_groups = all_groups.join(passed_groups, on=group_col, how="left_anti")
-        assert failed_groups.count() >= 0, f"Rule {rule.get('rule_id', 'unknown')}: gate validation join produced empty result — check join keys and source data"
         failed = failed_groups.count()
 
         if failed == 0:
@@ -1828,8 +1820,8 @@ class ValidateActiveReferenceExpectation:
         if not src_col or not ref_table or not ref_col or not active_col or active_val is None:
             return (
                 _error_result(
-                    "Parameters 'source_column', 'reference.table', 'reference.column', "
-                    "'reference.active_column', and 'reference.active_value' are all required."
+                    "Parameters 'source_column', 'reference_table', 'reference_column', "
+                    "'reference_active_column', and 'reference_active_value' are all required."
                 ),
                 _empty_violations(spark),
             )
@@ -1893,7 +1885,6 @@ class ValidateActiveReferenceExpectation:
             F.col("src." + src_col).cast("string") == F.col("_active_ref_key"),
             how="left_anti",
         )
-        assert violations_df.count() > 0, f"Rule {rule.get('rule_id', 'unknown')}: empty after active reference join — check join keys and source data"
         failed = violations_df.count()
         passed = total - failed
 
@@ -2063,6 +2054,148 @@ class ValidateTimeInStateExpectation:
         return result, violations_out
 
 
+class ValueInListExpectation:
+    """
+    Validates that all non-null values in 'column' belong to 'allowed_values'.
+
+    YAML parameters:
+      column         - column to check
+      allowed_values - list of permitted values (compared as strings)
+      pk_column      - primary key column for violation reporting (default: column)
+    """
+
+    def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
+        params        = rule.get("parameters", {})
+        column        = params.get("column") or rule.get("column")
+        pk_col        = params.get("pk_column") or column
+        allowed_values = params.get("allowed_values", [])
+
+        if not column:
+            return _error_result("Parameter 'column' is required."), _empty_violations(spark)
+        if not allowed_values or not isinstance(allowed_values, list):
+            return (
+                _error_result("Parameter 'allowed_values' must be a non-empty list."),
+                _empty_violations(spark),
+            )
+        if column not in df.columns:
+            return (
+                _error_result(f"Column '{column}' not found in DataFrame."),
+                _empty_violations(spark),
+            )
+
+        allowed_strs = [str(v) for v in allowed_values]
+        evaluated    = df.filter(F.col(column).isNotNull())
+        total        = evaluated.count()
+
+        if total == 0:
+            return _passed_result(0), _empty_violations(spark)
+
+        violations_df = evaluated.filter(~F.col(column).cast("string").isin(allowed_strs))
+        failed        = violations_df.count()
+        passed        = total - failed
+
+        condition = f"{column} IN ({', '.join(allowed_strs)})"
+        violations_out = violations_df.select(
+            F.col(pk_col).cast("string").alias("primary_key_value"),
+            F.lit(column).alias("violated_column"),
+            F.col(column).cast("string").alias("actual_value"),
+            F.lit(condition).alias("expected_condition"),
+            F.concat(
+                F.lit("Value '"),
+                F.col(column).cast("string"),
+                F.lit(f"' not in allowed list: {allowed_strs}"),
+            ).alias("violation_detail"),
+        )
+
+        return {
+            "total_rows":  total,
+            "passed_rows": passed,
+            "failed_rows": failed,
+            "success_pct": _safe_pct(passed, total),
+            "status":      "PASSED" if failed == 0 else "FAILED",
+            "details": (
+                f"{failed} row(s) in '{column}' have values not in the allowed list."
+                if failed > 0
+                else f"All {total} evaluated rows in '{column}' have an allowed value."
+            ),
+        }, violations_out if failed > 0 else _empty_violations(spark)
+
+
+class GreaterThanExpectation:
+    """
+    Validates that all non-null values in 'column' are strictly greater than 'threshold'.
+
+    YAML parameters:
+      column    - column to check (must be numeric)
+      threshold - numeric lower bound (exclusive); value must be > threshold
+      pk_column - primary key column for violation reporting (default: column)
+    """
+
+    def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
+        params    = rule.get("parameters", {})
+        column    = params.get("column") or rule.get("column")
+        pk_col    = params.get("pk_column") or column
+        threshold = params.get("threshold")
+
+        if not column:
+            return _error_result("Parameter 'column' is required."), _empty_violations(spark)
+        if threshold is None:
+            return _error_result("Parameter 'threshold' is required."), _empty_violations(spark)
+        if column not in df.columns:
+            return (
+                _error_result(f"Column '{column}' not found in DataFrame."),
+                _empty_violations(spark),
+            )
+
+        try:
+            threshold_val = float(threshold)
+        except (TypeError, ValueError):
+            return (
+                _error_result(
+                    f"Parameter 'threshold' must be numeric, got {threshold!r}."
+                ),
+                _empty_violations(spark),
+            )
+
+        evaluated = df.filter(F.col(column).isNotNull())
+        total     = evaluated.count()
+
+        if total == 0:
+            return _passed_result(0), _empty_violations(spark)
+
+        violations_df = evaluated.filter(
+            ~(F.col(column).cast("double") > F.lit(threshold_val))
+        )
+        failed = violations_df.count()
+        passed = total - failed
+
+        condition = f"{column} > {threshold_val}"
+        violations_out = violations_df.select(
+            F.col(pk_col).cast("string").alias("primary_key_value"),
+            F.lit(column).alias("violated_column"),
+            F.col(column).cast("string").alias("actual_value"),
+            F.lit(condition).alias("expected_condition"),
+            F.concat(
+                F.lit("Value '"),
+                F.col(column).cast("string"),
+                F.lit(f"' is not greater than {threshold_val}"),
+            ).alias("violation_detail"),
+        )
+
+        return {
+            "total_rows":  total,
+            "passed_rows": passed,
+            "failed_rows": failed,
+            "success_pct": _safe_pct(passed, total),
+            "status":      "PASSED" if failed == 0 else "FAILED",
+            "details": (
+                f"{failed} row(s) in '{column}' are not greater than {threshold_val}."
+                if failed > 0
+                else f"All {total} evaluated rows in '{column}' are greater than {threshold_val}."
+            ),
+        }, violations_out if failed > 0 else _empty_violations(spark)
+
+
 # =============================================================================
 # Registry — maps YAML expectation names to validator classes.
 #
@@ -2078,6 +2211,8 @@ CUSTOM_EXPECTATION_REGISTRY = {
     "comparison":                           ColumnComparisonExpectation,
     "not_null":                             ExpectColumnValuesToNotBeNullExpectation,
     "sql_violations":                       SqlValidationExpectation,
+    "value_in_list":                        ValueInListExpectation,
+    "greater_than":                         GreaterThanExpectation,
 
     # -------------------------------------------------------------------------
     # Aggregate validators

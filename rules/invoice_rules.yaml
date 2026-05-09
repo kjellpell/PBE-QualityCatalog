@@ -13,7 +13,7 @@ rules:
   expectation: not_null
   column: Fakturanr
   severity: critical
-  category: Completeness
+  rule_category: Completeness
   owner: Finansteam
 - rule_id: INV-002
   name: linje_belop cannot be null
@@ -24,7 +24,7 @@ rules:
   expectation: not_null
   column: linje_belop
   severity: critical
-  category: Completeness
+  rule_category: Completeness
   owner: Finansteam
 - rule_id: INV-003
   name: Faktura_type cannot be null
@@ -35,7 +35,7 @@ rules:
   expectation: not_null
   column: Faktura_type
   severity: high
-  category: Completeness
+  rule_category: Completeness
   owner: Finansteam
 - rule_id: INV-004
   name: Negative amounts only allowed on credit notes (Kreditnota)
@@ -53,7 +53,7 @@ rules:
     required_value: Kreditnota
     pk_column: Fakturanr
   severity: high
-  category: Business Logic
+  rule_category: Business Logic
   owner: Finansteam
 - rule_id: INV-005
   name: Sum of line amounts must match invoice header total
@@ -71,7 +71,7 @@ rules:
     aggregate: sum
     tolerance: 0.01
   severity: high
-  category: Aggregate
+  rule_category: Aggregate
   owner: Finansteam
 - rule_id: INV-006
   name: prosess_id must exist in Prosesser table
@@ -87,7 +87,7 @@ rules:
     reference_table: Saksbehandling.Prosesser
     reference_column: Saksnummer
   severity: high
-  category: Referential Integrity
+  rule_category: Referential Integrity
   owner: Finansteam
 - rule_id: INV-007
   name: SQL — invoices with zero total amount
@@ -107,7 +107,7 @@ rules:
 
     '
   severity: medium
-  category: Aggregate
+  rule_category: Aggregate
   owner: Finansteam
 - rule_id: INV-008
   name: ApprovedBy must reference an active employee
@@ -125,7 +125,7 @@ rules:
     reference_active_column: Status
     reference_active_value: Aktiv
   severity: critical
-  category: Referential Integrity
+  rule_category: Referential Integrity
   owner: Finansteam
 - rule_id: INV-009
   name: Unpaid invoices must not exceed 60 days outstanding
@@ -142,5 +142,5 @@ rules:
     pk_column: Fakturanr
     max_days: 60
   severity: high
-  category: Business Logic
+  rule_category: Business Logic
   owner: Finansteam

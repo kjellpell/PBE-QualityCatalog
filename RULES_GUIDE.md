@@ -105,7 +105,7 @@ Use the correct operator family for the rule type.
   expectation: not_null
   column: StartDate
   severity: high
-  category: Completeness
+  rule_category: Completeness
   owner: Saksteam
 ```
 
@@ -123,7 +123,7 @@ Use the correct operator family for the rule type.
       - Saksbehandler_kode
     pk_column: Saksnummer
   severity: high
-  category: Completeness
+  rule_category: Completeness
   owner: Saksteam
 ```
 
@@ -140,7 +140,7 @@ Use the correct operator family for the rule type.
     operator: ">="
     pk_column: Saksnummer
   severity: high
-  category: Business Logic
+  rule_category: Business Logic
   owner: Saksteam
 ```
 
@@ -157,7 +157,7 @@ Use the correct operator family for the rule type.
       - Standard
       - Kreditnota
   severity: medium
-  category: Business Logic
+  rule_category: Business Logic
   owner: Finansteam
 ```
 
@@ -176,7 +176,7 @@ Use the correct operator family for the rule type.
     required_value: Kreditnota
     pk_column: Fakturanr
   severity: high
-  category: Business Logic
+  rule_category: Business Logic
   owner: Finansteam
 ```
 
@@ -195,7 +195,7 @@ Use the correct operator family for the rule type.
     reference_active_value: true
     pk_column: Saksnummer
   severity: critical
-  category: Referential Integrity
+  rule_category: Referential Integrity
   owner: Saksteam
 ```
 
@@ -213,7 +213,7 @@ Use the correct operator family for the rule type.
       GROUP BY Fakturanr
       HAVING SUM(linje_belop) = 0
   severity: medium
-  category: Aggregate
+  rule_category: Aggregate
   owner: Finansteam
 ```
 

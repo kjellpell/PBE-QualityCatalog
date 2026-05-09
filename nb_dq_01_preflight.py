@@ -239,6 +239,16 @@ def _check_parameter_contract_for_catalog(catalog: dict, yaml_name: str) -> list
     errors: list[str] = []
     for rule in catalog.get("rules", []):
         rule_id = rule.get("rule_id", "?")
+        exp = rule.get("expectation", "")
+
+        # Reject expectations not registered in the engine so they fail here
+        # rather than silently producing an ERROR result at runtime.
+        if exp and exp not in _REQUIRED_PARAMETER_KEYS:
+            errors.append(
+                f"[{yaml_name} / {rule_id}] Unknown expectation '{exp}'. "
+                f"Valid expectations: {sorted(_REQUIRED_PARAMETER_KEYS)}."
+            )
+            continue  # no point checking params for an unknown expectation
 
         # Check for legacy nested reference: block (engine ignores it silently)
         errors.extend(_check_nested_reference(rule, yaml_name, rule_id))
