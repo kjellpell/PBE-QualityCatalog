@@ -45,7 +45,7 @@ Then choose rule type:
 | Parent/reference must exist | `reference_exists` |
 | Reference must exist and be active | `reference_active` |
 | Column combination must be unique | `combination_unique` |
-| Aggregate must meet threshold | `aggregate_threshold` |
+| Row count must meet threshold | `row_count` |
 | Time open/state duration bounded | `state_duration_within_limit` |
 | Group events must be ordered | `sequence_ordered` |
 | Group must contain a required completion event | `gate_complete` |
@@ -60,7 +60,7 @@ Use the correct operator family for the rule type.
 | Operator family | Allowed values | Typical expectations |
 |---|---|---|
 | Trigger operators | `IS NULL`, `IS NOT NULL`, `==` | `not_null_when` |
-| Comparison operators | `>`, `<`, `>=`, `<=`, `==`, `!=` | `comparison` (column or scalar), `value_when`, `aggregate_threshold` |
+| Comparison operators | `>`, `<`, `>=`, `<=`, `==`, `!=` | `comparison` (column or scalar), `value_when`, `row_count` |
 
 `value` is required only when the selected operator needs a value.
 
@@ -343,31 +343,46 @@ The combination of `columns` must be unique across all rows.
 
 ---
 
-### `aggregate_threshold`
+### `row_count`
 
-An aggregate (`sum`, `count`, `avg`, `min`, `max`) of a column must satisfy `<operator> threshold`.
+Compares `COUNT(*)` of the table against a threshold. The rule either passes or fails for the entire table — there are no individual row violations.
+
+Use this to detect failed data loads (table unexpectedly empty) or runaway loads (table unexpectedly large).
 
 | Parameter | Required | Notes |
 |---|---|---|
-| `column` | if `aggregate` is not `count` | Numeric column to aggregate |
-| `aggregate` | no | `sum`, `count`, `avg`, `min`, `max` (default: `sum`) |
 | `operator` | no | `>`, `<`, `>=`, `<=`, `==`, `!=` (default: `>=`) |
-| `threshold` | yes | The value the aggregate must satisfy |
+| `threshold` | yes | Integer or float the row count must satisfy |
 
 ```yaml
-- rule_id: INV-031
-  name: Total invoice amount must be positive
-  description: The sum of all line amounts must be above zero.
-  expectation: aggregate_threshold
+# Table must not be empty:
+- rule_id: PROC-007a
+  name: Process table must not be empty
+  description: Zero rows indicates that the data load failed or all processes were unexpectedly deleted.
+  expectation: row_count
   parameters:
-    column: linje_belop
-    aggregate: sum
-    operator: ">"
-    threshold: 0
-  severity: high
+    operator: ">="
+    threshold: 1
+  severity: critical
   rule_category: Aggregate
-  owner: Finansteam
+  owner: Saksteam
+
+# Row count ceiling:
+- rule_id: PROC-007b
+  name: Process table must not be oversized
+  description: Row count ceiling guards against runaway data loads.
+  expectation: row_count
+  parameters:
+    operator: "<="
+    threshold: 10000000
+  severity: critical
+  rule_category: Aggregate
+  owner: Saksteam
 ```
+
+> **`row_count` vs `comparison`:** `comparison` checks each row individually. `row_count` checks the total number of rows in the table. Use `comparison` when the rule is about values on individual rows; use `row_count` when the rule is about dataset health.
+>
+> **`row_count` vs `group_aggregate_matches`:** `row_count` checks `COUNT(*)` for the whole table. `group_aggregate_matches` computes an aggregate per group and checks it against a reference column value (e.g. line totals must equal the invoice header total).
 
 ---
 
