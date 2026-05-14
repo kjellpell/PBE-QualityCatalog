@@ -261,7 +261,6 @@ RESULT_SCHEMA = StructType([
     StructField("column_b",             StringType(),    True),
     StructField("operator",             StringType(),    True),
     StructField("sql_query",            StringType(),    True),
-    StructField("rule_category",        StringType(),    True),
     StructField("reference_table",      StringType(),    True),
     StructField("reference_column",     StringType(),    True),
     StructField("rule_duration_seconds", DoubleType(),   True),
@@ -435,7 +434,6 @@ def run_validation(
             else None
         )
 
-        rule_category    = rule.get("rule_category")
         ref_block        = params.get("reference", {})
         reference_table  = ref_block.get("table")  if exp_name == "reference_exists" else None
         reference_column = ref_block.get("column") if exp_name == "reference_exists" else None
@@ -518,7 +516,6 @@ def run_validation(
             column_b,
             operator,
             sql_query,
-            rule_category,
             reference_table,
             reference_column,
             round(_rule_elapsed, 3),
@@ -540,7 +537,6 @@ def run_validation(
                 F.lit(table_name).alias("table_name"),
                 F.lit(severity).alias("severity"),
                 F.lit(owner).alias("owner"),
-                F.lit(rule_category).alias("failure_type"),
                 F.col("primary_key_value"),
                 F.col("violated_column"),
                 F.col("actual_value"),

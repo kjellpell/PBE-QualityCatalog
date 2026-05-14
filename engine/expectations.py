@@ -856,16 +856,16 @@ class ValidateSequenceOrderExpectation:
           Simple string list (all steps are strict):
               expected_sequence: ["Start", "Middle", "End"]
 
-          Dict list with optional flexible flag (allows repetition of a step):
+          Dict list with optional loop flag (allows repetition of a step):
               expected_sequence:
                 - value: "Start"
                 - value: "Middle"
-                  flexible: true   # consecutive repeats of this step are allowed
+                  loop: true   # consecutive repeats of this step are allowed
                 - value: "End"
 
-          When a step is marked flexible: true, consecutive rows with that value
+          When a step is marked loop: true, consecutive rows with that value
           are permitted before the sequence advances to the next step.  Strict
-          steps (flexible omitted or false) must not repeat.
+          steps (loop omitted or false) must not repeat.
 
       completion_gate    - (optional) only evaluate groups that are "done":
           event_column   - column holding the completion marker value
@@ -894,21 +894,21 @@ class ValidateSequenceOrderExpectation:
         total = df.count()
 
         # Parse expected_sequence: support both plain string list and dict list
-        # with optional flexible flag.
+        # with optional loop flag.
         seq_values   = []
         flexible_set = set()
         for item in raw_sequence:
             if isinstance(item, dict):
                 val = item.get("value", "")
                 seq_values.append(val)
-                if item.get("flexible", False):
+                if item.get("loop", False):
                     flexible_set.add(val)
             else:
                 seq_values.append(str(item))
 
-        allow_loops = params.get("allow_loops", False)
+        allow_loops = params.get("loop_all", False)
         if allow_loops:
-            flexible_set = set(seq_values)  # every step is flexible when allow_loops is True
+            flexible_set = set(seq_values)  # every step is loopable when loop_all is True
 
         if total == 0:
             return _passed_result(total), _empty_violations(spark)
@@ -958,7 +958,7 @@ class ValidateSequenceOrderExpectation:
         # Check ordering row-by-row within each group (sorted by sort_column).
         # A violation occurs when:
         #   1. The sequence rank decreases (out-of-order value), or
-        #   2. The rank is unchanged (repeated value) and the step is not flexible.
+        #   2. The rank is unchanged (repeated value) and the step is not loopable.
         window_grp = Window.partitionBy(group_col).orderBy(F.col(sort_col).asc())
 
         ranked = relevant_filtered.withColumn(
@@ -1022,9 +1022,9 @@ class ValidateSequenceOrderExpectation:
         )
         seq_str = " \u2192 ".join(seq_values)
         if allow_loops:
-            flexible_note = " (allow_loops: true)"
+            flexible_note = " (loop_all: true)"
         elif flexible_set:
-            flexible_note = f" (flexible: {', '.join(sorted(flexible_set))})"
+            flexible_note = f" (loop: {', '.join(sorted(flexible_set))})"
         else:
             flexible_note = ""
 

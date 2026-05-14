@@ -116,7 +116,6 @@ Every row must have a non-null value in the target column.
   expectation: not_null
   column: StartDate
   severity: high
-  rule_category: Completeness
   owner: Saksteam
 ```
 
@@ -146,7 +145,6 @@ All `checked_columns` must be non-null whenever `when_column` satisfies the trig
       - Saksbehandler_kode
     pk_column: Saksnummer
   severity: high
-  rule_category: Completeness
   owner: Saksteam
 ```
 
@@ -178,7 +176,6 @@ Exactly one of `right_column` or `right_value` must be provided.
     operator: ">="
     pk_column: Saksnummer
   severity: high
-  rule_category: Business Logic
   owner: Saksteam
 
 # Column vs scalar:
@@ -192,7 +189,6 @@ Exactly one of `right_column` or `right_value` must be provided.
     operator: ">"
     pk_column: Fakturanr
   severity: high
-  rule_category: Business Logic
   owner: Finansteam
 ```
 
@@ -219,7 +215,6 @@ All non-null values in the column must belong to an approved list.
       - Standard
       - Kreditnota
   severity: medium
-  rule_category: Business Logic
   owner: Finansteam
 ```
 
@@ -251,7 +246,6 @@ When `when_column <operator> value`, `required_column` must equal `required_valu
     required_value: Kreditnota
     pk_column: Fakturanr
   severity: high
-  rule_category: Business Logic
   owner: Finansteam
 ```
 
@@ -279,7 +273,6 @@ Every non-null value in `column` must exist in `reference_table.reference_column
     reference_column: TypeCode
     pk_column: Saksnummer
   severity: high
-  rule_category: Referential Integrity
   owner: Saksteam
 ```
 
@@ -311,7 +304,6 @@ Every non-null value in `source_column` must exist in the reference table **and*
     reference_active_value: true
     pk_column: Saksnummer
   severity: critical
-  rule_category: Referential Integrity
   owner: Saksteam
 ```
 
@@ -337,7 +329,6 @@ The combination of `columns` must be unique across all rows.
       - LinjeNr
     pk_column: Fakturanr
   severity: critical
-  rule_category: Uniqueness
   owner: Finansteam
 ```
 
@@ -364,7 +355,6 @@ Use this to detect failed data loads (table unexpectedly empty) or runaway loads
     operator: ">="
     threshold: 1
   severity: critical
-  rule_category: Aggregate
   owner: Saksteam
 
 # Row count ceiling:
@@ -376,7 +366,6 @@ Use this to detect failed data loads (table unexpectedly empty) or runaway loads
     operator: "<="
     threshold: 10000000
   severity: critical
-  rule_category: Aggregate
   owner: Saksteam
 ```
 
@@ -409,7 +398,6 @@ Rows still in the open state must not have been open longer than `max_days`.
     pk_column: Saksnummer
     max_days: 90
   severity: high
-  rule_category: SLA
   owner: Saksteam
 ```
 
@@ -424,7 +412,8 @@ Within each group, values in `event_column` must appear in the order defined by 
 | `event_column` | yes | Column holding the sequence step names |
 | `group_column` | yes | Column identifying the group |
 | `order_column` | yes | Column used to sort rows within the group |
-| `expected_sequence` | yes | Ordered list of step names. Plain strings are strict (no repeats). Use `{value: X, flexible: true}` dict form to allow consecutive repeats of a step |
+| `expected_sequence` | yes | Ordered list of step names. Plain strings are strict (no repeats). Use `{value: X, loop: true}` dict form to allow consecutive repeats of that specific step |
+| `loop_all` | no | `true` makes every step in the sequence repeatable — shorthand for marking all steps with `loop: true` |
 | `completion_gate` | no | Restrict evaluation to groups that have completed a gate step — sub-keys: `event_column`, `value`, `order_column` (optional) |
 
 ```yaml
@@ -441,13 +430,34 @@ Within each group, values in `event_column` must appear in the order defined by 
     expected_sequence:
       - value: Received
       - value: Reviewed
-        flexible: true    # consecutive Reviewed rows are allowed before Closed
+        loop: true    # consecutive Reviewed rows are allowed before Closed
       - value: Closed
     completion_gate:
       event_column: MilestoneType
       value: Closed       # only evaluate groups that contain a Closed row
   severity: high
-  rule_category: Business Logic
+  owner: Saksteam
+```
+
+Use `loop_all: true` when every step in the sequence may repeat:
+
+```yaml
+- rule_id: PROC-053
+  name: Case steps must occur in order (loops allowed)
+  description: >
+    Steps must follow the defined order, but any step may repeat before
+    the sequence advances.
+  expectation: sequence_ordered
+  parameters:
+    event_column: MilestoneType
+    group_column: Saksnummer
+    order_column: MilestoneDate
+    expected_sequence:
+      - Received
+      - Reviewed
+      - Closed
+    loop_all: true
+  severity: high
   owner: Saksteam
 ```
 
@@ -477,7 +487,6 @@ Within each group, checks that required pairs of events are both present. `mode`
     required_pairs:
       - [Received, Closed]
   severity: high
-  rule_category: Completeness
   owner: Saksteam
 
 # Stop implies start (one-way):
@@ -492,7 +501,6 @@ Within each group, checks that required pairs of events are both present. `mode`
       - [Received, Closed]
     mode: stop_requires_start
   severity: critical
-  rule_category: Business Logic
   owner: Saksteam
 ```
 
@@ -521,7 +529,6 @@ Every group must contain at least one row where `event_column` equals `value_to_
     value_to_check: Approved
     trigger: Case approval
   severity: critical
-  rule_category: Business Logic
   owner: Saksteam
 ```
 
@@ -551,7 +558,6 @@ The aggregate of `aggregate_column` within each group must equal the value in `r
     aggregate: sum
     tolerance: 0.01
   severity: critical
-  rule_category: Aggregate
   owner: Finansteam
 ```
 
@@ -580,7 +586,6 @@ Runs a custom SQL query. Every row returned is treated as a violation — write 
       GROUP BY Fakturanr
       HAVING SUM(linje_belop) = 0
   severity: medium
-  rule_category: Aggregate
   owner: Finansteam
 ```
 

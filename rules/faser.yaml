@@ -1,0 +1,66 @@
+rule_group: Faser
+table: faser
+database: saksbehandling
+description: Validering av datakvalitet for faser
+pk_column: prosess_id
+catalog_filter:
+  type: custom
+  where_clause: fagsystem = 'PB360'
+joins:
+- table: saksbehandling.saker
+  on: saksnummer
+  how: left
+  select:
+  - saksnummer
+  - saksbehandler_kode
+rules:
+- rule_id: FAS-001
+  name: Saksnummer kan ikke være null
+  description: 'Alle rader i faser må ha et gyldig saksnummer.'
+  expectation: not_null
+  column: saksnummer
+  severity: kritisk
+  owner: Teknologi
+- rule_id: FAS-002
+  name: Prosess_id kan ikke være null
+  description: 'Alle rader i faser må ha et gyldig prosess_id.'
+  expectation: not_null
+  column: prosess_id
+  severity: kritisk
+- rule_id: FAS-003
+  name: Indikator kan ikke være null
+  description: 'Alle faser må ha en gyldig indikator.'
+  expectation: not_null
+  column: indikator
+  severity: høy
+  owner: Teknologi
+- rule_id: FAS-004
+  name: Prosess_ID må være unik på tvers av alle faser
+  description: 'Dupliserte prosess_IDer indikerer et problem med dataregistrering eller deduplisering som vil forvrenge all etterfølgende rapportering.'
+  expectation: combination_unique
+  parameters:
+    columns:
+    - prosess_id
+  severity: kritisk
+  owner: Teknologi
+- rule_id: FAS-005
+  name: Saksbehandler_kode kan ikke være null for åpne saker
+  description: 'Alle faser hvor sluttdato er null må være tildelt en saksbehandler.'
+  expectation: not_null_when
+  parameters:
+    when_column: sluttdato
+    operator: IS NULL
+    checked_columns:
+    - saksbehandler_kode
+  severity: høy
+  owner: Styring
+- rule_id: FAS-006
+  name: Sluttdato må være større enn eller lik startdato
+  description: 'For ferdige faser må sluttdato ikke være tidligere enn startdato.'
+  expectation: comparison
+  parameters:
+    left_column: sluttdato
+    right_column: startdato
+    operator: '>='
+  severity: høy
+  owner: Styring

@@ -76,23 +76,19 @@ Use these exact strings — typos will silently break MERGE logic.
 |---|---|
 | `not_null` | Column must be populated |
 | `not_null_when` | Column must be populated when condition is true |
-| `comparison` | Two columns compared by operator |
+| `comparison` | Column compared to another column or scalar value by operator |
 | `value_in_list` | Value must be in allowed list |
-| `greater_than` | Column is greater than threshold |
-| `value_when` | Column must have value X when condition is true |
-| `reference_exists` | Reference must exist in target table |
-| `reference_active` | Reference must exist and be marked active |
-| `aggregate_threshold` | Aggregate satisfies threshold condition |
-| `row_count_in_range` | Row count within min/max bounds |
+| `value_when` | Column must equal a required value when condition is true |
+| `reference_exists` | Value must exist in a reference table |
+| `reference_active` | Value must exist in a reference table and be marked active |
+| `row_count` | Table row count satisfies a threshold (guards against failed or runaway loads) |
 | `combination_unique` | Column combination is unique |
 | `state_duration_within_limit` | Time in open state must not exceed max days |
-| `sequence_ordered` | Values appear in expected order |
-| `pairs_present` | Required pairs both exist or both absent |
-| `stops_paired_with_starts` | Stop value cannot exist without start value |
-| `sql_violations` | Custom SQL returns only violating rows |
-| `gate_complete` | Group must contain the required completion marker value |
-| `columns_excluded` | No row must satisfy the forbidden condition |
+| `sequence_ordered` | Values appear in expected order within each group |
+| `pairs_present` | Required event pairs both exist within each group (`mode: both` or `stop_requires_start`) |
+| `gate_complete` | Every group must contain the required completion marker value |
 | `group_aggregate_matches` | Group aggregate must match a reference column value |
+| `sql_violations` | Custom SQL returns only violating rows |
 
 ### YAML Parameter Keys
 
@@ -104,20 +100,25 @@ All parameter names use the `_column` suffix to map directly to DataFrame column
 | `checked_columns` | not_null_when |
 | `left_column` | comparison |
 | `right_column` | comparison |
+| `right_value` | comparison (scalar mode) |
 | `allowed_values` | value_in_list |
-| `event_column` | sequence_ordered, pairs_present, stops_paired_with_starts |
-| `order_column` | sequence_ordered |
-| `start_markers` | pairs_present, stops_paired_with_starts |
-| `stop_markers` | pairs_present, stops_paired_with_starts |
+| `event_column` | sequence_ordered, pairs_present, gate_complete |
+| `order_column` | sequence_ordered, gate_complete |
+| `required_pairs` | pairs_present |
+| `mode` | pairs_present (`both` or `stop_requires_start`) |
 | `open_state_column` | state_duration_within_limit |
 | `open_state_value` | state_duration_within_limit |
 | `reference_table` | reference_exists, reference_active |
 | `reference_column` | reference_exists, reference_active |
 | `reference_active_column` | reference_active |
 | `reference_active_value` | reference_active |
-| `group_column` | sequence_ordered, pairs_present, stops_paired_with_starts |
-| `source_column` | reference_active, reference_exists |
+| `group_column` | sequence_ordered, pairs_present, gate_complete, group_aggregate_matches |
+| `source_column` | reference_active |
+| `column` | reference_exists, not_null, value_in_list |
 | `max_days` | state_duration_within_limit |
+| `threshold` | row_count |
+| `aggregate_column` | group_aggregate_matches |
+| `reference_column` | group_aggregate_matches |
 
 ### Vocabulary
 

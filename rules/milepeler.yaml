@@ -1,74 +1,66 @@
-rule_group: Milestone
-table: Milepel
-database: Saksbehandling
-description: Data quality rules for milestone records linked to case processes
-pk_column: prosess_id
+rule_group: Milepæler
+table: milepel
+database: saksbehandling
+description: Datakvalitet på milepæler knyttet til saksfaser
+pk_column: milepel_id
 rules:
 - rule_id: MIL-001
-  name: Milepel column cannot be null
-  description: 'Every milestone row must identify the type/name of the milestone.
-    A null Milepel means the record cannot be categorised or sequenced.
-
-    '
+  name: Milepel kan ikke være null
+  description: 'Hver milepelrad må identifisere typen/navnet på milepelen. En blank milepel
+    betyr at posten ikke kan kategoriseres eller sekvensieres.'
   expectation: not_null
-  column: Milepel
-  severity: critical
-  rule_category: Completeness
-  owner: IT
+  column: milepel
+  severity: Kritisk
+  owner: Teknologi
 - rule_id: MIL-002
-  name: prosess_id cannot be null
-  description: 'Every milestone row must be linked to a process via prosess_id. An
-    unlinked milestone cannot be attributed to any case.
-
-    '
+  name: prosess_id kan ikke være null
+  description: 'Hver milepelrad må være knyttet til en prosess via prosess_id. En
+    milepel uten tilknytning kan ikke tilordnes noen fase.'
   expectation: not_null
   column: prosess_id
-  severity: critical
-  rule_category: Completeness
-  owner: IT
+  severity: Kritisk
+  owner: Teknologi
 - rule_id: MIL-003
-  name: Milestones must follow the defined sequence
-  description: 'When multiple milestones in the expected sequence are present for
-    the same process, they must appear in the correct chronological order. Out-of-order
-    milestones indicate timeline recording errors.
-
-    '
+  name: Milepæler må følge den definerte sekvensen
+  description: 'Når flere milepæler i den forventede sekvensen er til stede for
+    samme prosess, må de vises i riktig kronologisk rekkefølge.'
   expectation: sequence_ordered
   parameters:
-    event_column: Milepel
+    event_column: milepel
     group_column: prosess_id
-    order_column: StartDate
+    order_column: sluttdato
+    loop_all: true
     expected_sequence:
-    - Startbehandling
-    - Behandling
-    - Stoppbehandling
+    - value: Høringsfrist høring og offentlig ettersyn
+    - value: Merknader oversendt
+    - value: Mottatt revidert planforslag
+    - value: Anmodning om oppdatert plandokumentasjon
+      loop: true
+    - value: Mottatt oppdatert plandokumentasjon
+      loop: true
+    - value: Mottatt komplett revidert planforslag
     completion_gate:
-      event_column: Milepel
-      value: Stoppbehandling
-      order_column: EndDate
-  severity: high
-  rule_category: Business Logic
-  owner: IT
+      event_column: milepel
+      value: Sendt til politisk behandling
+      order_column: sluttdato
+  severity: høy
+  owner: Styring
 - rule_id: MIL-004
-  name: Milestone pairs must both be present
-  description: 'For each required pair, if either milestone type exists for a process
-    the partner milestone must also exist. A half-complete pair means the process
-    lifecycle is unresolved.
-
-    '
+  name: Begge milepæler i et par må være tilstede
+  description: 'For ethvert påkrevd par, hvis en av milepæltypene eksisterer for en prosess,
+    må partnermilepælen også eksistere.'
   expectation: pairs_present
   parameters:
-    event_column: Milepel
+    event_column: milepel
     group_column: prosess_id
     required_pairs:
-    - - Startbehandling
-      - Stoppbehandling
+      - [Merknader oversendt, Mottatt revidert planforslag]
+      - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
     completion_gate:
-      event_column: Milepel
-      value: Stoppbehandling
-      order_column: EndDate
+      event_column: milepel
+      value: Sendt til politisk behandling
+      order_column: sluttdato
   severity: critical
-  rule_category: Business Logic
   owner: IT
 - rule_id: MIL-005
   name: Stop milestone without start milestone is invalid
@@ -83,7 +75,6 @@ rules:
       - Stoppbehandling
     mode: stop_requires_start
   severity: high
-  rule_category: Business Logic
   owner: IT
 - rule_id: MIL-006
   name: No milestone with EndDate before StartDate (SQL)
@@ -99,7 +90,6 @@ rules:
       GROUP BY Milepel\nHAVING COUNT(1) > 0\n"
     pk_column: Milepel
   severity: critical
-  rule_category: Business Logic
   owner: IT
 - rule_id: MIL-007
   name: prosess_id must exist in Prosesser table
@@ -115,7 +105,6 @@ rules:
     reference_table: Saksbehandling.Prosesser
     reference_column: prosess_id
   severity: critical
-  rule_category: Referential Integrity
   owner: IT
 - rule_id: MIL-008
   name: Unique combination of prosess_id and Milepel type
@@ -132,12 +121,11 @@ rules:
     - Milepel
     pk_column: prosess_id
   severity: high
-  rule_category: Uniqueness
   owner: IT
 - rule_id: MIL-009
   name: Milestones with repeated steps must still follow the defined sequence
   description: 'Some processes allow a milestone step (e.g. Behandling) to repeat
-    before the sequence continues. When allow_loops is true the engine accepts repeated
+    before the sequence continues. When loop_all is true the engine accepts repeated
     occurrences of a step without flagging them as out-of-order, while still enforcing
     that steps do not jump backwards in the sequence.
 
@@ -151,11 +139,10 @@ rules:
     - Startbehandling
     - Behandling
     - Stoppbehandling
-    allow_loops: true
+    loop_all: true
     completion_gate:
       event_column: Milepel
       value: Stoppbehandling
       order_column: EndDate
   severity: high
-  rule_category: Business Logic
   owner: IT

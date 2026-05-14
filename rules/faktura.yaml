@@ -1,0 +1,49 @@
+rule_group: Faktura
+table: fakturalinjer
+database: saksbehandling
+description: Datakvalitet på fakturalinjer som kommer fra PB360
+pk_column: fakturanr
+rules:
+- rule_id: FAK-001
+  name: Fakturanr kan ikke være null
+  description: 'Hver fakturalinje må referere til et fakturanummer. En null Fakturanr
+    hindrer linjen fra å bli sporet til sin faktura.'
+  expectation: not_null
+  column: fakturanr
+  severity: kritisk
+  owner: Styring
+- rule_id: FAK-002
+  name: linje_belop kan ikke være null
+  description: 'Hver fakturalinje må ha et beløp registrert. Et null beløp gjør det
+    umulig å avstemme fakturaen.'
+  expectation: not_null
+  column: linje_belop
+  severity: høy
+  owner: Styring
+- rule_id: FAK-003
+  name: Alle fakturalinjer må ha samme sum som total.
+  description: 'Summen av alle linje_belop-verdier for en gitt Fakturanr må være lik
+    Faktura_belop registrert på fakturahodet (innenfor en liten toleranse). En
+    avvik indikerer enten manglende linjer eller en oppdatering av hodet som ikke ble reflektert
+    i detaljlinjene.'
+  expectation: group_aggregate_matches
+  parameters:
+    group_column: fakturanr
+    aggregate_column: linje_belop
+    reference_column: faktura_belop
+    aggregate: sum
+    tolerance: 0.01
+  severity: høy
+  owner: Styring
+- rule_id: FAK-004
+  name: prosess_id må eksistere i faser-tabellen
+  description: 'Hver prosess_id-verdi i fakturalinjer må referere til en eksisterende
+    prosess i saksbehandling.faser. Fakturalinjer uten en gyldig overordnet prosess
+    kan ikke tilordnes en sak for rapportering.'
+  expectation: reference_exists
+  parameters:
+    column: prosess_id
+    reference_table: saksbehandling.faser
+    reference_column: prosess_id
+  severity: høy
+  owner: Styring

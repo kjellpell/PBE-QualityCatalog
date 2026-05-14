@@ -29,7 +29,6 @@ print("Spark ready.")
 #   column_b         – right-hand column (validate_column_comparison only)
 #   operator         – comparison operator (validate_column_comparison only)
 #   sql_query        – the SQL string executed (sql / sql_validation only)
-#   rule_category    – business category of the rule (e.g. "Referential Integrity")
 #   reference_table  – reference table name (validate_foreign_key only)
 #   reference_column – reference column name (validate_foreign_key only)
 # -----------------------------------------------------------------------------
@@ -56,7 +55,6 @@ CREATE TABLE IF NOT EXISTS dq_run_results (
     column_b        STRING,
     operator        STRING,
     sql_query       STRING,
-    rule_category        STRING,
     reference_table      STRING,
     reference_column     STRING,
     rule_duration_seconds DOUBLE,
@@ -75,7 +73,6 @@ for _col_def in [
     "column_b             STRING",
     "operator             STRING",
     "sql_query            STRING",
-    "rule_category        STRING",
     "reference_table      STRING",
     "reference_column     STRING",
     "rule_duration_seconds DOUBLE",
@@ -119,7 +116,6 @@ CREATE TABLE IF NOT EXISTS dq_violations (
     table_name           STRING,
     severity             STRING,
     owner                STRING,
-    failure_type         STRING,
     primary_key_value    STRING,
     violated_column      STRING,
     actual_value         STRING,
@@ -134,7 +130,6 @@ USING DELTA
 # Add new columns to the existing table if this script is re-run against an
 # older deployment that pre-dates these fields.
 for _col_def in [
-    "failure_type         STRING",
     "issue_status         STRING",
     "resolution_timestamp STRING",
 ]:
