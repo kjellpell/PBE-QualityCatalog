@@ -122,11 +122,6 @@ def _apply_resolution_tracking(
         f"`{_safe_table_name(p)}`" for p in violations_table.strip().split(".")
     )
 
-    if not spark_session.catalog.tableExists(violations_table):
-        current_violations_df.write.mode("append").saveAsTable(violations_table)
-        print(f"  '{violations_table}' created on first write.")
-        return
-
     try:
         # Deduplicate on the MERGE key before registering the temp view.
         # Rules such as expect_unique_combination_of_columns emit one violation
@@ -197,9 +192,14 @@ def _apply_resolution_tracking(
                 t.resolution_timestamp  = (SELECT resolution_ts FROM _dq_resolution_ts)
         """)
 
-        print(f"  Resolution tracking applied via MERGE on '{_sql_table_name}'.")
+        print(f"  Resolution tracking applied via MERGE on '{violations_table}'.")
 
     except Exception as exc:
+        _err = str(exc)
+        if "TABLE_OR_VIEW_NOT_FOUND" in _err or "table or view" in _err.lower():
+            current_violations_df.write.mode("append").saveAsTable(violations_table)
+            print(f"  '{violations_table}' created on first write.")
+            return
         raise RuntimeError(
             f"MERGE failed — violations not written. Check Delta table locks and schema drift. "
             f"Original error: {exc}"
