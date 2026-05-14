@@ -447,16 +447,22 @@ Within each group, values in `event_column` must appear in the order defined by 
 ```yaml
 - rule_id: PROC-050
   name: Case milestones must occur in order
-  description: Received must precede Reviewed, which must precede Closed.
+  description: >
+    Received must precede Reviewed (which may repeat), which must precede Closed.
+    Only evaluate cases that have already been closed.
   expectation: sequence_ordered
   parameters:
     event_column: MilestoneType
     group_column: Saksnummer
     order_column: MilestoneDate
     expected_sequence:
-      - Received
-      - Reviewed
-      - Closed
+      - value: Received
+      - value: Reviewed
+        flexible: true    # consecutive Reviewed rows are allowed before Closed
+      - value: Closed
+    completion_gate:
+      event_column: MilestoneType
+      value: Closed       # only evaluate groups that contain a Closed row
   severity: high
   rule_category: Business Logic
   owner: Saksteam
