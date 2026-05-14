@@ -192,6 +192,19 @@ USING DELTA
 print("dq_execution_metrics ready.")
 
 
+# CELL 5 — dry-run tmp tables (same schema, truncated each setup run)
+# Created here so the validation runner never has to auto-create them.
+for _prod, _tmp in [
+    (_results_table,   f"{_results_table}_tmp"),
+    (_violations_table, f"{_violations_table}_tmp"),
+    (_metrics_table,   f"{_metrics_table}_tmp"),
+]:
+    spark.sql(f"CREATE TABLE IF NOT EXISTS {_tmp} LIKE {_prod}")
+    spark.sql(f"TRUNCATE TABLE {_tmp}")
+
+print("dry-run tmp tables ready.")
+
 print("\n=== DQ SETUP COMPLETE ===")
 print(f"Delta tables: {_results_table}, {_violations_table}, {_metrics_table}")
+print(f"Dry-run tmp: {_results_table}_tmp, {_violations_table}_tmp, {_metrics_table}_tmp")
 

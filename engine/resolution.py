@@ -195,11 +195,6 @@ def _apply_resolution_tracking(
         print(f"  Resolution tracking applied via MERGE on '{violations_table}'.")
 
     except Exception as exc:
-        _err = str(exc)
-        if "TABLE_OR_VIEW_NOT_FOUND" in _err or "table or view" in _err.lower():
-            current_violations_df.write.mode("append").saveAsTable(violations_table)
-            print(f"  '{violations_table}' created on first write.")
-            return
         raise RuntimeError(
             f"MERGE failed — violations not written. Check Delta table locks and schema drift. "
             f"Original error: {exc}"
