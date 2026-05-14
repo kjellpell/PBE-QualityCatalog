@@ -288,6 +288,9 @@ def _align_df_to_table_schema(df, table_name: str):
     - Adds missing target columns as NULL cast to the target data type.
     - Reorders columns to the target table order.
     """
+    if not spark.catalog.tableExists(table_name):
+        return df  # first run / dry-run tmp table; let saveAsTable create it
+
     target_schema = spark.table(table_name).schema
     target_fields = {field.name: field for field in target_schema.fields}
     target_names = [field.name for field in target_schema.fields]
