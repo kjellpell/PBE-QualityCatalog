@@ -23,7 +23,7 @@ _cfg_spec = importlib.util.spec_from_file_location(
 _cfg_mod = importlib.util.module_from_spec(_cfg_spec)
 _cfg_spec.loader.exec_module(_cfg_mod)
 
-_schema = getattr(_cfg_mod, "DEFAULT_SCHEMA", "default")
+_schema = getattr(_cfg_mod, "DEFAULT_SCHEMA", "qualitycatalog")
 _results_table   = f"{_schema}.{_cfg_mod.DQ_RESULTS_TABLE}"
 _violations_table = f"{_schema}.{_cfg_mod.DQ_VIOLATIONS_TABLE}"
 _metrics_table   = f"{_schema}.{_cfg_mod.DQ_EXECUTION_METRICS_TABLE}"
@@ -192,15 +192,81 @@ USING DELTA
 print("dq_execution_metrics ready.")
 
 
-# CELL 5 — dry-run tmp tables (same schema, truncated each setup run)
-# Created here so the validation runner never has to auto-create them.
-for _prod, _tmp in [
-    (_results_table,   f"{_results_table}_tmp"),
-    (_violations_table, f"{_violations_table}_tmp"),
-    (_metrics_table,   f"{_metrics_table}_tmp"),
-]:
-    spark.sql(f"CREATE TABLE IF NOT EXISTS {_tmp} LIKE {_prod}")
-    spark.sql(f"TRUNCATE TABLE {_tmp}")
+# CELL 5 — dry-run tmp tables
+# Same schema as production tables. Created here so the validation runner
+# never has to auto-create them at runtime.
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {_results_table}_tmp (
+    run_id          STRING,
+    run_timestamp   TIMESTAMP,
+    batch_date      DATE,
+    rule_group      STRING,
+    rule_id         STRING,
+    rule_name       STRING,
+    table_name      STRING,
+    expectation     STRING,
+    severity        STRING,
+    owner           STRING,
+    owner_email          STRING,
+    total_rows      BIGINT,
+    passed_rows     BIGINT,
+    failed_rows     BIGINT,
+    success_pct     DOUBLE,
+    status          STRING,
+    details         STRING,
+    column_a        STRING,
+    column_b        STRING,
+    operator        STRING,
+    sql_query       STRING,
+    reference_table      STRING,
+    reference_column     STRING,
+    rule_duration_seconds DOUBLE,
+    control_ref          STRING,
+    control_type         STRING,
+    risk_domain          STRING,
+    remediation_due_days INT
+)
+USING DELTA
+""")
+
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {_violations_table}_tmp (
+    run_id               STRING,
+    run_timestamp        TIMESTAMP,
+    batch_date           DATE,
+    rule_group           STRING,
+    rule_id              STRING,
+    rule_name            STRING,
+    table_name           STRING,
+    severity             STRING,
+    owner                STRING,
+    primary_key_value    STRING,
+    violated_column      STRING,
+    actual_value         STRING,
+    expected_condition   STRING,
+    violation_detail     STRING,
+    issue_status         STRING,
+    resolution_timestamp STRING
+)
+USING DELTA
+""")
+
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {_metrics_table}_tmp (
+    script_name        STRING,
+    status             STRING,
+    dry_run            BOOLEAN,
+    output_target      STRING,
+    artifact_target    STRING,
+    row_count          BIGINT,
+    started_at_utc     TIMESTAMP,
+    finished_at_utc    TIMESTAMP,
+    duration_seconds   DOUBLE,
+    is_retryable       BOOLEAN,
+    error_message      STRING
+)
+USING DELTA
+""")
 
 print("dry-run tmp tables ready.")
 
