@@ -2,30 +2,30 @@ rule_group: Faser
 table: faser
 database: saksbehandling
 description: Validering av datakvalitet for faser
-pk_column: prosess_id
+pk_column: stage_recno
 catalog_filter:
   type: custom
   where_clause: fagsystem = 'PB360'
 joins:
 - table: saksbehandling.saker
-  on: saksnummer
+  on: case_recno
   how: left
   select:
-  - saksnummer
-  - saksbehandler_kode
+  - case_recno
+  - saksansvarlig_kode
 rules:
 - rule_id: FAS-001
   name: Saksnummer kan ikke være null
   description: 'Alle rader i faser må ha et gyldig saksnummer.'
   expectation: not_null
-  column: saksnummer
+  column: to_case_recno
   severity: kritisk
   owner: Teknologi
 - rule_id: FAS-002
-  name: Prosess_id kan ikke være null
-  description: 'Alle rader i faser må ha et gyldig prosess_id.'
+  name: Stage_recno kan ikke være null
+  description: 'Alle rader i faser må ha et gyldig stage_recno.'
   expectation: not_null
-  column: prosess_id
+  column: stage_recno
   severity: kritisk
   owner: Teknologi
 - rule_id: FAS-003
@@ -36,12 +36,12 @@ rules:
   severity: høy
   owner: Teknologi
 - rule_id: FAS-004
-  name: Prosess_ID må være unik på tvers av alle faser
-  description: 'Dupliserte prosess_IDer indikerer et problem med dataregistrering.'
+  name: Stage_recno må være unik på tvers av alle faser
+  description: 'Dupliserte stage_recnoer indikerer et problem med dataregistrering.'
   expectation: combination_unique
   parameters:
     columns:
-    - prosess_id
+    - stage_recno
   severity: kritisk
   owner: Teknologi
 - rule_id: FAS-005
@@ -49,19 +49,20 @@ rules:
   description: 'Alle faser hvor sluttdato er null må være tildelt en saksbehandler.'
   expectation: not_null_when
   parameters:
-    when_column: sluttdato
+    when_column: seneste_stoppmilepael_dato
     operator: IS NULL
     checked_columns:
-    - saksbehandler_kode
+    - saksansvarlig_kode
+    pk_column: stage_recno
   severity: høy
   owner: Teknologi
 - rule_id: FAS-006
-  name: Sluttdato må være større enn eller lik startdato
-  description: 'For ferdige faser må sluttdato ikke være tidligere enn startdato.'
+  name: Seneste_stoppmilepael_dato må være større enn eller lik startdato
+  description: 'For ferdige faser må seneste_stoppmilepael_dato ikke være tidligere enn startdato.'
   expectation: comparison
   parameters:
-    left_column: sluttdato
-    right_column: startdato
+    left_column: seneste_stoppmilepael_dato
+    right_column: tidligste_startmilepael_dato
     operator: '>='
   severity: høy
   owner: Teknologi
