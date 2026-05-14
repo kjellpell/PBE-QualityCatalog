@@ -649,9 +649,9 @@ def main() -> tuple[int, int]:
 
             join_how = join_cfg.get("how", "left")
             join_select = join_cfg.get("select")
-            join_on = (
-                join_cfg.get("on")
-            )
+            # PyYAML 1.1 parses the bare key `on` as boolean True.
+            # Accept both so YAML authors don't need to quote it.
+            join_on = join_cfg.get("on") or join_cfg.get(True)
             left_on = join_cfg.get("left_on")
             right_on = join_cfg.get("right_on")
 
