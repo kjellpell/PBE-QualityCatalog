@@ -32,14 +32,13 @@ rules:
     event_column: milestone_title
     group_column: to_stage_recno
     order_column: milestonedate
+    loop_all: true
     expected_sequence:
     - value: Høringsfrist høring og offentlig ettersyn
     - value: Merknader oversendt
     - value: Mottatt revidert planforslag
     - value: Anmodning om oppdatert plandokumentasjon
-      loop: true
     - value: Mottatt oppdatert plandokumentasjon
-      loop: true
     - value: Mottatt komplett revidert planforslag
     completion_gate:
       event_column: milestone_title
