@@ -851,21 +851,16 @@ class ValidateSequenceOrderExpectation:
       group_column       - column that identifies the group
       order_column       - column used to determine the order of rows within each
                           group; can be any sortable type (date, numeric, string) (was: sort_column)
-      expected_sequence  - ordered list of sequence steps; two formats supported:
+      expected_sequence  - ordered list of sequence steps; two formats:
 
-          Simple string list (all steps are strict):
+          Simple string list:
               expected_sequence: ["Start", "Middle", "End"]
 
-          Dict list with optional loop flag (allows repetition of a step):
+          Dict list (value key only):
               expected_sequence:
                 - value: "Start"
                 - value: "Middle"
-                  loop: true   # consecutive repeats of this step are allowed
                 - value: "End"
-
-          When a step is marked loop: true, consecutive rows with that value
-          are permitted before the sequence advances to the next step.  Strict
-          steps (loop omitted or false) must not repeat.
 
       completion_gate    - (optional) only evaluate groups that are "done":
           event_column   - column holding the completion marker value
@@ -893,22 +888,13 @@ class ValidateSequenceOrderExpectation:
 
         total = df.count()
 
-        # Parse expected_sequence: support both plain string list and dict list
-        # with optional loop flag.
-        seq_values   = []
-        flexible_set = set()
+        seq_values = []
         for item in raw_sequence:
             if isinstance(item, dict):
                 val = item.get("value", "")
                 seq_values.append(val)
-                if item.get("loop", False):
-                    flexible_set.add(val)
             else:
                 seq_values.append(str(item))
-
-        allow_loops = params.get("loop_all", False)
-        if allow_loops:
-            flexible_set = set(seq_values)  # every step is loopable when loop_all is True
 
         if total == 0:
             return _passed_result(total), _empty_violations(spark)
@@ -956,9 +942,7 @@ class ValidateSequenceOrderExpectation:
         )
 
         # Check ordering row-by-row within each group (sorted by sort_column).
-        # A violation occurs when:
-        #   1. The sequence rank decreases (out-of-order value), or
-        #   2. The rank is unchanged (repeated value) and the step is not loopable.
+        # A violation occurs when the sequence rank decreases or repeats.
         window_grp = Window.partitionBy(group_col).orderBy(F.col(sort_col).asc())
 
         ranked = relevant_filtered.withColumn(
@@ -966,13 +950,7 @@ class ValidateSequenceOrderExpectation:
         )
 
         is_out_of_order   = F.col("_seq_rank") < F.col("_prev_rank")
-        if flexible_set:
-            is_illegal_repeat = (
-                (F.col("_seq_rank") == F.col("_prev_rank"))
-                & ~F.col(value_col).isin(list(flexible_set))
-            )
-        else:
-            is_illegal_repeat = F.col("_seq_rank") == F.col("_prev_rank")
+        is_illegal_repeat = F.col("_seq_rank") == F.col("_prev_rank")
 
         violation_row_expr = (
             F.col("_prev_rank").isNotNull()
@@ -1021,12 +999,6 @@ class ValidateSequenceOrderExpectation:
             .join(last_val,  on=group_col, how="inner")
         )
         seq_str = " \u2192 ".join(seq_values)
-        if allow_loops:
-            flexible_note = " (loop_all: true)"
-        elif flexible_set:
-            flexible_note = f" (loop: {', '.join(sorted(flexible_set))})"
-        else:
-            flexible_note = ""
 
         violations_out = violations_info.select(
             F.col(group_col).cast("string").alias("primary_key_value"),
@@ -1035,7 +1007,7 @@ class ValidateSequenceOrderExpectation:
                 F.lit("first="), F.col("_first_val").cast("string"),
                 F.lit(", last="), F.col("_last_val").cast("string"),
             ).alias("actual_value"),
-            F.lit(f"Values must appear in sequence: {seq_str}{flexible_note}").alias("expected_condition"),
+            F.lit(f"Values must appear in sequence: {seq_str}").alias("expected_condition"),
             F.concat(
                 F.lit(f"For {group_col}='"),
                 F.col(group_col).cast("string"),
@@ -1058,7 +1030,7 @@ class ValidateSequenceOrderExpectation:
             "status":      "FAILED",
             "details": (
                 f"{failed} group(s) in {group_col} have out-of-order "
-                f"{value_col} values (expected: {seq_str}{flexible_note})."
+                f"{value_col} values (expected: {seq_str})."
             ),
         }
         return result, violations_out
