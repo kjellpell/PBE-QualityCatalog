@@ -166,6 +166,15 @@ print(f"Metrics   : {TARGETS['execution_metrics_table']}")
 
 # CELL 4 — Helper functions
 # -----------------------------------------------------------------------------
+def _normalize_join_cfg(join_cfg: dict) -> dict:
+    """PyYAML 1.1 parses bare 'on' as boolean True. Restore it to the string key."""
+    if isinstance(join_cfg, dict) and True in join_cfg and "on" not in join_cfg:
+        result = dict(join_cfg)
+        result["on"] = result.pop(True)
+        return result
+    return join_cfg
+
+
 def _load_all_rules() -> list[dict]:
     """
     Load rule catalogs directly from YAML files in RULES_DIR.
@@ -216,7 +225,7 @@ def _load_all_rules() -> list[dict]:
             "table":      doc.get("table", ""),
             "database":   doc.get("database", ""),
             "pk_column":  doc.get("pk_column", "id"),
-            "joins":      doc.get("joins") or [],
+            "joins":      [_normalize_join_cfg(j) for j in (doc.get("joins") or [])],
             "catalog_filter": doc.get("catalog_filter"),
             "rules":      rules,
         }
@@ -652,9 +661,7 @@ def main() -> tuple[int, int]:
 
             join_how = join_cfg.get("how", "left")
             join_select = join_cfg.get("select")
-            # PyYAML 1.1 parses the bare key `on` as boolean True.
-            # Accept both so YAML authors don't need to quote it.
-            join_on = join_cfg.get("on") or join_cfg.get(True)
+            join_on = join_cfg.get("on")
             left_on = join_cfg.get("left_on")
             right_on = join_cfg.get("right_on")
 

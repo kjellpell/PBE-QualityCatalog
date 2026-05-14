@@ -8,7 +8,8 @@ catalog_filter:
   where_clause: fagsystem = 'PB360'
 joins:
 - table: saksbehandling.saker
-  on: case_recno
+  left_on: to_case_recno
+  right_on: case_recno
   how: left
   select:
   - case_recno
