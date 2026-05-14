@@ -107,7 +107,7 @@ Every row must have a non-null value in the target column.
 | Parameter | Level | Required | Notes |
 |---|---|---|---|
 | `column` | top-level | yes | Column to check |
-| `parameters.pk_column` | parameters | no | Column used to identify violating rows (default: `id`) |
+| `parameters.pk_column` | parameters | no | Column used to identify violating rows (default: catalog `pk_column`) |
 
 ```yaml
 - rule_id: PROC-011
@@ -131,7 +131,7 @@ All `checked_columns` must be non-null whenever `when_column` satisfies the trig
 | `operator` | yes | `IS NULL`, `IS NOT NULL`, or `==` |
 | `value` | if `operator` is `==` | The value `when_column` must equal |
 | `checked_columns` | yes | List of columns that must be non-null when triggered |
-| `pk_column` | no | Default: `id` |
+| `pk_column` | no | Default: catalog `pk_column`. Override per rule only when the violation key differs from the catalog PK. |
 
 ```yaml
 - rule_id: PROC-012
@@ -143,7 +143,6 @@ All `checked_columns` must be non-null whenever `when_column` satisfies the trig
     operator: IS NULL
     checked_columns:
       - Saksbehandler_kode
-    pk_column: Saksnummer
   severity: high
   owner: Saksteam
 ```
@@ -412,15 +411,14 @@ Within each group, values in `event_column` must appear in the order defined by 
 | `event_column` | yes | Column holding the sequence step names |
 | `group_column` | yes | Column identifying the group |
 | `order_column` | yes | Column used to sort rows within the group |
-| `expected_sequence` | yes | Ordered list of step names. Plain strings are strict (no repeats). Use `{value: X, loop: true}` dict form to allow consecutive repeats of that specific step |
-| `loop_all` | no | `true` makes every step in the sequence repeatable — shorthand for marking all steps with `loop: true` |
+| `expected_sequence` | yes | Ordered list of step names. Plain strings or `{value: X}` dict form. Any rank decrease or repeat is a violation. |
 | `completion_gate` | no | Restrict evaluation to groups that have completed a gate step — sub-keys: `event_column`, `value`, `order_column` (optional) |
 
 ```yaml
 - rule_id: PROC-050
   name: Case milestones must occur in order
   description: >
-    Received must precede Reviewed (which may repeat), which must precede Closed.
+    Received must precede Reviewed, which must precede Closed.
     Only evaluate cases that have already been closed.
   expectation: sequence_ordered
   parameters:
@@ -430,33 +428,10 @@ Within each group, values in `event_column` must appear in the order defined by 
     expected_sequence:
       - value: Received
       - value: Reviewed
-        loop: true    # consecutive Reviewed rows are allowed before Closed
       - value: Closed
     completion_gate:
       event_column: MilestoneType
-      value: Closed       # only evaluate groups that contain a Closed row
-  severity: high
-  owner: Saksteam
-```
-
-Use `loop_all: true` when every step in the sequence may repeat:
-
-```yaml
-- rule_id: PROC-053
-  name: Case steps must occur in order (loops allowed)
-  description: >
-    Steps must follow the defined order, but any step may repeat before
-    the sequence advances.
-  expectation: sequence_ordered
-  parameters:
-    event_column: MilestoneType
-    group_column: Saksnummer
-    order_column: MilestoneDate
-    expected_sequence:
-      - Received
-      - Reviewed
-      - Closed
-    loop_all: true
+      value: Closed
   severity: high
   owner: Saksteam
 ```

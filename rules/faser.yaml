@@ -30,13 +30,6 @@ rules:
   severity: kritisk
   owner: Teknologi
 - rule_id: FAS-003
-  name: Indikator kan ikke være null
-  description: 'Alle faser må ha en gyldig indikator.'
-  expectation: not_null
-  column: indikator
-  severity: høy
-  owner: Teknologi
-- rule_id: FAS-004
   name: Stage_recno må være unik på tvers av alle faser
   description: 'Dupliserte stage_recnoer indikerer et problem med dataregistrering.'
   expectation: combination_unique
@@ -45,7 +38,7 @@ rules:
     - stage_recno
   severity: kritisk
   owner: Teknologi
-- rule_id: FAS-005
+- rule_id: FAS-004
   name: Saksbehandler_kode kan ikke være null for åpne saker
   description: 'Alle faser hvor sluttdato er null må være tildelt en saksbehandler.'
   expectation: not_null_when
@@ -54,10 +47,10 @@ rules:
     operator: IS NULL
     checked_columns:
     - saksansvarlig_kode
-    pk_column: stage_recno
+    - fase_lukket_dato
   severity: høy
   owner: Teknologi
-- rule_id: FAS-006
+- rule_id: FAS-005
   name: Seneste_stoppmilepael_dato må være større enn eller lik startdato
   description: 'For ferdige faser må seneste_stoppmilepael_dato ikke være tidligere enn startdato.'
   expectation: comparison
