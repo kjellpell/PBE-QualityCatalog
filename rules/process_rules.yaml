@@ -101,17 +101,26 @@ rules:
   severity: high
   rule_category: Business Logic
   owner: Saksteam
-- rule_id: PROC-007
-  name: Process table must contain at least one row
-  description: 'The Prosesser table must never be empty.  Zero rows indicates that
-    either the data load failed or all processes were unexpectedly deleted. Adjust
-    min_value and max_value to match expected data volumes.
-
-    '
-  expectation: row_count_in_range
+- rule_id: PROC-007a
+  name: Process table must not be empty
+  description: Zero rows indicates that the data load failed or all processes were
+    unexpectedly deleted.
+  expectation: aggregate_threshold
   parameters:
-    min_value: 1
-    max_value: 10000000
+    aggregate: count
+    operator: ">="
+    threshold: 1
+  severity: critical
+  rule_category: Aggregate
+  owner: Saksteam
+- rule_id: PROC-007b
+  name: Process table must not be oversized
+  description: Row count ceiling guards against runaway data loads.
+  expectation: aggregate_threshold
+  parameters:
+    aggregate: count
+    operator: "<="
+    threshold: 10000000
   severity: critical
   rule_category: Aggregate
   owner: Saksteam
