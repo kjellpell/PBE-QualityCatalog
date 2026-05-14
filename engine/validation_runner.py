@@ -734,16 +734,28 @@ def main() -> tuple[int, int]:
 
     print("\nWriting results to Delta tables…")
 
-    results_to_write = _align_df_to_table_schema(all_results_combined, TARGETS["results_table"])
-    results_to_write.write.mode("append").saveAsTable(TARGETS["results_table"])
-    print(f"  {TARGETS['results_table']} : {results_count} rows appended.")
+    # In dry-run mode overwrite the tmp tables so each test run starts clean.
+    # Fabric's SQL engine cannot resolve schema-qualified _tmp table names in
+    # MERGE (Hive metastore vs Lakehouse catalog mismatch), so we skip MERGE
+    # entirely for dry-runs and use the DataFrame API (which works) instead.
+    _write_mode = "overwrite" if RUNTIME.DRY_RUN else "append"
 
-    _apply_resolution_tracking(
-        all_violations_combined,
-        spark_session=spark,
-        violations_table=TARGETS["violations_table"],
-        run_timestamp=RUN_TIMESTAMP,
-    )
+    results_to_write = _align_df_to_table_schema(all_results_combined, TARGETS["results_table"])
+    results_to_write.write.mode(_write_mode).saveAsTable(TARGETS["results_table"])
+    print(f"  {TARGETS['results_table']} : {results_count} rows written.")
+
+    if RUNTIME.DRY_RUN:
+        _viol_to_write = _align_df_to_table_schema(
+            all_violations_combined, TARGETS["violations_table"]
+        )
+        _viol_to_write.write.mode("overwrite").saveAsTable(TARGETS["violations_table"])
+    else:
+        _apply_resolution_tracking(
+            all_violations_combined,
+            spark_session=spark,
+            violations_table=TARGETS["violations_table"],
+            run_timestamp=RUN_TIMESTAMP,
+        )
     print(f"  {TARGETS['violations_table']} : {violations_count} violations processed.")
 
     print("\n=== DATA QUALITY RUN SUMMARY ===")
