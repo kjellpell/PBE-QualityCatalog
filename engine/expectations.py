@@ -1165,27 +1165,55 @@ class ValidatePairedPresenceExpectation:
 
             stop_label = " or ".join(f"'{s}'" for s in stop_types)
 
+            if len(stop_types) == 1:
+                stop_present_phrase = f"'{stop_types[0]}' present"
+                stop_missing_phrase = f"'{stop_types[0]}' not found"
+            else:
+                stop_present_phrase = f"One of ({stop_label}) present"
+                stop_missing_phrase = f"none of ({stop_label}) found"
+
             if mode == "stop_requires_start":
                 violation_filter = F.col("_has_any_stop") & ~F.col(has_start)
                 expected = (
-                    f"'{start_type}' must exist whenever any of ({stop_label}) is present "
+                    f"'{start_type}' must exist whenever {stop_present_phrase.lower()} "
                     f"for the same {group_col}"
                 )
+<<<<<<< HEAD
                 detail_expr = F.lit(
                     f"En av {stop_label} er tilstede, men '{start_type}' mangler."
+=======
+                detail_expr = F.concat(
+                    F.lit(f"{stop_present_phrase} but '{start_type}' missing "
+                          f"for {group_col}='"),
+                    F.col(group_col).cast("string"), F.lit("'"),
+>>>>>>> c951fef (fix(pairs_present): clean up violation_detail phrasing for single stop type)
                 )
                 actual_expr = F.lit(stop_label)
             else:
                 violation_filter = F.col(has_start) != F.col("_has_any_stop")
                 expected = (
-                    f"Both '{start_type}' and ({stop_label}) must exist "
+                    f"Both '{start_type}' and {stop_label} must exist "
                     f"for the same {group_col}"
                 )
                 detail_expr = F.when(
                     F.col(has_start) & ~F.col("_has_any_stop"),
+<<<<<<< HEAD
                     F.lit(f"'{start_type}' er tilstede, men {stop_label} mangler."),
                 ).otherwise(
                     F.lit(f"En av {stop_label} er tilstede, men '{start_type}' mangler."),
+=======
+                    F.concat(
+                        F.lit(f"'{start_type}' present but {stop_missing_phrase} "
+                              f"for {group_col}='"),
+                        F.col(group_col).cast("string"), F.lit("'"),
+                    ),
+                ).otherwise(
+                    F.concat(
+                        F.lit(f"{stop_present_phrase} but '{start_type}' missing "
+                              f"for {group_col}='"),
+                        F.col(group_col).cast("string"), F.lit("'"),
+                    ),
+>>>>>>> c951fef (fix(pairs_present): clean up violation_detail phrasing for single stop type)
                 )
                 actual_expr = (
                     F.when(F.col(has_start), F.lit(start_type))
@@ -1627,16 +1655,11 @@ class ValidateActiveReferenceExpectation:
             active_ref_df = ref_cache[cache_key]
         else:
             try:
-                raw_ref = spark.read.table(ref_table)
-                missing_ref_cols = [c for c in (ref_col, active_col) if c is not None and c not in raw_ref.columns]
-                if missing_ref_cols:
-                    return (
-                        _error_result(
-                            f"Column(s) {missing_ref_cols} not found in reference table '{ref_table}'."
-                        ),
-                        _empty_violations(spark),
-                    )
-            except Exception as exc:
+                        detail_expr = F.concat(
+                            F.lit(f"{stop_present_phrase} but '{start_type}' missing "
+                                  f"for {group_col}='"),
+                            F.col(group_col).cast("string"), F.lit("'"),
+                        )
                 return (
                     _error_result(f"Could not load reference table '{ref_table}': {exc}"),
                     _empty_violations(spark),
