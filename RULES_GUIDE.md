@@ -94,9 +94,20 @@ Use the correct operator family for the rule type.
 | `source_column` | Source-side reference field |
 | `max_days` | Max allowed days in state |
 
-## Business Patterns With Canonical Examples
+## Expectation Reference
 
-### Pattern 1: Required field
+Parameters and a ready-to-copy example for every expectation type.
+
+---
+
+### `not_null`
+
+Every row must have a non-null value in the target column.
+
+| Parameter | Level | Required | Notes |
+|---|---|---|---|
+| `column` | top-level | yes | Column to check |
+| `parameters.pk_column` | parameters | no | Column used to identify violating rows (default: `id`) |
 
 ```yaml
 - rule_id: PROC-011
@@ -109,7 +120,19 @@ Use the correct operator family for the rule type.
   owner: Saksteam
 ```
 
-### Pattern 2: Conditional required fields
+---
+
+### `not_null_when`
+
+All `checked_columns` must be non-null whenever `when_column` satisfies the trigger.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `when_column` | yes | Column that triggers the check |
+| `operator` | yes | `IS NULL`, `IS NOT NULL`, or `==` |
+| `value` | if `operator` is `==` | The value `when_column` must equal |
+| `checked_columns` | yes | List of columns that must be non-null when triggered |
+| `pk_column` | no | Default: `id` |
 
 ```yaml
 - rule_id: PROC-012
@@ -127,7 +150,18 @@ Use the correct operator family for the rule type.
   owner: Saksteam
 ```
 
-### Pattern 3: Compare two fields
+---
+
+### `comparison`
+
+Every row must satisfy `left_column <operator> right_column`. Rows where either column is NULL are skipped.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `left_column` | yes | Left-hand column |
+| `right_column` | yes | Right-hand column |
+| `operator` | yes | `>`, `<`, `>=`, `<=`, `==`, `!=` |
+| `pk_column` | no | Default: `id` |
 
 ```yaml
 - rule_id: PROC-013
@@ -144,7 +178,17 @@ Use the correct operator family for the rule type.
   owner: Saksteam
 ```
 
-### Pattern 4: Allowed values
+---
+
+### `value_in_list`
+
+All non-null values in the column must belong to an approved list.
+
+| Parameter | Level | Required | Notes |
+|---|---|---|---|
+| `column` | top-level or parameters | yes | Column to check |
+| `parameters.allowed_values` | parameters | yes | Non-empty list of permitted values |
+| `parameters.pk_column` | parameters | no | Default: same as `column` |
 
 ```yaml
 - rule_id: INV-010
@@ -160,124 +204,6 @@ Use the correct operator family for the rule type.
   rule_category: Business Logic
   owner: Finansteam
 ```
-
-### Pattern 5: Conditional value rule
-
-```yaml
-- rule_id: INV-011
-  name: Negative amount requires credit note type
-  description: Negative lines are only valid for credit notes.
-  expectation: value_when
-  parameters:
-    when_column: linje_belop
-    operator: "<"
-    value: 0
-    required_column: Faktura_type
-    required_value: Kreditnota
-    pk_column: Fakturanr
-  severity: high
-  rule_category: Business Logic
-  owner: Finansteam
-```
-
-### Pattern 6: Active reference
-
-```yaml
-- rule_id: PROC-014
-  name: Assigned handler must be active
-  description: Open assignments must reference active personnel.
-  expectation: reference_active
-  parameters:
-    source_column: Saksbehandler_kode
-    reference_table: HR.Employees
-    reference_column: EmployeeCode
-    reference_active_column: IsActive
-    reference_active_value: true
-    pk_column: Saksnummer
-  severity: critical
-  rule_category: Referential Integrity
-  owner: Saksteam
-```
-
-### Pattern 7: SQL violations
-
-```yaml
-- rule_id: INV-012
-  name: Invoice totals cannot be zero
-  description: Sum of line amounts per invoice cannot be zero.
-  expectation: sql_violations
-  parameters:
-    sql: |
-      SELECT Fakturanr
-      FROM Saksbehandling.Fakturalinjer
-      GROUP BY Fakturanr
-      HAVING SUM(linje_belop) = 0
-  severity: medium
-  rule_category: Aggregate
-  owner: Finansteam
-```
-
-## Expectation Parameter Reference
-
-Quick lookup for every expectation: what YAML fields it reads, which are required, and a minimal example for each type not already covered in Business Patterns above.
-
----
-
-### `not_null`
-
-Every row must have a non-null value in the target column.
-
-| Parameter | Level | Required | Notes |
-|---|---|---|---|
-| `column` | top-level | yes | Column to check |
-| `parameters.pk_column` | parameters | no | Column used to identify violating rows (default: `id`) |
-
-*See Pattern 1.*
-
----
-
-### `not_null_when`
-
-All `checked_columns` must be non-null whenever `when_column` satisfies the trigger.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `when_column` | yes | Column that triggers the check |
-| `operator` | yes | `IS NULL`, `IS NOT NULL`, or `==` |
-| `value` | if `operator` is `==` | The value `when_column` must equal |
-| `checked_columns` | yes | List of columns that must be non-null when triggered |
-| `pk_column` | no | Default: `id` |
-
-*See Pattern 2.*
-
----
-
-### `comparison`
-
-Every row must satisfy `left_column <operator> right_column`. Rows where either column is NULL are skipped.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `left_column` | yes | Left-hand column |
-| `right_column` | yes | Right-hand column |
-| `operator` | yes | `>`, `<`, `>=`, `<=`, `==`, `!=` |
-| `pk_column` | no | Default: `id` |
-
-*See Pattern 3.*
-
----
-
-### `value_in_list`
-
-All non-null values in the column must belong to an approved list.
-
-| Parameter | Level | Required | Notes |
-|---|---|---|---|
-| `column` | top-level or parameters | yes | Column to check |
-| `parameters.allowed_values` | parameters | yes | Non-empty list of permitted values |
-| `parameters.pk_column` | parameters | no | Default: same as `column` |
-
-*See Pattern 4.*
 
 ---
 
@@ -320,7 +246,22 @@ When `when_column <operator> value`, `required_column` must equal `required_valu
 | `required_value` | yes | The required value |
 | `pk_column` | no | Default: `id` |
 
-*See Pattern 5.*
+```yaml
+- rule_id: INV-011
+  name: Negative amount requires credit note type
+  description: Negative lines are only valid for credit notes.
+  expectation: value_when
+  parameters:
+    when_column: linje_belop
+    operator: "<"
+    value: 0
+    required_column: Faktura_type
+    required_value: Kreditnota
+    pk_column: Fakturanr
+  severity: high
+  rule_category: Business Logic
+  owner: Finansteam
+```
 
 ---
 
@@ -365,7 +306,22 @@ Every non-null value in `source_column` must exist in the reference table **and*
 | `reference_active_value` | yes | Value that means "active" (string or boolean) |
 | `pk_column` | no | Default: same as `source_column` |
 
-*See Pattern 6.*
+```yaml
+- rule_id: PROC-014
+  name: Assigned handler must be active
+  description: Open assignments must reference active personnel.
+  expectation: reference_active
+  parameters:
+    source_column: Saksbehandler_kode
+    reference_table: HR.Employees
+    reference_column: EmployeeCode
+    reference_active_column: IsActive
+    reference_active_value: true
+    pk_column: Saksnummer
+  severity: critical
+  rule_category: Referential Integrity
+  owner: Saksteam
+```
 
 ---
 
@@ -466,7 +422,7 @@ Rows still in the open state must not have been open longer than `max_days`.
   expectation: state_duration_within_limit
   parameters:
     start_column: StartDate
-    open_state_column: ActualEndDate   # IS NULL means still open
+    open_state_column: ActualEndDate
     pk_column: Saksnummer
     max_days: 90
   severity: high
@@ -655,7 +611,21 @@ Runs a custom SQL query. Every row returned is treated as a violation — write 
 | `sql` | yes | SQL query; returned rows = violations |
 | `pk_column` | no | Column in the SQL result to use as the primary key value in violations |
 
-*See Pattern 7.*
+```yaml
+- rule_id: INV-012
+  name: Invoice totals cannot be zero
+  description: Sum of line amounts per invoice cannot be zero.
+  expectation: sql_violations
+  parameters:
+    sql: |
+      SELECT Fakturanr
+      FROM Saksbehandling.Fakturalinjer
+      GROUP BY Fakturanr
+      HAVING SUM(linje_belop) = 0
+  severity: medium
+  rule_category: Aggregate
+  owner: Finansteam
+```
 
 ---
 
