@@ -241,7 +241,77 @@ DQ Score Change % =
 
 ---
 
-## 5. Alert Measures
+## 5. Relating Violations to Source Tables
+
+`dq_violations[primary_key_value]` is always stored as **text**. Source tables like `Prosess` use a typed key (integer, GUID, etc.). Power BI cannot create a direct relationship across mismatched types, so use a calculated table as a typed bridge per rule group.
+
+### Pattern — calculated bridge table
+
+```dax
+Prosess_Violation_Keys =
+SELECTCOLUMNS(
+    FILTER(
+        dq_violations,
+        dq_violations[rule_group]    = "Process"
+     && dq_violations[issue_status] = "Active"
+    ),
+    "prosess_id", INT( dq_violations[primary_key_value] )
+)
+```
+
+Then in the **Model view** create these two relationships:
+
+| From | To | Cardinality |
+|---|---|---|
+| `Prosess_Violation_Keys[prosess_id]` | `Prosess[prosess_id]` | Many-to-one |
+| `dq_violations[primary_key_value]` | `Prosess_Violation_Keys[prosess_id_text]` | Many-to-one |
+
+Because the bridge only needs to carry the join key back as text, add a second column so the text side can close the loop:
+
+```dax
+Prosess_Violation_Keys =
+SELECTCOLUMNS(
+    FILTER(
+        dq_violations,
+        dq_violations[rule_group]    = "Process"
+     && dq_violations[issue_status] = "Active"
+    ),
+    "prosess_id",      INT( dq_violations[primary_key_value] ),
+    "prosess_id_text", dq_violations[primary_key_value]
+)
+```
+
+Relationships after adding the text column:
+
+```
+dq_violations[primary_key_value]
+        ↓  (Many → One)
+Prosess_Violation_Keys[prosess_id_text]
+        ↓  (Many → One, via prosess_id)
+Prosess[prosess_id]
+```
+
+### Violation count measure on the source table
+
+Once the bridge is in place this measure resolves in the `Prosess` row context:
+
+```dax
+Active Violations for Prosess =
+CALCULATE(
+    COUNTROWS( dq_violations ),
+    dq_violations[issue_status] = "Active",
+    TREATAS(
+        VALUES( Prosess[prosess_id] ),
+        Prosess_Violation_Keys[prosess_id]
+    )
+)
+```
+
+> If your source key is already text (e.g. `Saksnummer`), omit the `INT()` cast and use the text value directly — the bridge table reduces to a simple `DISTINCT` of `primary_key_value` filtered to the right rule group.
+
+---
+
+## 6. Alert Measures
 
 Connect the following measure to a notification flow (e.g. Power Automate) when alert functionality is added:
 

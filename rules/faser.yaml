@@ -27,6 +27,7 @@ rules:
   expectation: not_null
   column: prosess_id
   severity: kritisk
+  owner: Teknologi
 - rule_id: FAS-003
   name: Indikator kan ikke være null
   description: 'Alle faser må ha en gyldig indikator.'
@@ -36,7 +37,7 @@ rules:
   owner: Teknologi
 - rule_id: FAS-004
   name: Prosess_ID må være unik på tvers av alle faser
-  description: 'Dupliserte prosess_IDer indikerer et problem med dataregistrering eller deduplisering som vil forvrenge all etterfølgende rapportering.'
+  description: 'Dupliserte prosess_IDer indikerer et problem med dataregistrering.'
   expectation: combination_unique
   parameters:
     columns:
@@ -53,7 +54,7 @@ rules:
     checked_columns:
     - saksbehandler_kode
   severity: høy
-  owner: Styring
+  owner: Teknologi
 - rule_id: FAS-006
   name: Sluttdato må være større enn eller lik startdato
   description: 'For ferdige faser må sluttdato ikke være tidligere enn startdato.'
@@ -63,4 +64,4 @@ rules:
     right_column: startdato
     operator: '>='
   severity: høy
-  owner: Styring
+  owner: Teknologi

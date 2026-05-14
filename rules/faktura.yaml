@@ -21,7 +21,7 @@ rules:
   severity: høy
   owner: Styring
 - rule_id: FAK-003
-  name: Alle fakturalinjer må ha samme sum som total.
+  name: Alle fakturalinjer må ha samme sum som total
   description: 'Summen av alle linje_belop-verdier for en gitt Fakturanr må være lik
     Faktura_belop registrert på fakturahodet (innenfor en liten toleranse). En
     avvik indikerer enten manglende linjer eller en oppdatering av hodet som ikke ble reflektert
