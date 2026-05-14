@@ -195,6 +195,7 @@ print("dq_execution_metrics ready.")
 # CELL 5 — dry-run tmp tables
 # Same schema as production tables. Created here so the validation runner
 # never has to auto-create them at runtime.
+print(f"Creating tmp tables in: {_schema}")
 spark.sql(f"""
 CREATE TABLE IF NOT EXISTS {_results_table}_tmp (
     run_id          STRING,
@@ -228,6 +229,7 @@ CREATE TABLE IF NOT EXISTS {_results_table}_tmp (
 )
 USING DELTA
 """)
+print(f"  {_results_table}_tmp ready.")
 
 spark.sql(f"""
 CREATE TABLE IF NOT EXISTS {_violations_table}_tmp (
@@ -250,6 +252,7 @@ CREATE TABLE IF NOT EXISTS {_violations_table}_tmp (
 )
 USING DELTA
 """)
+print(f"  {_violations_table}_tmp ready.")
 
 spark.sql(f"""
 CREATE TABLE IF NOT EXISTS {_metrics_table}_tmp (
@@ -267,6 +270,7 @@ CREATE TABLE IF NOT EXISTS {_metrics_table}_tmp (
 )
 USING DELTA
 """)
+print(f"  {_metrics_table}_tmp ready.")
 
 print("dry-run tmp tables ready.")
 
