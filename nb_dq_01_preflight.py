@@ -358,6 +358,12 @@ def main() -> None:
         # the actual source table schema so typos are caught before execution.
         try:
             source_cols = set(spark.read.table(full_table).columns)
+            # Extend with columns introduced by catalog-level joins so rules
+            # that reference joined columns are not falsely flagged as missing.
+            for _join in catalog.get("joins") or []:
+                for _col in _join.get("select") or []:
+                    if isinstance(_col, str):
+                        source_cols.add(_col)
             column_warnings.extend(
                 _check_columns_for_catalog(catalog, source_cols, yaml_path.name)
             )
