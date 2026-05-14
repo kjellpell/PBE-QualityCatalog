@@ -7,13 +7,29 @@
 # be re-run against existing tables to add new columns without data loss.
 # =============================================================================
 
-# CELL 1 — Spark session
+# CELL 1 — Spark session + config
 # -----------------------------------------------------------------------------
+import importlib.util
+from pathlib import Path
 from pyspark.sql import SparkSession
 
 spark = SparkSession.builder.getOrCreate()
 spark.sql("SET spark.sql.ansi.enabled = false")
-print("Spark ready.")
+
+CONFIG_DIR = Path("/lakehouse/default/Files/Configs")
+_cfg_spec = importlib.util.spec_from_file_location(
+    "QualityCatalogConfig", str(CONFIG_DIR / "QualityCatalogConfig.py")
+)
+_cfg_mod = importlib.util.module_from_spec(_cfg_spec)
+_cfg_spec.loader.exec_module(_cfg_mod)
+
+_schema = getattr(_cfg_mod, "DEFAULT_SCHEMA", "default")
+_results_table   = f"{_schema}.{_cfg_mod.DQ_RESULTS_TABLE}"
+_violations_table = f"{_schema}.{_cfg_mod.DQ_VIOLATIONS_TABLE}"
+_metrics_table   = f"{_schema}.{_cfg_mod.DQ_EXECUTION_METRICS_TABLE}"
+
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {_schema}")
+print(f"Spark ready. Target schema: {_schema}")
 
 
 # CELL 2 — dq_run_results
@@ -32,8 +48,8 @@ print("Spark ready.")
 #   reference_table  – reference table name (validate_foreign_key only)
 #   reference_column – reference column name (validate_foreign_key only)
 # -----------------------------------------------------------------------------
-spark.sql("""
-CREATE TABLE IF NOT EXISTS dq_run_results (
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {_results_table} (
     run_id          STRING,
     run_timestamp   TIMESTAMP,
     batch_date      DATE,
@@ -84,7 +100,7 @@ for _col_def in [
 ]:
     try:
         spark.sql(
-            f"ALTER TABLE dq_run_results ADD COLUMNS ({_col_def})"
+            f"ALTER TABLE {_results_table} ADD COLUMNS ({_col_def})"
         )
     except Exception as _exc:
         # Silently skip if the column already exists; surface all other errors.
@@ -105,8 +121,8 @@ print("dq_run_results ready.")
 #   issue_status         – 'Active' while the violation persists; 'Resolved' once fixed
 #   resolution_timestamp – ISO timestamp of when the violation was resolved (NULL if still Active)
 # -----------------------------------------------------------------------------
-spark.sql("""
-CREATE TABLE IF NOT EXISTS dq_violations (
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {_violations_table} (
     run_id               STRING,
     run_timestamp        TIMESTAMP,
     batch_date           DATE,
@@ -135,7 +151,7 @@ for _col_def in [
 ]:
     try:
         spark.sql(
-            f"ALTER TABLE dq_violations ADD COLUMNS ({_col_def})"
+            f"ALTER TABLE {_violations_table} ADD COLUMNS ({_col_def})"
         )
     except Exception as _exc:
         _msg = str(_exc).lower()
@@ -156,8 +172,8 @@ print("dq_violations ready.")
 
 # CELL 4 — dq_execution_metrics
 # One row per runner execution for operator observability.
-spark.sql("""
-CREATE TABLE IF NOT EXISTS dq_execution_metrics (
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {_metrics_table} (
     script_name        STRING,
     status             STRING,
     dry_run            BOOLEAN,
@@ -177,5 +193,5 @@ print("dq_execution_metrics ready.")
 
 
 print("\n=== DQ SETUP COMPLETE ===")
-print("Delta tables: dq_run_results, dq_violations, dq_execution_metrics")
+print(f"Delta tables: {_results_table}, {_violations_table}, {_metrics_table}")
 
