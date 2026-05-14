@@ -345,7 +345,9 @@ The combination of `columns` must be unique across all rows.
 
 ### `aggregate_threshold`
 
-An aggregate (`sum`, `count`, `avg`, `min`, `max`) of a column must satisfy `<operator> threshold`.
+Computes a single aggregate across the **whole table** and checks it against a threshold. The rule either passes or fails for the entire table — there are no individual row violations.
+
+Use this for table-health checks: minimum row count, total sum bounds, average value sanity.
 
 | Parameter | Required | Notes |
 |---|---|---|
@@ -355,9 +357,23 @@ An aggregate (`sum`, `count`, `avg`, `min`, `max`) of a column must satisfy `<op
 | `threshold` | yes | The value the aggregate must satisfy |
 
 ```yaml
+# Table must not be empty:
+- rule_id: PROC-007a
+  name: Process table must not be empty
+  description: Zero rows indicates a failed data load.
+  expectation: aggregate_threshold
+  parameters:
+    aggregate: count
+    operator: ">="
+    threshold: 1
+  severity: critical
+  rule_category: Completeness
+  owner: Saksteam
+
+# Sum of a column must be positive:
 - rule_id: INV-031
   name: Total invoice amount must be positive
-  description: The sum of all line amounts must be above zero.
+  description: The sum of all line amounts across the table must be above zero.
   expectation: aggregate_threshold
   parameters:
     column: linje_belop
@@ -367,7 +383,25 @@ An aggregate (`sum`, `count`, `avg`, `min`, `max`) of a column must satisfy `<op
   severity: high
   rule_category: Aggregate
   owner: Finansteam
+
+# Average must be within a sensible range:
+- rule_id: INV-032
+  name: Average invoice line amount must be realistic
+  description: Average below 1 suggests systematic data entry errors.
+  expectation: aggregate_threshold
+  parameters:
+    column: linje_belop
+    aggregate: avg
+    operator: ">="
+    threshold: 1
+  severity: medium
+  rule_category: Aggregate
+  owner: Finansteam
 ```
+
+> **`aggregate_threshold` vs `comparison`:** `comparison` checks each row individually. `aggregate_threshold` computes one number for the whole table. Use `comparison` when the rule is about a relationship between two values on the same row; use `aggregate_threshold` when the rule is about the health of the whole dataset.
+>
+> **`aggregate_threshold` vs `group_aggregate_matches`:** `aggregate_threshold` checks one aggregate across the whole table. `group_aggregate_matches` checks an aggregate per group against a reference column value (e.g. line totals must equal the invoice header total).
 
 ---
 
