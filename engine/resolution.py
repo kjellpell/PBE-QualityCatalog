@@ -116,12 +116,16 @@ def _apply_resolution_tracking(
 
     ts = (run_timestamp or datetime.now(timezone.utc)).isoformat()
 
-    # In Fabric, schema-qualified names like "dbo.dq_violations" are resolved
-    # by the Lakehouse connector for DataFrame API calls, but Spark SQL
-    # (MERGE, CREATE TEMP VIEW) only sees the Spark metastore where tables are
-    # registered under their bare names.  Always use the bare name for SQL.
-    _sql_table_name = _safe_table_name(violations_table.split(".")[-1])
-    _quoted_violations_table = f"`{_sql_table_name}`"
+    # Quote each name component separately so schema-qualified names like
+    # "qualitycatalog.dq_violations_tmp" are passed to Spark SQL intact.
+    _quoted_violations_table = ".".join(
+        f"`{_safe_table_name(p)}`" for p in violations_table.strip().split(".")
+    )
+
+    if not spark_session.catalog.tableExists(violations_table):
+        current_violations_df.write.mode("append").saveAsTable(violations_table)
+        print(f"  '{violations_table}' created on first write.")
+        return
 
     try:
         # Deduplicate on the MERGE key before registering the temp view.

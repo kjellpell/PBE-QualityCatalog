@@ -1,8 +1,8 @@
 rule_group: Milepæler
-table: milepel
+table: milepaeler
 database: saksbehandling
 description: Datakvalitet på milepæler knyttet til saksfaser
-pk_column: milepel_id
+pk_column: milestone_recno
 catalog_filter:
   type: custom
   where_clause: fagsystem = 'PB360'
@@ -12,7 +12,7 @@ rules:
   description: 'Hver milepelrad må identifisere typen/navnet på milepelen. En blank milepel
     betyr at posten ikke kan kategoriseres eller sekvensieres.'
   expectation: not_null
-  column: milepel
+  column: milestone_title
   severity: kritisk
   owner: Teknologi
 - rule_id: MIL-002
@@ -20,7 +20,7 @@ rules:
   description: 'Hver milepelrad må være knyttet til en prosess via prosess_id. En
     milepel uten tilknytning kan ikke tilordnes noen fase.'
   expectation: not_null
-  column: prosess_id
+  column: to_stage_recno
   severity: kritisk
   owner: Teknologi
 - rule_id: MIL-003
@@ -29,9 +29,9 @@ rules:
     samme prosess, må de vises i riktig kronologisk rekkefølge.'
   expectation: sequence_ordered
   parameters:
-    event_column: milepel
-    group_column: prosess_id
-    order_column: sluttdato
+    event_column: milestone_title
+    group_column: to_stage_recno
+    order_column: milestonedate
     expected_sequence:
     - value: Høringsfrist høring og offentlig ettersyn
     - value: Merknader oversendt
@@ -42,9 +42,9 @@ rules:
       loop: true
     - value: Mottatt komplett revidert planforslag
     completion_gate:
-      event_column: milepel
+      event_column: milestone_title
       value: Sendt til politisk behandling
-      order_column: sluttdato
+      order_column: milestonedate
   severity: høy
   owner: Teknologi
 - rule_id: MIL-004
@@ -52,15 +52,15 @@ rules:
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
   expectation: pairs_present
   parameters:
-    event_column: milepel
-    group_column: prosess_id
+    event_column: milestone_title
+    group_column: to_stage_recno
     required_pairs:
       - [Merknader oversendt, Mottatt revidert planforslag]
       - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
     completion_gate:
-      event_column: milepel
+      event_column: milestone_title
       value: Sendt til politisk behandling
-      order_column: sluttdato
+      order_column: milestonedate
   severity: kritisk
   owner: Teknologi
 - rule_id: MIL-005
@@ -69,8 +69,8 @@ rules:
   expectation: combination_unique
   parameters:
     columns:
-    - prosess_id
-    - sluttdato
+    - to_stage_recno
+    - milestonedate
   severity: høy
   owner: Teknologi
 - rule_id: MIL-006
@@ -78,10 +78,10 @@ rules:
   description: 'Milepæler som er nådd må ha en sluttdato.'
   expectation: not_null_when
   parameters:
-    when_column: status
+    when_column: statusdescription
     operator: ==
     value: Nådd
     checked_columns:
-      - sluttdato
+      - milestonedate
   severity: høy
   owner: Teknologi
