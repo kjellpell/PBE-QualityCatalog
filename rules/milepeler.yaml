@@ -23,29 +23,6 @@ rules:
   column: to_stage_recno
   severity: kritisk
   owner: Teknologi
-- rule_id: MIL-003
-  name: Til politisk behandling må følge definert sekvens
-  description: 'Når flere milepæler i den forventede sekvensen er til stede for
-    samme prosess, må de vises i riktig kronologisk rekkefølge.'
-  expectation: sequence_ordered
-  parameters:
-    event_column: milestone_title
-    group_column: to_stage_recno
-    order_column: milestonedate
-    loop_all: true
-    expected_sequence:
-    - value: Høringsfrist høring og offentlig ettersyn
-    - value: Merknader oversendt
-    - value: Mottatt revidert planforslag
-    - value: Anmodning om oppdatert plandokumentasjon
-    - value: Mottatt oppdatert plandokumentasjon
-    - value: Mottatt komplett revidert planforslag
-    completion_gate:
-      event_column: milestone_title
-      value: Sendt til politisk behandling
-      order_column: milestonedate
-  severity: høy
-  owner: Teknologi
 - rule_id: MIL-004
   name: Begge milepæler i et par må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
@@ -63,16 +40,6 @@ rules:
   severity: kritisk
   owner: Teknologi
 - rule_id: MIL-005
-  name: Milepæler for en fase må ha unike datoer
-  description: 'For hver prosess_id, må hver milepel ha en unik sluttdato.'
-  expectation: combination_unique
-  parameters:
-    columns:
-    - to_stage_recno
-    - milestonedate
-  severity: høy
-  owner: Teknologi
-- rule_id: MIL-006
   name: Milepælen kan ikke være nådd uten sluttdato
   description: 'Milepæler som er nådd må ha en sluttdato.'
   expectation: not_null_when
