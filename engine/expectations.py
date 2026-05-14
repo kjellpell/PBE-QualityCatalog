@@ -210,46 +210,71 @@ class ExpectColumnValuesToNotBeNullExpectation:
 # -----------------------------------------------------------------------------
 class ColumnComparisonExpectation:
     """
-    Compares two columns using a configurable operator and fails if any row
-    does not satisfy the condition.  Only rows where both columns are non-null
-    are evaluated.
+    Compares a column against another column or a scalar value using a
+    configurable operator.  Only rows where the left-hand column is non-null
+    are evaluated (and, for column-vs-column mode, where both are non-null).
 
     YAML parameters (canonical names):
-      left_column   - name of the left-hand column (was: column_A)
-      right_column  - name of the right-hand column (was: column_B)
+      left_column   - name of the left-hand column
+      right_column  - name of the right-hand column (mutually exclusive with right_value)
+      right_value   - scalar numeric value to compare against (mutually exclusive with right_column)
       operator      - comparison operator: >, <, >=, <=, ==, !=
       pk_column     - primary key column used to identify violating rows
                       (default: "id")
+
+    Exactly one of right_column or right_value must be provided.
     """
 
     _VIOLATION_FILTERS = {
-        ">":  lambda a, b: F.col(a) <= F.col(b),
-        "<":  lambda a, b: F.col(a) >= F.col(b),
-        ">=": lambda a, b: F.col(a) < F.col(b),
-        "<=": lambda a, b: F.col(a) > F.col(b),
-        "==": lambda a, b: F.col(a) != F.col(b),
-        "!=": lambda a, b: F.col(a) == F.col(b),
+        ">":  lambda a, b: F.col(a) <= b,
+        "<":  lambda a, b: F.col(a) >= b,
+        ">=": lambda a, b: F.col(a) < b,
+        "<=": lambda a, b: F.col(a) > b,
+        "==": lambda a, b: F.col(a) != b,
+        "!=": lambda a, b: F.col(a) == b,
     }
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
-        params   = rule.get("parameters", {})
-        col_a    = params.get("left_column")
-        col_b    = params.get("right_column")
-        operator = params.get("operator")
-        pk_col   = params.get("pk_column", "id")
+        params    = rule.get("parameters", {})
+        col_a     = params.get("left_column")
+        col_b     = params.get("right_column")
+        right_val = params.get("right_value")
+        operator  = params.get("operator")
+        pk_col    = params.get("pk_column", "id")
 
-        if not col_a or not col_b or not operator:
+        if not col_a or not operator:
             return (
                 _error_result(
-                    "Parameters 'left_column', 'right_column', and 'operator' are all required."
+                    "Parameters 'left_column' and 'operator' are required."
                 ),
                 _empty_violations(spark),
             )
 
-        missing = [c for c in (col_a, col_b) if c not in df.columns]
-        if missing:
+        if col_b is None and right_val is None:
             return (
-                _error_result(f"Column(s) not found in DataFrame: {missing}"),
+                _error_result(
+                    "Exactly one of 'right_column' or 'right_value' must be provided."
+                ),
+                _empty_violations(spark),
+            )
+
+        if col_b is not None and right_val is not None:
+            return (
+                _error_result(
+                    "'right_column' and 'right_value' are mutually exclusive — provide only one."
+                ),
+                _empty_violations(spark),
+            )
+
+        if col_a not in df.columns:
+            return (
+                _error_result(f"Column '{col_a}' not found in DataFrame."),
+                _empty_violations(spark),
+            )
+
+        if col_b is not None and col_b not in df.columns:
+            return (
+                _error_result(f"Column '{col_b}' not found in DataFrame."),
                 _empty_violations(spark),
             )
 
@@ -262,47 +287,80 @@ class ColumnComparisonExpectation:
                 _empty_violations(spark),
             )
 
-        condition = f"{col_a} {operator} {col_b}"
+        scalar_mode = right_val is not None
 
-        evaluated = df.filter(
-            F.col(col_a).isNotNull() & F.col(col_b).isNotNull()
-        )
+        if scalar_mode:
+            try:
+                right_val_f = float(right_val)
+            except (TypeError, ValueError):
+                return (
+                    _error_result(
+                        f"'right_value' must be numeric, got {right_val!r}."
+                    ),
+                    _empty_violations(spark),
+                )
+            right_expr = F.lit(right_val_f)
+            condition  = f"{col_a} {operator} {right_val_f}"
+            evaluated  = df.filter(F.col(col_a).isNotNull())
+        else:
+            right_expr = F.col(col_b)
+            condition  = f"{col_a} {operator} {col_b}"
+            evaluated  = df.filter(
+                F.col(col_a).isNotNull() & F.col(col_b).isNotNull()
+            )
+
         total = evaluated.count()
 
         if total == 0:
-            result = {
-                "total_rows":  0,
-                "passed_rows": 0,
-                "failed_rows": 0,
-                "success_pct": 100.0,
-                "status":      "PASSED",
-                "details": (
-                    f"No rows with both {col_a} and {col_b} populated - skipped."
-                ),
-            }
-            return result, _empty_violations(spark)
+            skipped_msg = (
+                f"No non-null rows in '{col_a}' - skipped."
+                if scalar_mode
+                else f"No rows with both {col_a} and {col_b} populated - skipped."
+            )
+            return (
+                {
+                    "total_rows":  0,
+                    "passed_rows": 0,
+                    "failed_rows": 0,
+                    "success_pct": 100.0,
+                    "status":      "PASSED",
+                    "details":     skipped_msg,
+                },
+                _empty_violations(spark),
+            )
 
-        violation_filter = self._VIOLATION_FILTERS[operator](col_a, col_b)
+        violation_filter = self._VIOLATION_FILTERS[operator](col_a, right_expr)
         violations_df    = evaluated.filter(violation_filter)
         failed           = violations_df.count()
         passed           = total - failed
 
-        violations_out = violations_df.select(
-            F.col(pk_col).cast("string").alias("primary_key_value"),
-            F.lit(condition).alias("violated_column"),
-            F.concat(
+        if scalar_mode:
+            actual_val_expr = F.col(col_a).cast("string")
+            detail_expr = F.concat(
+                F.lit(f"{col_a} = "),
+                F.col(col_a).cast("string"),
+                F.lit(f": condition '{condition}' not satisfied"),
+            )
+        else:
+            actual_val_expr = F.concat(
                 F.col(col_a).cast("string"),
                 F.lit(f" {operator} "),
                 F.col(col_b).cast("string"),
-            ).alias("actual_value"),
-            F.lit(condition).alias("expected_condition"),
-            F.concat(
+            )
+            detail_expr = F.concat(
                 F.lit(f"{col_a} = "),
                 F.col(col_a).cast("string"),
                 F.lit(f", {col_b} = "),
                 F.col(col_b).cast("string"),
                 F.lit(f": condition '{condition}' not satisfied"),
-            ).alias("violation_detail"),
+            )
+
+        violations_out = violations_df.select(
+            F.col(pk_col).cast("string").alias("primary_key_value"),
+            F.lit(condition).alias("violated_column"),
+            actual_val_expr.alias("actual_value"),
+            F.lit(condition).alias("expected_condition"),
+            detail_expr.alias("violation_detail"),
         )
 
         result = {
@@ -398,51 +456,6 @@ class SqlValidationExpectation:
         }
         return result, violations_out
 
-
-# -----------------------------------------------------------------------------
-# expect_row_count_to_be_between
-# Validates that the table row count falls within [min_value, max_value].
-# -----------------------------------------------------------------------------
-class RowCountExpectation:
-    """
-    Validates that the table row count is between min_value and max_value
-    (inclusive).
-
-    YAML parameters:
-      min_value - minimum acceptable row count (inclusive)
-      max_value - maximum acceptable row count (inclusive)
-    """
-
-    def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
-        params    = rule.get("parameters", {})
-        min_value = params.get("min_value")
-        max_value = params.get("max_value")
-
-        if min_value is None or max_value is None:
-            return (
-                _error_result(
-                    "Parameters 'min_value' and 'max_value' are required."
-                ),
-                _empty_violations(spark),
-            )
-
-        total  = df.count()
-        passed = int(min_value) <= total <= int(max_value)
-
-        result = {
-            "total_rows":  total,
-            "passed_rows": total if passed else 0,
-            "failed_rows": 0 if passed else total,
-            "success_pct": 100.0 if passed else 0.0,
-            "status":      "PASSED" if passed else "FAILED",
-            "details": (
-                f"Row count {total:,} is outside expected range "
-                f"[{min_value:,}, {max_value:,}]."
-                if not passed
-                else f"Row count {total:,} is within [{min_value:,}, {max_value:,}]."
-            ),
-        }
-        return result, _empty_violations(spark)
 
 
 # -----------------------------------------------------------------------------
@@ -1103,6 +1116,10 @@ class ValidatePairedPresenceExpectation:
                            In the multi-stop form the pair is satisfied when at least
                            one of the stop values exists in the group alongside the
                            start value.
+      mode               - (optional) controls which direction is enforced:
+                           'both' (default) — flags groups missing either member of a pair.
+                           'stop_requires_start' — flags only groups that have a stop
+                           value without the corresponding start value.
       completion_gate    - (optional) only evaluate groups that are "done":
           event_column   - column holding the completion marker value
           value         - the value that signals the group is closed
@@ -1114,7 +1131,16 @@ class ValidatePairedPresenceExpectation:
         value_col      = params.get("event_column")
         group_col      = params.get("group_column")
         required_pairs = params.get("required_pairs", [])
+        mode           = params.get("mode", "both")
         gate           = params.get("completion_gate", {})
+
+        if mode not in ("both", "stop_requires_start"):
+            return (
+                _error_result(
+                    f"Unsupported mode '{mode}'. Allowed: 'both', 'stop_requires_start'."
+                ),
+                _empty_violations(spark),
+            )
 
         df = _resolve_gate_groups(df, gate, group_col)
 
@@ -1180,20 +1206,26 @@ class ValidatePairedPresenceExpectation:
             pivot_with_stop = pivot_df.withColumn("_has_any_stop", has_any_stop_expr)
 
             stop_label = " or ".join(f"'{s}'" for s in stop_types)
-            expected = (
-                f"Both '{start_type}' and ({stop_label}) must exist "
-                f"for the same {group_col}"
-            )
 
-            pair_viols = pivot_with_stop.filter(
-                F.col(has_start) != F.col("_has_any_stop")
-            ).select(
-                F.col(group_col).cast("string").alias("primary_key_value"),
-                F.lit(value_col).alias("violated_column"),
-                F.when(F.col(has_start), F.lit(start_type))
-                 .otherwise(F.lit(stop_label)).alias("actual_value"),
-                F.lit(expected).alias("expected_condition"),
-                F.when(
+            if mode == "stop_requires_start":
+                violation_filter = F.col("_has_any_stop") & ~F.col(has_start)
+                expected = (
+                    f"'{start_type}' must exist whenever any of ({stop_label}) is present "
+                    f"for the same {group_col}"
+                )
+                detail_expr = F.concat(
+                    F.lit(f"One of ({stop_label}) present but '{start_type}' missing "
+                          f"for {group_col}='"),
+                    F.col(group_col).cast("string"), F.lit("'"),
+                )
+                actual_expr = F.lit(stop_label)
+            else:
+                violation_filter = F.col(has_start) != F.col("_has_any_stop")
+                expected = (
+                    f"Both '{start_type}' and ({stop_label}) must exist "
+                    f"for the same {group_col}"
+                )
+                detail_expr = F.when(
                     F.col(has_start) & ~F.col("_has_any_stop"),
                     F.concat(
                         F.lit(f"'{start_type}' present but none of ({stop_label}) found "
@@ -1206,7 +1238,18 @@ class ValidatePairedPresenceExpectation:
                               f"for {group_col}='"),
                         F.col(group_col).cast("string"), F.lit("'"),
                     ),
-                ).alias("violation_detail"),
+                )
+                actual_expr = (
+                    F.when(F.col(has_start), F.lit(start_type))
+                     .otherwise(F.lit(stop_label))
+                )
+
+            pair_viols = pivot_with_stop.filter(violation_filter).select(
+                F.col(group_col).cast("string").alias("primary_key_value"),
+                F.lit(value_col).alias("violated_column"),
+                actual_expr.alias("actual_value"),
+                F.lit(expected).alias("expected_condition"),
+                detail_expr.alias("violation_detail"),
             )
             pair_violation_dfs.append(pair_viols)
 
@@ -1219,13 +1262,18 @@ class ValidatePairedPresenceExpectation:
         if total_failed == 0:
             return _passed_result(total), _empty_violations(spark)
 
+        details_msg = (
+            f"{total_failed} group(s) in {group_col} have a stop value without a start value."
+            if mode == "stop_requires_start"
+            else f"{total_failed} group(s) in {group_col} have incomplete pairs."
+        )
         result = {
             "total_rows":  total,
             "passed_rows": total - total_failed,
             "failed_rows": total_failed,
             "success_pct": _safe_pct(total - total_failed, total),
             "status":      "FAILED",
-            "details": f"{total_failed} group(s) in {group_col} have incomplete pairs.",
+            "details":     details_msg,
         }
         return result, all_violations
 
@@ -1341,111 +1389,6 @@ class ValidateGateExpectation:
         }
         return result, violations_out
 
-
-# -----------------------------------------------------------------------------
-# validate_no_orphan
-# A stop-type value must not exist without the corresponding start-type value.
-# Replaces the former table-specific expect_no_orphan_milestones.
-# -----------------------------------------------------------------------------
-class ValidateNoOrphanExpectation:
-    """
-    Detects groups where a stop-type value exists without its start-type pair.
-
-    YAML parameters (canonical names):
-      event_column   - column holding the type/name values (was: value_column)
-      group_column   - column identifying the group
-      pairs          - list of pairs; each pair is [start_marker, stop_marker] or
-                       [start_marker, [stop_marker1, stop_marker2, ...]].
-                       In the multi-stop form, the presence of ANY stop value
-                       without the corresponding start value is a violation.
-    """
-
-    def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
-        params    = rule.get("parameters", {})
-        value_col = params.get("event_column") or params.get("milestone_column")
-        group_col = params.get("group_column")
-        pairs     = params.get("pairs", [])
-
-        total = df.count()
-        if total == 0 or not pairs:
-            return _passed_result(total), _empty_violations(spark)
-
-        # Normalise stop-slots to lists and collect all referenced values.
-        normalised = [(pair[0], _normalise_stops(pair[1])) for pair in pairs]
-        all_types  = list({
-            t
-            for start, stops in normalised
-            for t in ([start] + stops)
-        })
-
-        pivot_df = (
-            df.filter(F.col(group_col).isNotNull())
-            .filter(F.col(value_col).isin(all_types))
-            .groupBy(group_col)
-            .agg(*[
-                F.max(
-                    F.when(F.col(value_col) == t, F.lit(True)).otherwise(F.lit(False))
-                ).alias(f"_has_{i}")
-                for i, t in enumerate(all_types)
-            ])
-        )
-        type_to_col = {t: f"_has_{i}" for i, t in enumerate(all_types)}
-
-        # Build all pair violation DataFrames as lazy transformations first,
-        # then union them in one go and count once — avoids per-pair actions.
-        pair_violation_dfs = []
-
-        for start_type, stop_types in normalised:
-            has_start = type_to_col.get(start_type)
-            if not has_start:
-                continue
-
-            # Build OR expression: any stop column is True.
-            has_any_stop_expr = F.col(type_to_col[stop_types[0]])
-            for st in stop_types[1:]:
-                has_any_stop_expr = has_any_stop_expr | F.col(type_to_col[st])
-
-            stop_label = " or ".join(f"'{s}'" for s in stop_types)
-            pivot_with_stop = pivot_df.withColumn("_has_any_stop", has_any_stop_expr)
-
-            pair_viols = pivot_with_stop.filter(
-                F.col("_has_any_stop") & ~F.col(has_start)
-            ).select(
-                F.col(group_col).cast("string").alias("primary_key_value"),
-                F.lit(value_col).alias("violated_column"),
-                F.lit(stop_label).alias("actual_value"),
-                F.lit(
-                    f"'{start_type}' must exist when any of ({stop_label}) is present"
-                ).alias("expected_condition"),
-                F.concat(
-                    F.lit(f"One of ({stop_label}) exists but '{start_type}' is missing "
-                          f"for {group_col}='"),
-                    F.col(group_col).cast("string"), F.lit("'"),
-                ).alias("violation_detail"),
-            )
-            pair_violation_dfs.append(pair_viols)
-
-        if not pair_violation_dfs:
-            return _passed_result(total), _empty_violations(spark)
-
-        all_violations = reduce(lambda a, b: a.unionByName(b), pair_violation_dfs)
-        total_failed = all_violations.count()
-
-        if total_failed == 0:
-            return _passed_result(total), _empty_violations(spark)
-
-        result = {
-            "total_rows":  total,
-            "passed_rows": total - total_failed,
-            "failed_rows": total_failed,
-            "success_pct": _safe_pct(total - total_failed, total),
-            "status":      "FAILED",
-            "details": (
-                f"{total_failed} group(s) in {group_col} have a stop-type "
-                f"value without a corresponding start-type value."
-            ),
-        }
-        return result, all_violations
 
 
 # =============================================================================
@@ -1683,104 +1626,6 @@ class ValidateGroupAggregateMatchExpectation:
         }
         return result, violations_out
 
-
-# =============================================================================
-# Negative / forbidden-state expectations
-# =============================================================================
-
-# -----------------------------------------------------------------------------
-# validate_column_exclusions
-# Enforces forbidden states by asserting that a given combination of column
-# values must NEVER occur together.  Any row that satisfies the condition is
-# treated as a violation.
-#
-# This is the negation counterpart to conditional validators: instead of
-# "column X must be set when Y is true", this says
-# "it must NEVER be the case that (condition)".
-# -----------------------------------------------------------------------------
-class ValidateColumnExclusionsExpectation:
-    """
-    Asserts that no row satisfies the given forbidden-state condition.
-    A violation is recorded for every row where the condition holds true.
-
-    YAML parameters:
-      condition   - Spark SQL expression that identifies forbidden rows.
-                    Any row matching this filter is a violation.
-                    Example: "ColumnA IS NULL AND ColumnB IS NULL"
-      pk_column   - primary key column used to identify violating rows
-                    (default: "id")
-
-    Example YAML rule:
-      - rule: "Columns A and B cannot both be NULL"
-        expectation: "validate_column_exclusions"
-        parameters:
-          condition: "ColumnA IS NULL AND ColumnB IS NULL"
-          pk_column: "Saksnummer"
-          severity:  "Critical"
-    """
-
-    def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
-        params    = rule.get("parameters", {})
-        condition = params.get("condition")
-        pk_col    = params.get("pk_column", "id")
-
-        if not condition:
-            return (
-                _error_result("Parameter 'condition' is required."),
-                _empty_violations(spark),
-            )
-
-        total = df.count()
-        if total == 0:
-            return _passed_result(0), _empty_violations(spark)
-
-        try:
-            violations_df = df.filter(condition)
-        except Exception as exc:
-            return (
-                _error_result(f"Invalid condition expression: {exc}"),
-                _empty_violations(spark),
-            )
-
-        failed = violations_df.count()
-        passed = total - failed
-
-        pk_in_df      = pk_col in df.columns
-        pk_expr       = (
-            F.col(pk_col).cast("string")
-            if pk_in_df
-            else F.lit(None).cast("string")
-        )
-        expected_cond = f"NOT ({condition})"
-        detail_expr   = F.concat(
-            F.lit("Forbidden condition satisfied: "),
-            F.lit(condition),
-        )
-
-        violations_out = violations_df.select(
-            pk_expr.alias("primary_key_value"),
-            F.lit("forbidden_state").alias("violated_column"),
-            F.lit(condition).alias("actual_value"),
-            F.lit(expected_cond).alias("expected_condition"),
-            detail_expr.alias("violation_detail"),
-        )
-
-        result = {
-            "total_rows":  total,
-            "passed_rows": passed,
-            "failed_rows": failed,
-            "success_pct": _safe_pct(passed, total),
-            "status":      "PASSED" if failed == 0 else "FAILED",
-            "details": (
-                f"{failed} row(s) satisfy the forbidden condition: {condition}."
-                if failed > 0
-                else (
-                    f"No rows satisfy the forbidden condition. "
-                    f"All {total} rows are valid."
-                )
-            ),
-        }
-        return result, violations_out
 
 
 # =============================================================================
@@ -2121,80 +1966,6 @@ class ValueInListExpectation:
         }, violations_out if failed > 0 else _empty_violations(spark)
 
 
-class GreaterThanExpectation:
-    """
-    Validates that all non-null values in 'column' are strictly greater than 'threshold'.
-
-    YAML parameters:
-      column    - column to check (must be numeric)
-      threshold - numeric lower bound (exclusive); value must be > threshold
-      pk_column - primary key column for violation reporting (default: column)
-    """
-
-    def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
-        params    = rule.get("parameters", {})
-        column    = params.get("column") or rule.get("column")
-        pk_col    = params.get("pk_column") or column
-        threshold = params.get("threshold")
-
-        if not column:
-            return _error_result("Parameter 'column' is required."), _empty_violations(spark)
-        if threshold is None:
-            return _error_result("Parameter 'threshold' is required."), _empty_violations(spark)
-        if column not in df.columns:
-            return (
-                _error_result(f"Column '{column}' not found in DataFrame."),
-                _empty_violations(spark),
-            )
-
-        try:
-            threshold_val = float(threshold)
-        except (TypeError, ValueError):
-            return (
-                _error_result(
-                    f"Parameter 'threshold' must be numeric, got {threshold!r}."
-                ),
-                _empty_violations(spark),
-            )
-
-        evaluated = df.filter(F.col(column).isNotNull())
-        total     = evaluated.count()
-
-        if total == 0:
-            return _passed_result(0), _empty_violations(spark)
-
-        violations_df = evaluated.filter(
-            ~(F.col(column).cast("double") > F.lit(threshold_val))
-        )
-        failed = violations_df.count()
-        passed = total - failed
-
-        condition = f"{column} > {threshold_val}"
-        violations_out = violations_df.select(
-            F.col(pk_col).cast("string").alias("primary_key_value"),
-            F.lit(column).alias("violated_column"),
-            F.col(column).cast("string").alias("actual_value"),
-            F.lit(condition).alias("expected_condition"),
-            F.concat(
-                F.lit("Value '"),
-                F.col(column).cast("string"),
-                F.lit(f"' is not greater than {threshold_val}"),
-            ).alias("violation_detail"),
-        )
-
-        return {
-            "total_rows":  total,
-            "passed_rows": passed,
-            "failed_rows": failed,
-            "success_pct": _safe_pct(passed, total),
-            "status":      "PASSED" if failed == 0 else "FAILED",
-            "details": (
-                f"{failed} row(s) in '{column}' are not greater than {threshold_val}."
-                if failed > 0
-                else f"All {total} evaluated rows in '{column}' are greater than {threshold_val}."
-            ),
-        }, violations_out if failed > 0 else _empty_violations(spark)
-
 
 # =============================================================================
 # Registry — maps YAML expectation names to validator classes.
@@ -2206,70 +1977,41 @@ CUSTOM_EXPECTATION_REGISTRY = {
 
     # -------------------------------------------------------------------------
     # Generic cross-table validators (work on any table)
-    # Canonical names effective 2026-05-02 — old names not supported
     # -------------------------------------------------------------------------
     "comparison":                           ColumnComparisonExpectation,
     "not_null":                             ExpectColumnValuesToNotBeNullExpectation,
     "sql_violations":                       SqlValidationExpectation,
     "value_in_list":                        ValueInListExpectation,
-    "greater_than":                         GreaterThanExpectation,
 
     # -------------------------------------------------------------------------
     # Aggregate validators
     # -------------------------------------------------------------------------
     "aggregate_threshold":                  ValidateAggregateRuleExpectation,
-    "row_count_in_range":                   RowCountExpectation,
     "combination_unique":                   UniqueColumnCombinationExpectation,
 
     # -------------------------------------------------------------------------
     # Referential integrity
     # -------------------------------------------------------------------------
     "reference_exists":                     ForeignKeyExpectation,
+    "reference_active":                     ValidateActiveReferenceExpectation,
 
     # -------------------------------------------------------------------------
     # Conditional / dependency validators
     # -------------------------------------------------------------------------
     "not_null_when":                        ValidateNotNullWhenExpectation,
-
-    # -------------------------------------------------------------------------
-    # Negative / forbidden-state validators
-    # -------------------------------------------------------------------------
-    "columns_excluded":                     ValidateColumnExclusionsExpectation,
-
-    # -------------------------------------------------------------------------
-    # Sequence / ordering validators
-    # -------------------------------------------------------------------------
-    "sequence_ordered":                     ValidateSequenceOrderExpectation,
-
-    # -------------------------------------------------------------------------
-    # Gate / completion validators
-    # -------------------------------------------------------------------------
-    "gate_complete":                        ValidateGateExpectation,
-
-    # -------------------------------------------------------------------------
-    # Paired-presence validators
-    # -------------------------------------------------------------------------
-    "pairs_present":                        ValidatePairedPresenceExpectation,
-
-    # -------------------------------------------------------------------------
-    # Orphan / stop-without-start validators
-    # -------------------------------------------------------------------------
-    "stops_paired_with_starts":             ValidateNoOrphanExpectation,
-
-    # -------------------------------------------------------------------------
-    # Conditional column-value validators
-    # -------------------------------------------------------------------------
     "value_when":                           ValidateConditionalColumnValueExpectation,
 
     # -------------------------------------------------------------------------
-    # Group aggregate match validators
+    # Sequence / ordering / pairing validators
     # -------------------------------------------------------------------------
-    "group_aggregate_matches":              ValidateGroupAggregateMatchExpectation,
+    "sequence_ordered":                     ValidateSequenceOrderExpectation,
+    "gate_complete":                        ValidateGateExpectation,
+    "pairs_present":                        ValidatePairedPresenceExpectation,
 
     # -------------------------------------------------------------------------
-    # Active reference validators
+    # Group aggregate validators
     # -------------------------------------------------------------------------
-    "reference_active":                     ValidateActiveReferenceExpectation,
+    "group_aggregate_matches":              ValidateGroupAggregateMatchExpectation,
 
     # -------------------------------------------------------------------------
     # Time-in-state validators

@@ -39,19 +39,18 @@ Then choose rule type:
 |---|---|
 | Field is always required | `not_null` |
 | If condition is true, field(s) required | `not_null_when` |
-| Compare two fields in the same row | `comparison` |
+| Compare two fields, or a field against a scalar | `comparison` |
 | Field must be in allowed list | `value_in_list` |
-| Threshold on one field | `greater_than` |
 | If condition is true, another field must equal a value | `value_when` |
 | Parent/reference must exist | `reference_exists` |
 | Reference must exist and be active | `reference_active` |
-| Row count must be within range | `row_count_in_range` |
 | Column combination must be unique | `combination_unique` |
 | Aggregate must meet threshold | `aggregate_threshold` |
 | Time open/state duration bounded | `state_duration_within_limit` |
 | Group events must be ordered | `sequence_ordered` |
+| Group must contain a required completion event | `gate_complete` |
 | Group event pairs must be present | `pairs_present` |
-| Stop event cannot exist without start event | `stops_paired_with_starts` |
+| Group aggregate must match a reference value | `group_aggregate_matches` |
 | Advanced custom logic | `sql_violations` |
 
 ## Operator Taxonomy
@@ -61,7 +60,7 @@ Use the correct operator family for the rule type.
 | Operator family | Allowed values | Typical expectations |
 |---|---|---|
 | Trigger operators | `IS NULL`, `IS NOT NULL`, `==` | `not_null_when` |
-| Comparison operators | `>`, `<`, `>=`, `<=`, `==`, `!=` | `comparison`, `value_when`, `aggregate_threshold` |
+| Comparison operators | `>`, `<`, `>=`, `<=`, `==`, `!=` | `comparison` (column or scalar), `value_when`, `aggregate_threshold` |
 
 `value` is required only when the selected operator needs a value.
 
@@ -78,7 +77,8 @@ Use the correct operator family for the rule type.
 | Parameter key | Meaning |
 |---|---|
 | `left_column` | Left side for field comparison |
-| `right_column` | Right side for field comparison |
+| `right_column` | Right-hand column for field comparison |
+| `right_value` | Scalar numeric value for column-vs-scalar comparison |
 | `when_column` | Column evaluated by trigger condition |
 | `checked_columns` | List of columns required under trigger |
 | `allowed_values` | Approved value list |
@@ -154,16 +154,20 @@ All `checked_columns` must be non-null whenever `when_column` satisfies the trig
 
 ### `comparison`
 
-Every row must satisfy `left_column <operator> right_column`. Rows where either column is NULL are skipped.
+Every row must satisfy `left_column <operator> right_column` (column vs column) or `left_column <operator> right_value` (column vs scalar). Rows where the left-hand column is NULL are skipped; for column-vs-column, rows where either column is NULL are skipped.
+
+Exactly one of `right_column` or `right_value` must be provided.
 
 | Parameter | Required | Notes |
 |---|---|---|
 | `left_column` | yes | Left-hand column |
-| `right_column` | yes | Right-hand column |
+| `right_column` | one of these | Right-hand column name |
+| `right_value` | one of these | Scalar numeric value to compare against |
 | `operator` | yes | `>`, `<`, `>=`, `<=`, `==`, `!=` |
 | `pk_column` | no | Default: `id` |
 
 ```yaml
+# Column vs column:
 - rule_id: PROC-013
   name: End date cannot be before start date
   description: Timeline order must be valid.
@@ -176,6 +180,20 @@ Every row must satisfy `left_column <operator> right_column`. Rows where either 
   severity: high
   rule_category: Business Logic
   owner: Saksteam
+
+# Column vs scalar:
+- rule_id: INV-020
+  name: Invoice amount must be positive
+  description: Line amounts must be greater than zero.
+  expectation: comparison
+  parameters:
+    left_column: linje_belop
+    right_value: 0
+    operator: ">"
+    pk_column: Fakturanr
+  severity: high
+  rule_category: Business Logic
+  owner: Finansteam
 ```
 
 ---
@@ -201,32 +219,6 @@ All non-null values in the column must belong to an approved list.
       - Standard
       - Kreditnota
   severity: medium
-  rule_category: Business Logic
-  owner: Finansteam
-```
-
----
-
-### `greater_than`
-
-All non-null values in the column must be strictly greater than `threshold`.
-
-| Parameter | Level | Required | Notes |
-|---|---|---|---|
-| `column` | top-level or parameters | yes | Numeric column to check |
-| `parameters.threshold` | parameters | yes | Numeric lower bound (exclusive) |
-| `parameters.pk_column` | parameters | no | Default: same as `column` |
-
-```yaml
-- rule_id: INV-020
-  name: Invoice amount must be positive
-  description: Line amounts must be greater than zero.
-  expectation: greater_than
-  column: linje_belop
-  parameters:
-    threshold: 0
-    pk_column: Fakturanr
-  severity: high
   rule_category: Business Logic
   owner: Finansteam
 ```
@@ -320,30 +312,6 @@ Every non-null value in `source_column` must exist in the reference table **and*
     pk_column: Saksnummer
   severity: critical
   rule_category: Referential Integrity
-  owner: Saksteam
-```
-
----
-
-### `row_count_in_range`
-
-The table row count must be between `min_value` and `max_value` (inclusive).
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `min_value` | yes | Minimum acceptable row count |
-| `max_value` | yes | Maximum acceptable row count |
-
-```yaml
-- rule_id: PROC-030
-  name: Process table must not be empty or oversized
-  description: Row count sanity check to catch truncation or runaway loads.
-  expectation: row_count_in_range
-  parameters:
-    min_value: 1000
-    max_value: 5000000
-  severity: critical
-  rule_category: Completeness
   owner: Saksteam
 ```
 
@@ -472,16 +440,18 @@ Within each group, values in `event_column` must appear in the order defined by 
 
 ### `pairs_present`
 
-Within each group, both the start and stop markers of each required pair must exist.
+Within each group, checks that required pairs of events are both present. `mode` controls the direction enforced.
 
 | Parameter | Required | Notes |
 |---|---|---|
 | `event_column` | yes | Column holding the event/milestone values |
 | `group_column` | yes | Column identifying the group |
 | `required_pairs` | yes | List of `[start_marker, stop_marker]` pairs. The stop slot can be a list `[stop1, stop2]` — the pair is satisfied when any stop value is present |
+| `mode` | no | `both` (default) — flags groups missing either member. `stop_requires_start` — flags only groups that have a stop without the corresponding start |
 | `completion_gate` | no | Same structure as in `sequence_ordered` |
 
 ```yaml
+# Both directions required (default):
 - rule_id: PROC-051
   name: Every opened case must be closed
   description: A Received milestone must be paired with a Closed milestone.
@@ -494,30 +464,18 @@ Within each group, both the start and stop markers of each required pair must ex
   severity: high
   rule_category: Completeness
   owner: Saksteam
-```
 
----
-
-### `stops_paired_with_starts`
-
-A stop-type event must not exist in a group without the corresponding start-type event.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `event_column` | yes | Column holding the event/milestone values |
-| `group_column` | yes | Column identifying the group |
-| `pairs` | yes | List of `[start_marker, stop_marker]` pairs. Stop slot accepts a list for multi-stop form |
-
-```yaml
+# Stop implies start (one-way):
 - rule_id: PROC-052
   name: Closure cannot exist without an opening
   description: A Closed milestone is invalid if Received never occurred.
-  expectation: stops_paired_with_starts
+  expectation: pairs_present
   parameters:
     event_column: MilestoneType
     group_column: Saksnummer
-    pairs:
+    required_pairs:
       - [Received, Closed]
+    mode: stop_requires_start
   severity: critical
   rule_category: Business Logic
   owner: Saksteam
@@ -548,30 +506,6 @@ Every group must contain at least one row where `event_column` equals `value_to_
     value_to_check: Approved
     trigger: Case approval
   severity: critical
-  rule_category: Business Logic
-  owner: Saksteam
-```
-
----
-
-### `columns_excluded`
-
-No row may satisfy the forbidden-state `condition`. Any row matching the expression is a violation.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `condition` | yes | Spark SQL expression that identifies forbidden rows |
-| `pk_column` | no | Default: `id` |
-
-```yaml
-- rule_id: PROC-060
-  name: Active case cannot have both start and end null
-  description: An active case must have at least one date populated.
-  expectation: columns_excluded
-  parameters:
-    condition: "StartDate IS NULL AND ActualEndDate IS NULL"
-    pk_column: Saksnummer
-  severity: high
   rule_category: Business Logic
   owner: Saksteam
 ```
@@ -611,6 +545,8 @@ The aggregate of `aggregate_column` within each group must equal the value in `r
 ### `sql_violations`
 
 Runs a custom SQL query. Every row returned is treated as a violation — write the query to return only offending rows.
+
+> **Forbidden-state checks:** Use `sql_violations` with `SELECT <pk_column> FROM <schema.table> WHERE <forbidden_condition>` to express rules like "these two columns must never both be null."
 
 | Parameter | Required | Notes |
 |---|---|---|

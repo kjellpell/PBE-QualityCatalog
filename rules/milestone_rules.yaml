@@ -72,17 +72,16 @@ rules:
   owner: IT
 - rule_id: MIL-005
   name: Stop milestone without start milestone is invalid
-  description: 'A stop-type milestone cannot exist for a process that has no corresponding
+  description: A stop-type milestone cannot exist for a process that has no corresponding
     start-type milestone. This represents a broken lifecycle record that must be corrected.
-
-    '
-  expectation: stops_paired_with_starts
+  expectation: pairs_present
   parameters:
     event_column: Milepel
     group_column: prosess_id
-    pairs:
+    required_pairs:
     - - Startbehandling
       - Stoppbehandling
+    mode: stop_requires_start
   severity: high
   rule_category: Business Logic
   owner: IT
