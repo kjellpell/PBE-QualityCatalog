@@ -237,7 +237,82 @@ rules:
     owner: Saksteam
 ```
 
-Optional `catalog_filter` and `joins` follow the same contract validated in preflight.
+### `catalog_filter` — scope the source rows before rules run
+
+Applies a filter to the source table once, before any rules execute. All rules in the catalog see only the filtered rows. Two types are supported.
+
+**`date_range`** — keep rows where a date column falls within a rolling window:
+
+```yaml
+catalog_filter:
+  type: date_range
+  date_column: CreatedDate    # must exist in the source table
+  lookback_days: 90           # integer >= 0; rows older than this are excluded
+  include_nulls: true         # optional; also keeps rows where date_column IS NULL
+```
+
+**`custom`** — any valid Spark SQL predicate:
+
+```yaml
+catalog_filter:
+  type: custom
+  where_clause: "Status IN ('Open', 'Pending')"
+```
+
+Preflight checks that the type is one of the two allowed values, that required sub-keys are present, and (for `date_range`) that `date_column` exists in the source table.
+
+You can override or disable a YAML `catalog_filter` without touching the YAML file by setting `CATALOG_FILTER_OVERRIDES` in `QualityCatalogConfig.py`:
+
+```python
+CATALOG_FILTER_OVERRIDES = {
+    "Process": {                        # rule_group name
+        "type": "date_range",
+        "date_column": "ActualEndDate",
+        "lookback_days": 90,
+        "include_nulls": True,
+    },
+    "Invoice": None,                    # None disables the YAML filter entirely
+}
+```
+
+### `joins` — enrich the source table before rules run
+
+Joins one or more tables onto the source table before rules execute. Each entry in the list is applied in order. Rules then see the joined columns as if they were native to the source.
+
+Use this when a rule needs a column that lives in a related table rather than the source table itself.
+
+**Simple join on a shared column name:**
+
+```yaml
+joins:
+  - table: Saksbehandling.saker   # fully-qualified table name
+    on: Saksnummer                # column name shared by both tables
+    how: left                     # join type: left (default), inner, right, full
+    select:                       # optional — which columns to keep from the joined table
+      - Saksnummer
+      - Status
+      - Saksbehandler_kode
+```
+
+**Join on columns with different names in each table:**
+
+```yaml
+joins:
+  - table: HR.Employees
+    left_on: Saksbehandler_kode   # column in the source table
+    right_on: EmployeeCode        # column in the joined table
+    how: left
+    select:
+      - EmployeeCode
+      - IsActive
+      - Department
+```
+
+Key behaviours:
+- `how` defaults to `left` if omitted.
+- `select` is optional. If provided, only those columns are brought in from the joined table (the join key is automatically included if missing from the list).
+- Use `on` when both tables share the same column name. Use `left_on` + `right_on` when they differ.
+- A join config with no key (`on`, `left_on`, or `right_on`) is skipped with a warning during the run.
 
 ## Quality Checklist Before Save
 
