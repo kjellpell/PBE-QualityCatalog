@@ -155,13 +155,17 @@ Every row must satisfy `left_column <operator> right_column` (column vs column) 
 
 Exactly one of `right_column` or `right_value` must be provided.
 
+Use `filter_column` + `filter_values` to restrict evaluation to a subset of rows (IN list). Rows outside the filter are excluded and counted as passed.
+
 | Parameter | Required | Notes |
 |---|---|---|
 | `left_column` | yes | Left-hand column |
 | `right_column` | one of these | Right-hand column name |
 | `right_value` | one of these | Scalar numeric value to compare against |
 | `operator` | yes | `>`, `<`, `>=`, `<=`, `==`, `!=` |
-| `pk_column` | no | Default: `id` |
+| `filter_column` | no | Only evaluate rows where this column is IN `filter_values` |
+| `filter_values` | no | List of string values for the IN filter; required when `filter_column` is set |
+| `pk_column` | no | Default: catalog `pk_column` |
 
 ```yaml
 # Column vs column:
@@ -173,7 +177,6 @@ Exactly one of `right_column` or `right_value` must be provided.
     left_column: ActualEndDate
     right_column: StartDate
     operator: ">="
-    pk_column: Saksnummer
   severity: high
   owner: Saksteam
 
@@ -186,9 +189,24 @@ Exactly one of `right_column` or `right_value` must be provided.
     left_column: linje_belop
     right_value: 0
     operator: ">"
-    pk_column: Fakturanr
   severity: high
   owner: Finansteam
+
+# Column vs column, restricted to a subset of rows:
+- rule_id: FAS-008
+  name: opprinnelig_frist_dager must match frist_dager for relevant phase types
+  description: For specified phase types the original deadline must not differ from the current deadline.
+  expectation: comparison
+  parameters:
+    filter_column: indikator
+    filter_values:
+      - Byggesak 3 uker
+      - Byggesak 12 uker
+    left_column: opprinnelig_frist_dager
+    right_column: frist_dager
+    operator: "=="
+  severity: høy
+  owner: Teknologi
 ```
 
 ---
@@ -426,9 +444,9 @@ Within each group, values in `event_column` must appear in the order defined by 
     group_column: Saksnummer
     order_column: MilestoneDate
     expected_sequence:
-      - value: Received
-      - value: Reviewed
-      - value: Closed
+      - Received
+      - Reviewed
+      - Closed
     completion_gate:
       event_column: MilestoneType
       value: Closed

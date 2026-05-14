@@ -226,12 +226,16 @@ class ColumnComparisonExpectation:
     are evaluated (and, for column-vs-column mode, where both are non-null).
 
     YAML parameters (canonical names):
-      left_column   - name of the left-hand column
-      right_column  - name of the right-hand column (mutually exclusive with right_value)
-      right_value   - scalar numeric value to compare against (mutually exclusive with right_column)
-      operator      - comparison operator: >, <, >=, <=, ==, !=
-      pk_column     - primary key column used to identify violating rows
-                      (default: "id")
+      left_column    - name of the left-hand column
+      right_column   - name of the right-hand column (mutually exclusive with right_value)
+      right_value    - scalar numeric value to compare against (mutually exclusive with right_column)
+      operator       - comparison operator: >, <, >=, <=, ==, !=
+      filter_column  - (optional) restrict evaluation to rows where this column
+                       is IN filter_values
+      filter_values  - (optional) list of string values for the IN filter;
+                       required when filter_column is set
+      pk_column      - primary key column used to identify violating rows
+                       (default: "id")
 
     Exactly one of right_column or right_value must be provided.
     """
@@ -246,14 +250,14 @@ class ColumnComparisonExpectation:
     }
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
-        params    = rule.get("parameters", {})
-        col_a        = params.get("left_column")
-        col_b        = params.get("right_column")
-        right_val    = params.get("right_value")
-        operator     = params.get("operator")
-        pk_col       = params.get("pk_column", "id")
-        filter_col   = params.get("filter_column")
-        filter_vals  = params.get("filter_values", [])
+        params      = rule.get("parameters", {})
+        col_a       = params.get("left_column")
+        col_b       = params.get("right_column")
+        right_val   = params.get("right_value")
+        operator    = params.get("operator")
+        filter_col  = params.get("filter_column")
+        filter_vals = params.get("filter_values")
+        pk_col      = params.get("pk_column", "id")
 
         if not col_a or not operator:
             return (
@@ -330,13 +334,21 @@ class ColumnComparisonExpectation:
                 F.col(col_a).isNotNull() & F.col(col_b).isNotNull()
             )
 
+        if filter_col and filter_vals:
+            evaluated = evaluated.filter(F.col(filter_col).isin(filter_vals))
+
         total = evaluated.count()
 
         if total == 0:
+            filter_note = (
+                f" where {filter_col} IN ({', '.join(str(v) for v in filter_vals)})"
+                if filter_col and filter_vals
+                else ""
+            )
             skipped_msg = (
-                f"No non-null rows in '{col_a}' - skipped."
+                f"No non-null rows in '{col_a}'{filter_note} - skipped."
                 if scalar_mode
-                else f"No rows with both {col_a} and {col_b} populated - skipped."
+                else f"No rows with both {col_a} and {col_b} populated{filter_note} - skipped."
             )
             return (
                 {
