@@ -94,9 +94,20 @@ Use the correct operator family for the rule type.
 | `source_column` | Source-side reference field |
 | `max_days` | Max allowed days in state |
 
-## Business Patterns With Canonical Examples
+## Expectation Reference
 
-### Pattern 1: Required field
+Parameters and a ready-to-copy example for every expectation type.
+
+---
+
+### `not_null`
+
+Every row must have a non-null value in the target column.
+
+| Parameter | Level | Required | Notes |
+|---|---|---|---|
+| `column` | top-level | yes | Column to check |
+| `parameters.pk_column` | parameters | no | Column used to identify violating rows (default: `id`) |
 
 ```yaml
 - rule_id: PROC-011
@@ -109,7 +120,19 @@ Use the correct operator family for the rule type.
   owner: Saksteam
 ```
 
-### Pattern 2: Conditional required fields
+---
+
+### `not_null_when`
+
+All `checked_columns` must be non-null whenever `when_column` satisfies the trigger.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `when_column` | yes | Column that triggers the check |
+| `operator` | yes | `IS NULL`, `IS NOT NULL`, or `==` |
+| `value` | if `operator` is `==` | The value `when_column` must equal |
+| `checked_columns` | yes | List of columns that must be non-null when triggered |
+| `pk_column` | no | Default: `id` |
 
 ```yaml
 - rule_id: PROC-012
@@ -127,7 +150,18 @@ Use the correct operator family for the rule type.
   owner: Saksteam
 ```
 
-### Pattern 3: Compare two fields
+---
+
+### `comparison`
+
+Every row must satisfy `left_column <operator> right_column`. Rows where either column is NULL are skipped.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `left_column` | yes | Left-hand column |
+| `right_column` | yes | Right-hand column |
+| `operator` | yes | `>`, `<`, `>=`, `<=`, `==`, `!=` |
+| `pk_column` | no | Default: `id` |
 
 ```yaml
 - rule_id: PROC-013
@@ -144,7 +178,17 @@ Use the correct operator family for the rule type.
   owner: Saksteam
 ```
 
-### Pattern 4: Allowed values
+---
+
+### `value_in_list`
+
+All non-null values in the column must belong to an approved list.
+
+| Parameter | Level | Required | Notes |
+|---|---|---|---|
+| `column` | top-level or parameters | yes | Column to check |
+| `parameters.allowed_values` | parameters | yes | Non-empty list of permitted values |
+| `parameters.pk_column` | parameters | no | Default: same as `column` |
 
 ```yaml
 - rule_id: INV-010
@@ -161,7 +205,46 @@ Use the correct operator family for the rule type.
   owner: Finansteam
 ```
 
-### Pattern 5: Conditional value rule
+---
+
+### `greater_than`
+
+All non-null values in the column must be strictly greater than `threshold`.
+
+| Parameter | Level | Required | Notes |
+|---|---|---|---|
+| `column` | top-level or parameters | yes | Numeric column to check |
+| `parameters.threshold` | parameters | yes | Numeric lower bound (exclusive) |
+| `parameters.pk_column` | parameters | no | Default: same as `column` |
+
+```yaml
+- rule_id: INV-020
+  name: Invoice amount must be positive
+  description: Line amounts must be greater than zero.
+  expectation: greater_than
+  column: linje_belop
+  parameters:
+    threshold: 0
+    pk_column: Fakturanr
+  severity: high
+  rule_category: Business Logic
+  owner: Finansteam
+```
+
+---
+
+### `value_when`
+
+When `when_column <operator> value`, `required_column` must equal `required_value`.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `when_column` | yes | Column checked for the trigger condition |
+| `operator` | yes | `<`, `>`, `<=`, `>=`, `==`, `!=` |
+| `value` | yes | Threshold value for the trigger condition |
+| `required_column` | yes | Column that must equal `required_value` when triggered |
+| `required_value` | yes | The required value |
+| `pk_column` | no | Default: `id` |
 
 ```yaml
 - rule_id: INV-011
@@ -180,7 +263,48 @@ Use the correct operator family for the rule type.
   owner: Finansteam
 ```
 
-### Pattern 6: Active reference
+---
+
+### `reference_exists`
+
+Every non-null value in `column` must exist in `reference_table.reference_column`.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `column` | yes | Source column whose values are checked |
+| `reference_table` | yes | Fully-qualified reference table (e.g. `HR.Employees`) |
+| `reference_column` | yes | Column in the reference table holding valid values |
+| `pk_column` | no | Default: same as `column` |
+
+```yaml
+- rule_id: PROC-020
+  name: Case type must exist in reference
+  description: CaseType must reference a known type in the classification table.
+  expectation: reference_exists
+  parameters:
+    column: CaseType
+    reference_table: Config.CaseTypes
+    reference_column: TypeCode
+    pk_column: Saksnummer
+  severity: high
+  rule_category: Referential Integrity
+  owner: Saksteam
+```
+
+---
+
+### `reference_active`
+
+Every non-null value in `source_column` must exist in the reference table **and** match a row where `reference_active_column` equals `reference_active_value`.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `source_column` | yes | Source column whose values are checked |
+| `reference_table` | yes | Fully-qualified reference table |
+| `reference_column` | yes | Join column in the reference table |
+| `reference_active_column` | yes | Column holding the active flag |
+| `reference_active_value` | yes | Value that means "active" (string or boolean) |
+| `pk_column` | no | Default: same as `source_column` |
 
 ```yaml
 - rule_id: PROC-014
@@ -199,7 +323,293 @@ Use the correct operator family for the rule type.
   owner: Saksteam
 ```
 
-### Pattern 7: SQL violations
+---
+
+### `row_count_in_range`
+
+The table row count must be between `min_value` and `max_value` (inclusive).
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `min_value` | yes | Minimum acceptable row count |
+| `max_value` | yes | Maximum acceptable row count |
+
+```yaml
+- rule_id: PROC-030
+  name: Process table must not be empty or oversized
+  description: Row count sanity check to catch truncation or runaway loads.
+  expectation: row_count_in_range
+  parameters:
+    min_value: 1000
+    max_value: 5000000
+  severity: critical
+  rule_category: Completeness
+  owner: Saksteam
+```
+
+---
+
+### `combination_unique`
+
+The combination of `columns` must be unique across all rows.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `columns` | yes | Non-empty list of column names that must form a unique key |
+| `pk_column` | no | Default: first column in `columns` |
+
+```yaml
+- rule_id: INV-030
+  name: Invoice line must be unique per invoice
+  description: Each Fakturanr + LinjeNr combination must appear at most once.
+  expectation: combination_unique
+  parameters:
+    columns:
+      - Fakturanr
+      - LinjeNr
+    pk_column: Fakturanr
+  severity: critical
+  rule_category: Uniqueness
+  owner: Finansteam
+```
+
+---
+
+### `aggregate_threshold`
+
+An aggregate (`sum`, `count`, `avg`, `min`, `max`) of a column must satisfy `<operator> threshold`.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `column` | if `aggregate` is not `count` | Numeric column to aggregate |
+| `aggregate` | no | `sum`, `count`, `avg`, `min`, `max` (default: `sum`) |
+| `operator` | no | `>`, `<`, `>=`, `<=`, `==`, `!=` (default: `>=`) |
+| `threshold` | yes | The value the aggregate must satisfy |
+
+```yaml
+- rule_id: INV-031
+  name: Total invoice amount must be positive
+  description: The sum of all line amounts must be above zero.
+  expectation: aggregate_threshold
+  parameters:
+    column: linje_belop
+    aggregate: sum
+    operator: ">"
+    threshold: 0
+  severity: high
+  rule_category: Aggregate
+  owner: Finansteam
+```
+
+---
+
+### `state_duration_within_limit`
+
+Rows still in the open state must not have been open longer than `max_days`.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `start_column` | yes | Date/timestamp column marking when the state began |
+| `open_state_column` | yes | Column checked to decide if the row is still open |
+| `open_state_value` | no | Value that means "open". Omit (or set to `null`) to treat IS NULL as open |
+| `pk_column` | yes | Primary key column for violation reporting |
+| `max_days` | yes | Maximum allowed days in the open state (integer >= 0) |
+
+```yaml
+- rule_id: PROC-040
+  name: Open case must be resolved within 90 days
+  description: Cases without an end date must not remain open longer than 90 days.
+  expectation: state_duration_within_limit
+  parameters:
+    start_column: StartDate
+    open_state_column: ActualEndDate
+    pk_column: Saksnummer
+    max_days: 90
+  severity: high
+  rule_category: SLA
+  owner: Saksteam
+```
+
+---
+
+### `sequence_ordered`
+
+Within each group, values in `event_column` must appear in the order defined by `expected_sequence` (sorted by `order_column`).
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `event_column` | yes | Column holding the sequence step names |
+| `group_column` | yes | Column identifying the group |
+| `order_column` | yes | Column used to sort rows within the group |
+| `expected_sequence` | yes | Ordered list of step names. Plain strings are strict (no repeats). Use `{value: X, flexible: true}` dict form to allow consecutive repeats of a step |
+| `completion_gate` | no | Restrict evaluation to groups that have completed a gate step — sub-keys: `event_column`, `value`, `order_column` (optional) |
+
+```yaml
+- rule_id: PROC-050
+  name: Case milestones must occur in order
+  description: Received must precede Reviewed, which must precede Closed.
+  expectation: sequence_ordered
+  parameters:
+    event_column: MilestoneType
+    group_column: Saksnummer
+    order_column: MilestoneDate
+    expected_sequence:
+      - Received
+      - Reviewed
+      - Closed
+  severity: high
+  rule_category: Business Logic
+  owner: Saksteam
+```
+
+---
+
+### `pairs_present`
+
+Within each group, both the start and stop markers of each required pair must exist.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `event_column` | yes | Column holding the event/milestone values |
+| `group_column` | yes | Column identifying the group |
+| `required_pairs` | yes | List of `[start_marker, stop_marker]` pairs. The stop slot can be a list `[stop1, stop2]` — the pair is satisfied when any stop value is present |
+| `completion_gate` | no | Same structure as in `sequence_ordered` |
+
+```yaml
+- rule_id: PROC-051
+  name: Every opened case must be closed
+  description: A Received milestone must be paired with a Closed milestone.
+  expectation: pairs_present
+  parameters:
+    event_column: MilestoneType
+    group_column: Saksnummer
+    required_pairs:
+      - [Received, Closed]
+  severity: high
+  rule_category: Completeness
+  owner: Saksteam
+```
+
+---
+
+### `stops_paired_with_starts`
+
+A stop-type event must not exist in a group without the corresponding start-type event.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `event_column` | yes | Column holding the event/milestone values |
+| `group_column` | yes | Column identifying the group |
+| `pairs` | yes | List of `[start_marker, stop_marker]` pairs. Stop slot accepts a list for multi-stop form |
+
+```yaml
+- rule_id: PROC-052
+  name: Closure cannot exist without an opening
+  description: A Closed milestone is invalid if Received never occurred.
+  expectation: stops_paired_with_starts
+  parameters:
+    event_column: MilestoneType
+    group_column: Saksnummer
+    pairs:
+      - [Received, Closed]
+  severity: critical
+  rule_category: Business Logic
+  owner: Saksteam
+```
+
+---
+
+### `gate_complete`
+
+Every group must contain at least one row where `event_column` equals `value_to_check`.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `event_column` | yes | Column holding the event values |
+| `group_column` | yes | Column identifying the group |
+| `value_to_check` | yes | The required value that must be present in each group |
+| `order_column` | no | When provided, the gate row must also have a non-null value in this column |
+| `trigger` | no | Human-readable label used in violation details (default: `Approval completed`) |
+
+```yaml
+- rule_id: PROC-053
+  name: Every case must have an approval event
+  description: Each Saksnummer must have at least one Approved milestone.
+  expectation: gate_complete
+  parameters:
+    event_column: MilestoneType
+    group_column: Saksnummer
+    value_to_check: Approved
+    trigger: Case approval
+  severity: critical
+  rule_category: Business Logic
+  owner: Saksteam
+```
+
+---
+
+### `columns_excluded`
+
+No row may satisfy the forbidden-state `condition`. Any row matching the expression is a violation.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `condition` | yes | Spark SQL expression that identifies forbidden rows |
+| `pk_column` | no | Default: `id` |
+
+```yaml
+- rule_id: PROC-060
+  name: Active case cannot have both start and end null
+  description: An active case must have at least one date populated.
+  expectation: columns_excluded
+  parameters:
+    condition: "StartDate IS NULL AND ActualEndDate IS NULL"
+    pk_column: Saksnummer
+  severity: high
+  rule_category: Business Logic
+  owner: Saksteam
+```
+
+---
+
+### `group_aggregate_matches`
+
+The aggregate of `aggregate_column` within each group must equal the value in `reference_column` within a tolerance.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `group_column` | yes | Column identifying each group |
+| `aggregate_column` | yes | Numeric column to aggregate within each group |
+| `reference_column` | yes | Column holding the expected group total (must be joined in if it lives in another table) |
+| `aggregate` | no | `sum`, `count`, `avg`, `min`, `max` (default: `sum`) |
+| `tolerance` | no | Maximum allowed absolute difference (default: `0.01`) |
+
+```yaml
+- rule_id: INV-040
+  name: Invoice line totals must match header total
+  description: SUM(linje_belop) per invoice must equal Faktura_totalbelop.
+  expectation: group_aggregate_matches
+  parameters:
+    group_column: Fakturanr
+    aggregate_column: linje_belop
+    reference_column: Faktura_totalbelop
+    aggregate: sum
+    tolerance: 0.01
+  severity: critical
+  rule_category: Aggregate
+  owner: Finansteam
+```
+
+---
+
+### `sql_violations`
+
+Runs a custom SQL query. Every row returned is treated as a violation — write the query to return only offending rows.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `sql` | yes | SQL query; returned rows = violations |
+| `pk_column` | no | Column in the SQL result to use as the primary key value in violations |
 
 ```yaml
 - rule_id: INV-012
@@ -216,6 +626,8 @@ Use the correct operator family for the rule type.
   rule_category: Aggregate
   owner: Finansteam
 ```
+
+---
 
 ## Header Contract
 
