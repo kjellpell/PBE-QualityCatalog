@@ -105,9 +105,8 @@ rules:
   name: Process table must not be empty
   description: Zero rows indicates that the data load failed or all processes were
     unexpectedly deleted.
-  expectation: aggregate_threshold
+  expectation: row_count
   parameters:
-    aggregate: count
     operator: ">="
     threshold: 1
   severity: critical
@@ -116,9 +115,8 @@ rules:
 - rule_id: PROC-007b
   name: Process table must not be oversized
   description: Row count ceiling guards against runaway data loads.
-  expectation: aggregate_threshold
+  expectation: row_count
   parameters:
-    aggregate: count
     operator: "<="
     threshold: 10000000
   severity: critical

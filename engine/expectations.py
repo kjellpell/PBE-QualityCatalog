@@ -641,9 +641,7 @@ class ForeignKeyExpectation:
 # Module-level constants shared across multiple expectation classes
 # =============================================================================
 
-# Aggregate function map used by ValidateAggregateRuleExpectation and
-# ValidateGroupAggregateMatchExpectation.  Defined once here to avoid
-# duplication and ensure both classes stay in sync.
+# Aggregate function map used by ValidateGroupAggregateMatchExpectation.
 _AGGREGATE_FUNCTIONS = {
     "sum":   F.sum,
     "count": F.count,
@@ -658,20 +656,17 @@ _AGGREGATE_FUNCTIONS = {
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# validate_aggregate_rule
-# Generic aggregate validation: applies any aggregate function to a column and
-# compares the result to a threshold using any comparison operator.
-# More flexible replacement for expect_column_sum_to_equal.
+# row_count
+# Compares COUNT(*) of the table against a threshold.  Used to guard against
+# empty tables (load failure) or runaway data loads.
 # -----------------------------------------------------------------------------
-class ValidateAggregateRuleExpectation:
+class RowCountExpectation:
     """
-    Computes an aggregate over a column and validates it against a threshold.
+    Validates that COUNT(*) of the loaded DataFrame satisfies a threshold.
 
     YAML parameters:
-      column    - numeric column to aggregate (omit or use count with no column)
-      aggregate - aggregation function: sum, count, avg, min, max
       operator  - comparison operator: >, <, >=, <=, ==, !=
-      threshold - the value the aggregate must satisfy
+      threshold - integer or float the row count must satisfy
     """
 
     _OPS = {
@@ -685,23 +680,12 @@ class ValidateAggregateRuleExpectation:
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params    = rule.get("parameters", {})
-        column    = params.get("column")
-        aggregate = str(params.get("aggregate", "sum")).lower()
         operator  = params.get("operator", ">=")
         threshold = params.get("threshold")
 
         if threshold is None:
             return (
                 _error_result("Parameter 'threshold' is required."),
-                _empty_violations(spark),
-            )
-
-        if aggregate not in _AGGREGATE_FUNCTIONS:
-            return (
-                _error_result(
-                    f"Unsupported aggregate '{aggregate}'. "
-                    f"Allowed: {sorted(_AGGREGATE_FUNCTIONS)}"
-                ),
                 _empty_violations(spark),
             )
 
@@ -714,30 +698,11 @@ class ValidateAggregateRuleExpectation:
                 _empty_violations(spark),
             )
 
-        if aggregate != "count":
-            if not column or column not in df.columns:
-                return (
-                    _error_result(
-                        f"Column '{column}' not found in DataFrame."
-                        if column
-                        else "Parameter 'column' is required when aggregate != 'count'."
-                    ),
-                    _empty_violations(spark),
-                )
-            agg_row = df.agg(
-                F.count(F.lit(1)).alias("_total"),
-                _AGGREGATE_FUNCTIONS[aggregate](F.col(column).cast("double")).alias("_agg"),
-            ).collect()[0]
-            total  = agg_row["_total"]
-            actual = float(agg_row["_agg"]) if agg_row["_agg"] is not None else 0.0
-        else:
-            total  = df.count()
-            actual = float(total)
-
+        total       = df.count()
+        actual      = float(total)
         threshold_f = float(threshold)
         passed      = self._OPS[operator](actual, threshold_f)
-        col_label   = column if column else "*"
-        condition   = f"{aggregate.upper()}({col_label}) {operator} {threshold_f}"
+        condition   = f"COUNT(*) {operator} {threshold_f}"
 
         result = {
             "total_rows":  total,
@@ -746,9 +711,9 @@ class ValidateAggregateRuleExpectation:
             "success_pct": 100.0 if passed else 0.0,
             "status":      "PASSED" if passed else "FAILED",
             "details": (
-                f"{aggregate.upper()}({col_label}) = {actual} satisfies {condition}."
+                f"COUNT(*) = {total} satisfies {condition}."
                 if passed
-                else f"{aggregate.upper()}({col_label}) = {actual}; expected {condition}."
+                else f"COUNT(*) = {total}; expected {condition}."
             ),
         }
         return result, _empty_violations(spark)
@@ -1986,7 +1951,7 @@ CUSTOM_EXPECTATION_REGISTRY = {
     # -------------------------------------------------------------------------
     # Aggregate validators
     # -------------------------------------------------------------------------
-    "aggregate_threshold":                  ValidateAggregateRuleExpectation,
+    "row_count":                            RowCountExpectation,
     "combination_unique":                   UniqueColumnCombinationExpectation,
 
     # -------------------------------------------------------------------------
