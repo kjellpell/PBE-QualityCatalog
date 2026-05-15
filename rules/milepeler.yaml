@@ -8,19 +8,12 @@ catalog_filter:
   where_clause: fagsystem = 'PB360'
 rules:
 - rule_id: MIL-001
-  name: Milepel kan ikke være null
-  description: 'Hver milepelrad må identifisere typen/navnet på milepelen. En blank milepel
-    betyr at posten ikke kan kategoriseres eller sekvensieres.'
+  name: Verdier kan ikke være null
+  description: 'Verdier kan ikke være null.'
   expectation: not_null
-  column: milestone_title
-  severity: kritisk
-  owner: Teknologi
-- rule_id: MIL-002
-  name: prosess_id kan ikke være null
-  description: 'Hver milepelrad må være knyttet til en prosess via prosess_id. En
-    milepel uten tilknytning kan ikke tilordnes noen fase.'
-  expectation: not_null
-  column: to_stage_recno
+  column: 
+    - milestone_title
+    - to_stage_recno
   severity: kritisk
   owner: Teknologi
 - rule_id: MIL-004
