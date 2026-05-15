@@ -125,7 +125,7 @@ _RULE_COLUMN_KEYS = {
 _REQUIRED_PARAMETER_KEYS: dict[str, list[str]] = {
     "not_null":                   ["column"],
     "not_null_when":              ["when_column", "checked_columns"],
-    "comparison":                 ["left_column", "right_column", "operator"],
+    "comparison":                 ["left_column", "operator"],
     "value_when":                 ["when_column", "required_column", "required_value"],
     "reference_exists":           ["column", "reference_table", "reference_column"],
     "reference_active":           ["source_column", "reference_table", "reference_column",
