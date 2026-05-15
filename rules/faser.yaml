@@ -16,17 +16,12 @@ joins:
   - saksansvarlig_kode
 rules:
 - rule_id: FAS-001
-  name: Saksnummer kan ikke være null
-  description: 'Alle rader i faser må ha et gyldig saksnummer.'
+  name: Verdier kan ikke være null.
+  description: 'Alle rader må ha gyldig verdi.'
   expectation: not_null
-  column: to_case_recno
-  severity: kritisk
-  owner: Teknologi
-- rule_id: FAS-002
-  name: Stage_recno kan ikke være null
-  description: 'Alle rader i faser må ha et gyldig stage_recno.'
-  expectation: not_null
-  column: stage_recno
+  column: 
+    - to_case_recno
+    - stage_recno
   severity: kritisk
   owner: Teknologi
 - rule_id: FAS-003
@@ -94,6 +89,12 @@ rules:
       - Delesak 12 uker
       - Byggesak 3 uker
       - Byggesak 12 uker
+      - Endringstillatelse
+      - Igangsettingstillatelse
+      - Brukstillatelse
+      - Ferdigattest
+      - Seksjonering
+      - Reseksjonering
     pk_column: stage_recno
   severity: høy
   owner: Teknologi
