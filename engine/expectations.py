@@ -186,7 +186,7 @@ class ExpectColumnValuesToNotBeNullExpectation:
             F.lit(column).alias("violated_column"),
             F.lit(None).cast("string").alias("actual_value"),
             F.lit("NOT NULL").alias("expected_condition"),
-            F.concat(F.lit("Column '"), F.lit(column), F.lit("' is NULL")).alias("violation_detail"),
+            F.lit("Verdi mangler.").alias("violation_detail"),
         )
 
         result = {
@@ -336,11 +336,7 @@ class ColumnComparisonExpectation:
 
         if scalar_mode:
             actual_val_expr = F.col(col_a).cast("string")
-            detail_expr = F.concat(
-                F.lit(f"{col_a} = "),
-                F.col(col_a).cast("string"),
-                F.lit(f": condition '{condition}' not satisfied"),
-            )
+            detail_expr = F.lit(f"er ikke {operator} {right_val_f}")
         else:
             actual_val_expr = F.concat(
                 F.col(col_a).cast("string"),
@@ -348,11 +344,9 @@ class ColumnComparisonExpectation:
                 F.col(col_b).cast("string"),
             )
             detail_expr = F.concat(
-                F.lit(f"{col_a} = "),
                 F.col(col_a).cast("string"),
-                F.lit(f", {col_b} = "),
+                F.lit(f" {operator} "),
                 F.col(col_b).cast("string"),
-                F.lit(f": condition '{condition}' not satisfied"),
             )
 
         violations_out = violations_df.select(
@@ -514,7 +508,7 @@ class UniqueColumnCombinationExpectation:
             F.lit(col_combo).alias("violated_column"),
             F.concat_ws("|", *[F.col(c).cast("string") for c in columns]).alias("actual_value"),
             F.lit(condition).alias("expected_condition"),
-            F.lit(f"Duplicate combination of ({col_combo})").alias("violation_detail"),
+            F.lit("Dupliserte rader funnet.").alias("violation_detail"),
         )
 
         result = {
@@ -616,9 +610,9 @@ class ForeignKeyExpectation:
             F.col(column).cast("string").alias("actual_value"),
             F.lit(f"{column} must exist in {ref_table}.{ref_col}").alias("expected_condition"),
             F.concat(
-                F.lit(f"Value '"),
+                F.lit("'"),
                 F.col(column).cast("string"),
-                F.lit(f"' not found in {ref_table}.{ref_col}"),
+                F.lit("' ble ikke funnet i referansetabellen."),
             ).alias("violation_detail"),
         )
 
@@ -806,9 +800,8 @@ class ValidateNotNullWhenExpectation:
             F.lit(None).cast("string").alias("actual_value"),
             F.lit(expected_cond).alias("expected_condition"),
             F.concat(
-                F.lit(f"Condition '{cond_label}' is met but "),
+                F.lit("Følgende påkrevde felter mangler verdier: "),
                 F.lit(check_cols_str),
-                F.lit(" contain NULL value(s)"),
             ).alias("violation_detail"),
         )
 
@@ -1009,16 +1002,11 @@ class ValidateSequenceOrderExpectation:
             ).alias("actual_value"),
             F.lit(f"Values must appear in sequence: {seq_str}").alias("expected_condition"),
             F.concat(
-                F.lit(f"For {group_col}='"),
-                F.col(group_col).cast("string"),
-                F.lit(f"', {value_col} sequence order violated"),
-                F.lit(f" (first seen: '"),
+                F.lit("Rekkefølgebrudd: '"),
                 F.col("_first_val").cast("string"),
-                F.lit(f"' ({sort_col}="),
-                F.col("_first_sort").cast("string"),
-                F.lit(f", last seen: '"),
+                F.lit("' ble registrert etter '"),
                 F.col("_last_val").cast("string"),
-                F.lit("')"),
+                F.lit("', men forventet rekkefølge er omvendt."),
             ).alias("violation_detail"),
         )
 
@@ -1150,10 +1138,8 @@ class ValidatePairedPresenceExpectation:
                     f"'{start_type}' must exist whenever any of ({stop_label}) is present "
                     f"for the same {group_col}"
                 )
-                detail_expr = F.concat(
-                    F.lit(f"One of ({stop_label}) present but '{start_type}' missing "
-                          f"for {group_col}='"),
-                    F.col(group_col).cast("string"), F.lit("'"),
+                detail_expr = F.lit(
+                    f"En av {stop_label} er tilstede, men '{start_type}' mangler."
                 )
                 actual_expr = F.lit(stop_label)
             else:
@@ -1164,17 +1150,9 @@ class ValidatePairedPresenceExpectation:
                 )
                 detail_expr = F.when(
                     F.col(has_start) & ~F.col("_has_any_stop"),
-                    F.concat(
-                        F.lit(f"'{start_type}' present but none of ({stop_label}) found "
-                              f"for {group_col}='"),
-                        F.col(group_col).cast("string"), F.lit("'"),
-                    ),
+                    F.lit(f"'{start_type}' er tilstede, men {stop_label} mangler."),
                 ).otherwise(
-                    F.concat(
-                        F.lit(f"One of ({stop_label}) present but '{start_type}' missing "
-                              f"for {group_col}='"),
-                        F.col(group_col).cast("string"), F.lit("'"),
-                    ),
+                    F.lit(f"En av {stop_label} er tilstede, men '{start_type}' mangler."),
                 )
                 actual_expr = (
                     F.when(F.col(has_start), F.lit(start_type))
@@ -1304,12 +1282,8 @@ class ValidateGateExpectation:
             F.lit(value_col).alias("violated_column"),
             F.lit(None).cast("string").alias("actual_value"),
             F.lit(expected_cond).alias("expected_condition"),
-            F.concat(
-                F.lit(f"Gate '{trigger}': {group_col}='"),
-                F.col(group_col).cast("string"),
-                F.lit(
-                    f"' does not have a row where {value_col} = '{value_to_check}'"
-                ),
+            F.lit(
+                f"Påkrevd hendelse '{value_to_check}' mangler (gate: '{trigger}')."
             ).alias("violation_detail"),
         )
 
@@ -1423,9 +1397,9 @@ class ValidateConditionalColumnValueExpectation:
             F.coalesce(F.col(required_col).cast("string"), F.lit("NULL")).alias("actual_value"),
             F.lit(expected).alias("expected_condition"),
             F.concat(
-                F.lit(f"Condition '{cond_label}' is met but {required_col} is '"),
+                F.lit("Verdi er '"),
                 F.coalesce(F.col(required_col).cast("string"), F.lit("NULL")),
-                F.lit(f"' instead of '{required_val}'"),
+                F.lit(f"', forventet '{required_val}'"),
             ).alias("violation_detail"),
         )
 
@@ -1536,12 +1510,12 @@ class ValidateGroupAggregateMatchExpectation:
             F.col("_agg_val").cast("string").alias("actual_value"),
             F.lit(expected_cond).alias("expected_condition"),
             F.concat(
-                F.lit(f"{group_col} '"), F.col(group_col).cast("string"),
-                F.lit(f"': {aggregate.upper()}({agg_col}) = "),
+                F.lit("Kalkulert: "),
                 F.col("_agg_val").cast("string"),
-                F.lit(f", {ref_col} = "),
+                F.lit(", forventet: "),
                 F.col(ref_col).cast("string"),
-                F.lit(", diff = "), F.col("diff").cast("string"),
+                F.lit(", differanse: "),
+                F.col("diff").cast("string"),
             ).alias("violation_detail"),
         )
 
@@ -1681,9 +1655,9 @@ class ValidateActiveReferenceExpectation:
             F.col(src_col).cast("string").alias("actual_value"),
             F.lit(expected_cond).alias("expected_condition"),
             F.concat(
-                F.lit("Value '"),
+                F.lit("Verdi '"),
                 F.col(src_col).cast("string"),
-                F.lit(f"' not found or inactive in {ref_table}.{ref_col}"),
+                F.lit("' ble ikke funnet eller er inaktiv i referansetabellen."),
             ).alias("violation_detail"),
         )
 
@@ -1812,11 +1786,11 @@ class ValidateTimeInStateExpectation:
             F.col("_days_open").cast("string").alias("actual_value"),
             F.lit(expected_cond).alias("expected_condition"),
             F.concat(
-                F.lit("Open for "),
+                F.lit("Åpen i "),
                 F.col("_days_open").cast("string"),
-                F.lit(" days (started "),
+                F.lit(" dager (startet "),
                 F.col(start_col).cast("string"),
-                F.lit(f"), exceeds limit of {max_days} days"),
+                F.lit(f"), overstiger grensen på {max_days} dager."),
             ).alias("violation_detail"),
         )
 
@@ -1883,9 +1857,9 @@ class ValueInListExpectation:
             F.col(column).cast("string").alias("actual_value"),
             F.lit(condition).alias("expected_condition"),
             F.concat(
-                F.lit("Value '"),
+                F.lit("Verdi '"),
                 F.col(column).cast("string"),
-                F.lit(f"' not in allowed list: {allowed_strs}"),
+                F.lit("' er ikke tillatt."),
             ).alias("violation_detail"),
         )
 
