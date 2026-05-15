@@ -538,6 +538,38 @@ The aggregate of `aggregate_column` within each group must equal the value in `r
 
 ---
 
+### `validate_column_exclusions`
+
+Flags every row that satisfies a forbidden-state condition. Use this instead of `sql_violations` when the condition can be expressed as a Spark SQL predicate against the catalog's source table — it is simpler, and the `catalog_filter` is already applied so you do not need to repeat the table name or schema filter.
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `condition` | yes | Spark SQL expression; any row matching it is a violation |
+| `pk_column` | no | Default: `id` |
+| `show_columns` | no | List of columns whose actual values appear in `violation_detail` |
+
+```yaml
+- rule_id: FAS-008
+  name: Opprinnelig frist og frist_dager må stemme overens
+  description: >
+    For the four indikator types, opprinnelig_frist must equal frist_dager.
+  expectation: validate_column_exclusions
+  parameters:
+    pk_column: stage_recno
+    condition: >-
+      indikator IN ('Delesak 3 uker', 'Delesak 12 uker', 'Byggesak 3 uker',
+      'Byggesak 12 uker') AND opprinnelig_frist IS NOT NULL AND frist_dager
+      IS NOT NULL AND opprinnelig_frist != frist_dager
+    show_columns:
+      - indikator
+      - opprinnelig_frist
+      - frist_dager
+  severity: høy
+  owner: Teknologi
+```
+
+---
+
 ### `sql_violations`
 
 Runs a custom SQL query. Every row returned is treated as a violation — write the query to return only offending rows.
