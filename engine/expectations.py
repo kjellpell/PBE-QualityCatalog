@@ -236,11 +236,13 @@ class ColumnComparisonExpectation:
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params    = rule.get("parameters", {})
-        col_a     = params.get("left_column")
-        col_b     = params.get("right_column")
-        right_val = params.get("right_value")
-        operator  = params.get("operator")
-        pk_col    = params.get("pk_column", "id")
+        col_a        = params.get("left_column")
+        col_b        = params.get("right_column")
+        right_val    = params.get("right_value")
+        operator     = params.get("operator")
+        pk_col       = params.get("pk_column", "id")
+        filter_col   = params.get("filter_column")
+        filter_vals  = params.get("filter_values", [])
 
         if not col_a or not operator:
             return (
@@ -286,6 +288,14 @@ class ColumnComparisonExpectation:
                 ),
                 _empty_violations(spark),
             )
+
+        if filter_col and filter_vals:
+            if filter_col not in df.columns:
+                return (
+                    _error_result(f"Column '{filter_col}' not found in DataFrame."),
+                    _empty_violations(spark),
+                )
+            df = df.filter(F.col(filter_col).isin([str(v) for v in filter_vals]))
 
         scalar_mode = right_val is not None
 
@@ -1911,7 +1921,6 @@ class ValidateColumnExclusionsExpectation:
         params       = rule.get("parameters", {})
         condition    = params.get("condition")
         pk_col       = params.get("pk_column", "id")
-        show_cols    = params.get("show_columns", [])
 
         if not condition:
             return (
@@ -1940,14 +1949,7 @@ class ValidateColumnExclusionsExpectation:
             else F.lit(None).cast("string")
         )
 
-        valid_show = [c for c in show_cols if c in df.columns]
-        if valid_show:
-            detail_expr = F.concat_ws(", ", *[
-                F.concat(F.lit(f"{c}: "), F.coalesce(F.col(c).cast("string"), F.lit("null")))
-                for c in valid_show
-            ])
-        else:
-            detail_expr = F.lit("Forbudt tilstand funnet.")
+        detail_expr = F.lit("Forbudt tilstand funnet.")
 
         violations_out = violations_df.select(
             pk_expr.alias("primary_key_value"),
