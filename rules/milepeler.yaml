@@ -8,12 +8,14 @@ catalog_filter:
   where_clause: fagsystem = 'PB360'
 rules:
 - rule_id: MIL-001
-  name: Verdier kan ikke være null
-  description: 'Verdier kan ikke være null.'
+  name: Milepeltittel og faserelatering kan ikke være null
+  description: 'Hver milepelrad må ha en gyldig milepeltittel og faserelatering.
+    Manglende verdier gjør at posten ikke kan kategoriseres eller tilordnes noen fase.'
   expectation: not_null
-  column: 
-    - milestone_title
-    - to_stage_recno
+  parameters:
+    columns:
+      - milestone_title
+      - to_stage_recno
   severity: kritisk
   owner: Teknologi
 - rule_id: MIL-004

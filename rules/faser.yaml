@@ -16,15 +16,15 @@ joins:
   - saksansvarlig_kode
 rules:
 - rule_id: FAS-001
-  name: Verdier kan ikke være null.
-  description: 'Alle rader må ha gyldig verdi.'
+  name: Saksnummer og stage_recno kan ikke være null
+  description: 'Alle rader i faser må ha et gyldig saksnummer og stage_recno.'
   expectation: not_null
-  column: 
-    - to_case_recno
-    - stage_recno
+  parameters:
+    columns:
+      - to_case_recno
+      - stage_recno
   severity: kritisk
   owner: Teknologi
-- rule_id: FAS-002
   name: Stage_recno må være unik på tvers av alle faser
   description: 'Dupliserte stage_recnoer indikerer et problem med dataregistrering.'
   expectation: combination_unique
@@ -106,5 +106,15 @@ rules:
       - Seksjonering
       - Reseksjonering
     pk_column: stage_recno
+  severity: høy
+  owner: Teknologi
+- rule_id: FAS-009
+  name: decisiondate kan ikke være lavere enn sluttdato 
+  description: 'For ferdige faser må decisiondate ikke være tidligere enn sluttdato.'
+  expectation: comparison
+  parameters:
+    left_column: decisiondate
+    right_column: seneste_stoppmilepael_dato
+    operator: '>='
   severity: høy
   owner: Teknologi

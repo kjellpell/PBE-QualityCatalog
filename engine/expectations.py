@@ -143,24 +143,29 @@ def _resolve_gate_groups(df: DataFrame, gate: dict, group_col: str):
 # -----------------------------------------------------------------------------
 class ExpectColumnValuesToNotBeNullExpectation:
     """
-    Validates that every row has a non-null value in the target column.
+    Validates that every row has a non-null value in each listed column.
 
-    YAML fields:
-      column                 - target column (top-level or parameters.column)
-      parameters.pk_column   - optional PK column for violations (default: id)
+    YAML parameters:
+      columns    - block list of column names to check (required)
+      pk_column  - primary key column for violation rows (default: catalog pk_column)
+
+    One violation row is emitted per (primary key, failing column).
+    The rule is PASSED only if all listed columns are non-null in every row.
+    Columns with different severities must use separate rules.
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
-        params = rule.get("parameters", {})
-        column = rule.get("column") or params.get("column")
-        pk_col = params.get("pk_column", "id")
+        params   = rule.get("parameters", {})
+        columns  = params.get("columns")
+        pk_col   = params.get("pk_column", "id")
 
-        if not column:
+        if not columns or not isinstance(columns, list):
             return (
-                _error_result("Missing required field 'column' for not-null expectation."),
+                _error_result("'columns' (list) is required for not_null."),
                 _empty_violations(spark),
             )
 
+<<<<<<< HEAD
         columns = column if isinstance(column, list) else [column]
 
         missing = [c for c in columns if c not in df.columns]
@@ -174,12 +179,22 @@ class ExpectColumnValuesToNotBeNullExpectation:
         if total == 0:
             return _passed_result(0), _empty_violations(spark)
 
+=======
+        missing_cols = [c for c in columns if c not in df.columns]
+        if missing_cols:
+            return (
+                _error_result(f"Column(s) not found in DataFrame: {missing_cols}"),
+                _empty_violations(spark),
+            )
+
+>>>>>>> 3258c39 (feat(not_null): replace column with columns list for multi-column checks)
         pk_expr = (
             F.col(pk_col).cast("string")
             if pk_col in df.columns
             else F.lit(None).cast("string")
         )
 
+<<<<<<< HEAD
         violation_dfs = []
         total_failed = 0
         for col in columns:
@@ -199,8 +214,55 @@ class ExpectColumnValuesToNotBeNullExpectation:
         violations_out = reduce(lambda a, b: a.unionByName(b), violation_dfs)
         checked = total * len(columns)
         passed  = checked - total_failed
+=======
+        total = df.count()
+        if total == 0:
+            return _passed_result(0), _empty_violations(spark)
+
+        per_col_viol_dfs = []
+        col_fail_counts  = {}
+        for col in columns:
+            viol_df = df.filter(F.col(col).isNull())
+            n_fail  = viol_df.count()
+            col_fail_counts[col] = n_fail
+            if n_fail > 0:
+                per_col_viol_dfs.append(
+                    viol_df.select(
+                        pk_expr.alias("primary_key_value"),
+                        F.lit(col).alias("violated_column"),
+                        F.lit(None).cast("string").alias("actual_value"),
+                        F.lit("NOT NULL").alias("expected_condition"),
+                        F.concat(F.lit("Column '"), F.lit(col), F.lit("' is NULL"))
+                         .alias("violation_detail"),
+                    )
+                )
+
+        total_failed = sum(col_fail_counts.values())
+        n_cols       = len(columns)
+        total_checks = total * n_cols
+        total_passed = total_checks - total_failed
+
+        violations_out = (
+            reduce(lambda a, b: a.unionByName(b), per_col_viol_dfs)
+            if per_col_viol_dfs
+            else _empty_violations(spark)
+        )
+>>>>>>> 3258c39 (feat(not_null): replace column with columns list for multi-column checks)
+
+        cols_label = ", ".join(f"'{c}'" for c in columns)
+        if total_failed > 0:
+            breakdown = ", ".join(
+                f"{c}: {n}" for c, n in col_fail_counts.items() if n > 0
+            )
+            details = (
+                f"{total_failed} NULL value(s) across [{cols_label}]. "
+                f"Breakdown: {breakdown}."
+            )
+        else:
+            details = f"All rows non-null across [{cols_label}]."
 
         result = {
+<<<<<<< HEAD
             "total_rows":  checked,
             "passed_rows": passed,
             "failed_rows": total_failed,
@@ -211,6 +273,14 @@ class ExpectColumnValuesToNotBeNullExpectation:
                 if total_failed > 0
                 else f"All {total} rows have non-null values in {columns}."
             ),
+=======
+            "total_rows":  total_checks,
+            "passed_rows": total_passed,
+            "failed_rows": total_failed,
+            "success_pct": _safe_pct(total_passed, total_checks),
+            "status":      "PASSED" if total_failed == 0 else "FAILED",
+            "details":     details,
+>>>>>>> 3258c39 (feat(not_null): replace column with columns list for multi-column checks)
         }
         return result, violations_out
 

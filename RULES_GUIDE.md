@@ -102,21 +102,38 @@ Parameters and a ready-to-copy example for every expectation type.
 
 ### `not_null`
 
-Every row must have a non-null value in the target column.
+Every row must have a non-null value in each listed column. One violation row is emitted
+per (primary key, failing column). The rule is PASSED only if all listed columns are
+non-null in all rows. Columns that need different severities must use separate rules.
 
-| Parameter | Level | Required | Notes |
-|---|---|---|---|
-| `column` | top-level | yes | Column to check |
-| `parameters.pk_column` | parameters | no | Column used to identify violating rows (default: catalog `pk_column`) |
+| Parameter | Required | Notes |
+|---|---|---|
+| `columns` | yes | Block list of column names to check |
+| `pk_column` | no | Default: catalog `pk_column` |
 
 ```yaml
+# Single column:
 - rule_id: PROC-011
   name: StartDate must be present
   description: Every process requires a start date for reporting and SLA tracking.
   expectation: not_null
-  column: StartDate
+  parameters:
+    columns:
+      - StartDate
   severity: high
   owner: Saksteam
+
+# Multiple columns (same severity):
+- rule_id: PROC-012
+  name: Required identifiers cannot be null
+  description: Every row must have both a case number and a process ID.
+  expectation: not_null
+  parameters:
+    columns:
+      - case_recno
+      - prosess_id
+  severity: kritisk
+  owner: Teknologi
 ```
 
 ---

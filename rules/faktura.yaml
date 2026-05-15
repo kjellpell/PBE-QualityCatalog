@@ -9,7 +9,9 @@ rules:
   description: 'Hver fakturalinje må referere til et fakturanummer. En null Fakturanr
     hindrer linjen fra å bli sporet til sin faktura.'
   expectation: not_null
-  column: fakturanr
+  parameters:
+    columns:
+      - fakturanr
   severity: kritisk
   owner: Styring
 - rule_id: FAK-002
@@ -17,7 +19,9 @@ rules:
   description: 'Hver fakturalinje må ha et beløp registrert. Et null beløp gjør det
     umulig å avstemme fakturaen.'
   expectation: not_null
-  column: linje_belop
+  parameters:
+    columns:
+      - linje_belop
   severity: høy
   owner: Styring
 - rule_id: FAK-003
