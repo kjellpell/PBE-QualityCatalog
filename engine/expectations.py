@@ -161,9 +161,12 @@ class ExpectColumnValuesToNotBeNullExpectation:
                 _empty_violations(spark),
             )
 
-        if column not in df.columns:
+        columns = column if isinstance(column, list) else [column]
+
+        missing = [c for c in columns if c not in df.columns]
+        if missing:
             return (
-                _error_result(f"Column '{column}' not found in DataFrame."),
+                _error_result(f"Column(s) not found in DataFrame: {missing}"),
                 _empty_violations(spark),
             )
 
@@ -171,34 +174,42 @@ class ExpectColumnValuesToNotBeNullExpectation:
         if total == 0:
             return _passed_result(0), _empty_violations(spark)
 
-        violations_df = df.filter(F.col(column).isNull())
-        failed = violations_df.count()
-        passed = total - failed
-
         pk_expr = (
             F.col(pk_col).cast("string")
             if pk_col in df.columns
             else F.lit(None).cast("string")
         )
 
-        violations_out = violations_df.select(
-            pk_expr.alias("primary_key_value"),
-            F.lit(column).alias("violated_column"),
-            F.lit(None).cast("string").alias("actual_value"),
-            F.lit("NOT NULL").alias("expected_condition"),
-            F.lit("Verdi mangler.").alias("violation_detail"),
-        )
+        violation_dfs = []
+        total_failed = 0
+        for col in columns:
+            col_viols = df.filter(F.col(col).isNull())
+            col_failed = col_viols.count()
+            total_failed += col_failed
+            violation_dfs.append(
+                col_viols.select(
+                    pk_expr.alias("primary_key_value"),
+                    F.lit(col).alias("violated_column"),
+                    F.lit(None).cast("string").alias("actual_value"),
+                    F.lit("NOT NULL").alias("expected_condition"),
+                    F.lit("Verdi mangler.").alias("violation_detail"),
+                )
+            )
+
+        violations_out = reduce(lambda a, b: a.unionByName(b), violation_dfs)
+        checked = total * len(columns)
+        passed  = checked - total_failed
 
         result = {
-            "total_rows": total,
+            "total_rows":  checked,
             "passed_rows": passed,
-            "failed_rows": failed,
-            "success_pct": _safe_pct(passed, total),
-            "status": "PASSED" if failed == 0 else "FAILED",
+            "failed_rows": total_failed,
+            "success_pct": _safe_pct(passed, checked),
+            "status":      "PASSED" if total_failed == 0 else "FAILED",
             "details": (
-                f"{failed} row(s) have NULL in '{column}'."
-                if failed > 0
-                else f"All {total} rows have non-null '{column}'."
+                f"{total_failed} null value(s) found across {columns}."
+                if total_failed > 0
+                else f"All {total} rows have non-null values in {columns}."
             ),
         }
         return result, violations_out
