@@ -60,3 +60,23 @@ rules:
     operator: '>='
   severity: høy
   owner: Teknologi
+- rule_id: FAS-006
+  name: Tidsbruk kan ikke være negativ
+  description: 'Tidsbruk må være større enn eller lik 0.'
+  expectation: comparison
+  parameters:
+    left_column: tidsbruk
+    right_value: 0
+    operator: '>='
+  severity: høy
+  owner: Teknologi
+- rule_id: FAS-007
+  name: Bransjetid kan ikke være negativ
+  description: 'Bransjetid må være større enn eller lik 0.'
+  expectation: comparison
+  parameters:
+    left_column: bransjetid
+    right_value: 0
+    operator: '>='
+  severity: høy
+  owner: Teknologi
