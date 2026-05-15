@@ -153,7 +153,11 @@ def _extract_rule_columns(rule: dict) -> list[str]:
 
     # Top-level column key
     if "column" in rule:
-        cols.append(rule["column"])
+        val = rule["column"]
+        if isinstance(val, list):
+            cols.extend(v for v in val if isinstance(v, str) and v)
+        elif isinstance(val, str) and val:
+            cols.append(val)
 
     for key in _RULE_COLUMN_KEYS:
         val = params.get(key)
