@@ -24,7 +24,7 @@ rules:
     - stage_recno
   severity: kritisk
   owner: Teknologi
-- rule_id: FAS-003
+- rule_id: FAS-002
   name: Stage_recno må være unik på tvers av alle faser
   description: 'Dupliserte stage_recnoer indikerer et problem med dataregistrering.'
   expectation: combination_unique
@@ -32,6 +32,17 @@ rules:
     columns:
     - stage_recno
   severity: kritisk
+  owner: Teknologi
+- rule_id: FAS-003
+  name: Når siste milepæl er satt, må også fasen lukkesr
+  description: 'Alle faser må være lukket.'
+  expectation: not_null_when
+  parameters:
+    when_column: seneste_stoppmilepael_dato
+    operator: IS NOT NULL
+    checked_columns:
+    - fase_lukket_dato
+  severity: høy
   owner: Teknologi
 - rule_id: FAS-004
   name: Saksbehandler_kode kan ikke være null for åpne saker
@@ -42,7 +53,6 @@ rules:
     operator: IS NULL
     checked_columns:
     - saksansvarlig_kode
-    - fase_lukket_dato
   severity: høy
   owner: Teknologi
 - rule_id: FAS-005
