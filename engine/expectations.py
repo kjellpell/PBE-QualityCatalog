@@ -1884,6 +1884,94 @@ class ValueInListExpectation:
 # Only generic canonical names are registered here.  No table-specific
 # aliases are retained; all YAML rule files must use the generic names.
 # =============================================================================
+# -----------------------------------------------------------------------------
+# validate_column_exclusions
+# Flags every row that satisfies a forbidden-state condition.
+# The negation counterpart to conditional validators: instead of
+# "column X must be set when Y is true", this says
+# "it must NEVER be the case that (condition)".
+# -----------------------------------------------------------------------------
+class ValidateColumnExclusionsExpectation:
+    """
+    Asserts that no row satisfies the given forbidden-state condition.
+    A violation is recorded for every row where the condition holds true.
+
+    YAML parameters (canonical names):
+      condition     - Spark SQL expression that identifies forbidden rows.
+                      Any row matching this filter is a violation.
+                      Example: "opprinnelig_frist IS NOT NULL AND frist_dager IS NOT NULL
+                                AND opprinnelig_frist != frist_dager"
+      pk_column     - primary key column (default: "id")
+      show_columns  - optional list of column names whose values are included
+                      in violation_detail so handlers can see the actual values
+                      without querying the source table.
+    """
+
+    def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
+        params       = rule.get("parameters", {})
+        condition    = params.get("condition")
+        pk_col       = params.get("pk_column", "id")
+        show_cols    = params.get("show_columns", [])
+
+        if not condition:
+            return (
+                _error_result("Parameter 'condition' is required."),
+                _empty_violations(spark),
+            )
+
+        total = df.count()
+        if total == 0:
+            return _passed_result(0), _empty_violations(spark)
+
+        try:
+            violations_df = df.filter(condition)
+        except Exception as exc:
+            return (
+                _error_result(f"Invalid condition expression: {exc}"),
+                _empty_violations(spark),
+            )
+
+        failed = violations_df.count()
+        passed = total - failed
+
+        pk_expr = (
+            F.col(pk_col).cast("string")
+            if pk_col in df.columns
+            else F.lit(None).cast("string")
+        )
+
+        valid_show = [c for c in show_cols if c in df.columns]
+        if valid_show:
+            detail_expr = F.concat_ws(", ", *[
+                F.concat(F.lit(f"{c}: "), F.coalesce(F.col(c).cast("string"), F.lit("null")))
+                for c in valid_show
+            ])
+        else:
+            detail_expr = F.lit("Forbudt tilstand funnet.")
+
+        violations_out = violations_df.select(
+            pk_expr.alias("primary_key_value"),
+            F.lit("betingelse").alias("violated_column"),
+            F.lit(None).cast("string").alias("actual_value"),
+            F.lit(f"NOT ({condition})").alias("expected_condition"),
+            detail_expr.alias("violation_detail"),
+        )
+
+        result = {
+            "total_rows":  total,
+            "passed_rows": passed,
+            "failed_rows": failed,
+            "success_pct": _safe_pct(passed, total),
+            "status":      "PASSED" if failed == 0 else "FAILED",
+            "details": (
+                f"{failed} row(s) satisfy the forbidden condition."
+                if failed > 0
+                else f"No rows satisfy the forbidden condition. All {total} rows are valid."
+            ),
+        }
+        return result, violations_out
+
+
 CUSTOM_EXPECTATION_REGISTRY = {
 
     # -------------------------------------------------------------------------
@@ -1905,6 +1993,11 @@ CUSTOM_EXPECTATION_REGISTRY = {
     # -------------------------------------------------------------------------
     "reference_exists":                     ForeignKeyExpectation,
     "reference_active":                     ValidateActiveReferenceExpectation,
+
+    # -------------------------------------------------------------------------
+    # Negative / forbidden-state validators
+    # -------------------------------------------------------------------------
+    "validate_column_exclusions":           ValidateColumnExclusionsExpectation,
 
     # -------------------------------------------------------------------------
     # Conditional / dependency validators

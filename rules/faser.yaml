@@ -85,21 +85,16 @@ rules:
   description: >
     For faser med indikator Delesak 3 uker, Delesak 12 uker, Byggesak 3 uker
     og Byggesak 12 uker må opprinnelig_frist være lik frist_dager.
-  expectation: sql_validation
+  expectation: validate_column_exclusions
   parameters:
     pk_column: stage_recno
-    sql: |
-      SELECT stage_recno, indikator, opprinnelig_frist, frist_dager
-      FROM saksbehandling.faser
-      WHERE fagsystem = 'PB360'
-        AND indikator IN (
-          'Delesak 3 uker',
-          'Delesak 12 uker',
-          'Byggesak 3 uker',
-          'Byggesak 12 uker'
-        )
-        AND opprinnelig_frist IS NOT NULL
-        AND frist_dager IS NOT NULL
-        AND opprinnelig_frist != frist_dager
+    condition: >-
+      indikator IN ('Delesak 3 uker', 'Delesak 12 uker', 'Byggesak 3 uker',
+      'Byggesak 12 uker') AND opprinnelig_frist IS NOT NULL AND frist_dager
+      IS NOT NULL AND opprinnelig_frist != frist_dager
+    show_columns:
+      - indikator
+      - opprinnelig_frist
+      - frist_dager
   severity: høy
   owner: Teknologi
