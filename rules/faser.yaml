@@ -80,7 +80,7 @@ rules:
   description: 'For faser uten fristforlengelse må opprinnelig_frist være lik frist_dager.'
   expectation: comparison
   parameters:
-    left_column: opprinnelig_frist
+    left_column: opprinnelig_frist_dager
     right_column: frist_dager
     operator: '=='
     filter_column: indikator
