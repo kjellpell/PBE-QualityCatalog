@@ -82,19 +82,18 @@ rules:
   owner: Teknologi
 - rule_id: FAS-008
   name: Opprinnelig frist og frist_dager må stemme overens
-  description: >
-    For faser med indikator Delesak 3 uker, Delesak 12 uker, Byggesak 3 uker
-    og Byggesak 12 uker må opprinnelig_frist være lik frist_dager.
-  expectation: validate_column_exclusions
+  description: 'For faser uten fristforlengelse må opprinnelig_frist være lik frist_dager.'
+  expectation: comparison
   parameters:
+    left_column: opprinnelig_frist
+    right_column: frist_dager
+    operator: '=='
+    filter_column: indikator
+    filter_values:
+      - Delesak 3 uker
+      - Delesak 12 uker
+      - Byggesak 3 uker
+      - Byggesak 12 uker
     pk_column: stage_recno
-    condition: >-
-      indikator IN ('Delesak 3 uker', 'Delesak 12 uker', 'Byggesak 3 uker',
-      'Byggesak 12 uker') AND opprinnelig_frist IS NOT NULL AND frist_dager
-      IS NOT NULL AND opprinnelig_frist != frist_dager
-    show_columns:
-      - indikator
-      - opprinnelig_frist
-      - frist_dager
   severity: høy
   owner: Teknologi
