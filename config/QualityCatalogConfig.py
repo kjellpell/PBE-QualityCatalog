@@ -10,6 +10,7 @@ RULES_DIR = "rules"
 DQ_RESULTS_TABLE = "dq_run_results"
 DQ_VIOLATIONS_TABLE = "dq_violations"
 DQ_EXECUTION_METRICS_TABLE = "dq_execution_metrics"
+DQ_NOTIFICATIONS_TABLE = "dq_notifications"
 
 # Employee lookup — used by nb_dq_04_routing to resolve record owners for individual notifications
 ANSATTE_TABLE = "saksbehandling.ansatte"

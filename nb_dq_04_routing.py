@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import importlib.util
+from datetime import datetime, timezone
 from functools import reduce
 from pathlib import Path
 
@@ -26,6 +27,7 @@ import requests
 import yaml
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.types import IntegerType, StringType, StructField, StructType, TimestampType
 
 CONFIG_DIR = Path("/lakehouse/default/Files/Configs")
 RULES_DIR = Path("/lakehouse/default/Files/rules")
@@ -45,6 +47,7 @@ cfg = _cfg_mod
 SCHEMA = cfg.DEFAULT_SCHEMA
 RESULTS_TABLE = f"{SCHEMA}.{cfg.DQ_RESULTS_TABLE}"
 VIOLATIONS_TABLE = f"{SCHEMA}.{cfg.DQ_VIOLATIONS_TABLE}"
+NOTIFICATIONS_TABLE = f"{SCHEMA}.{getattr(cfg, 'DQ_NOTIFICATIONS_TABLE', 'dq_notifications')}"
 
 ANSATTE_TABLE = getattr(cfg, "ANSATTE_TABLE", "saksbehandling.ansatte")
 ANSATTE_KEY_COL = getattr(cfg, "ANSATTE_KEY_COL", "")
@@ -204,14 +207,18 @@ if _union_parts:
 # -----------------------------------------------------------------------------
 # STEP 6: IT-ops notifications
 # -----------------------------------------------------------------------------
-def _send_itops_notification() -> None:
+def _send_itops_notification() -> list[dict]:
+    logs: list[dict] = []
+    now = datetime.now(timezone.utc)
+
     if not PA_ITOPS_URL:
         print("  Skipping IT-ops notification: POWER_AUTOMATE_ITOPS_URL not configured")
-        return
+        logs.append(_log(now, "it-ops", None, 0, "skipped", "POWER_AUTOMATE_ITOPS_URL not configured"))
+        return logs
 
     itops_ids = [rid for rid, m in rules_index.items() if m["routing"] == "it-ops"]
     if not itops_ids:
-        return
+        return logs
 
     in_list = ", ".join(f"'{r}'" for r in itops_ids)
     rows = spark.sql(f"""
@@ -224,30 +231,36 @@ def _send_itops_notification() -> None:
 
     if not rows:
         print("  IT-ops: no failures to notify")
-        return
+        return logs
 
     payload = {"run_id": run_id, "failures": [r.asDict() for r in rows]}
     try:
         resp = requests.post(PA_ITOPS_URL, json=payload, timeout=10)
         resp.raise_for_status()
         print(f"  IT-ops notification sent: {len(rows)} failed rules")
+        logs.append(_log(now, "it-ops", None, len(rows), "sent", None))
     except Exception as exc:
-        print(f"  Warning: IT-ops notification skipped — {exc}")
+        print(f"  Warning: IT-ops notification failed — {exc}")
+        logs.append(_log(now, "it-ops", None, len(rows), "failed", str(exc)[:500]))
 
+    return logs
 
-_send_itops_notification()
 
 # -----------------------------------------------------------------------------
 # STEP 7: Individual owner notifications
 # -----------------------------------------------------------------------------
-def _send_individual_digests() -> None:
+def _send_individual_digests() -> list[dict]:
+    logs: list[dict] = []
+    now = datetime.now(timezone.utc)
+
     if not PA_INDIVIDUAL_URL:
         print("  Skipping individual notifications: POWER_AUTOMATE_INDIVIDUAL_URL not configured")
-        return
+        logs.append(_log(now, "individual", None, 0, "skipped", "POWER_AUTOMATE_INDIVIDUAL_URL not configured"))
+        return logs
 
     individual_cats = [c for c in catalogs if c["has_individual"]]
     if not individual_cats:
-        return
+        return logs
 
     frames = []
     for cat in individual_cats:
@@ -265,12 +278,12 @@ def _send_individual_digests() -> None:
 
     if not frames:
         print("  Individual: no violations with resolved owners")
-        return
+        return logs
 
     combined_pd = reduce(lambda a, b: a.union(b), frames).toPandas()
 
-    sent = 0
     for email, group in combined_pd.groupby("owner_email"):
+        send_time = datetime.now(timezone.utc)
         payload = {
             "run_id": run_id,
             "owner_name": group["owner_name"].iloc[0],
@@ -280,13 +293,45 @@ def _send_individual_digests() -> None:
         try:
             resp = requests.post(PA_INDIVIDUAL_URL, json=payload, timeout=10)
             resp.raise_for_status()
-            sent += 1
+            logs.append(_log(send_time, "individual", email, len(group), "sent", None))
         except Exception as exc:
-            print(f"  Warning: individual notification for {email} skipped — {exc}")
+            print(f"  Warning: individual notification for {email} failed — {exc}")
+            logs.append(_log(send_time, "individual", email, len(group), "failed", str(exc)[:500]))
 
-    print(f"  Individual notifications sent to {sent} owners")
+    sent = sum(1 for r in logs if r["status"] == "sent")
+    print(f"  Individual notifications: {sent} sent, {len(logs) - sent} failed")
+    return logs
 
 
-_send_individual_digests()
+# -----------------------------------------------------------------------------
+# STEP 8: Write notification log to dq_notifications
+# -----------------------------------------------------------------------------
+def _log(ts: datetime, ntype: str, email, count: int, status: str, error) -> dict:
+    return {
+        "run_id": run_id,
+        "notified_at": ts.replace(tzinfo=None),  # Spark TimestampType is tz-naive
+        "notification_type": ntype,
+        "recipient_email": email,
+        "violation_count": count,
+        "status": status,
+        "error_message": error,
+    }
+
+
+all_logs = _send_itops_notification() + _send_individual_digests()
+
+if all_logs:
+    _log_schema = StructType([
+        StructField("run_id",             StringType(),    True),
+        StructField("notified_at",        TimestampType(), True),
+        StructField("notification_type",  StringType(),    True),
+        StructField("recipient_email",    StringType(),    True),
+        StructField("violation_count",    IntegerType(),   True),
+        StructField("status",             StringType(),    True),
+        StructField("error_message",      StringType(),    True),
+    ])
+    spark.createDataFrame(all_logs, schema=_log_schema).write \
+        .mode("append").format("delta").saveAsTable(NOTIFICATIONS_TABLE)
+    print(f"  Logged {len(all_logs)} notification event(s) to {NOTIFICATIONS_TABLE}")
 
 print("\nRouting complete.")
