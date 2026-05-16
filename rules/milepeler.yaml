@@ -3,11 +3,15 @@ table: milepaeler
 database: saksbehandling
 description: Datakvalitet på milepæler knyttet til saksfaser
 pk_column: milestone_recno
-ownership_col: ""
+
+# Jeg har valgt å kun se på PB360-saker per nå
 catalog_filter:
   type: custom
   where_clause: fagsystem = 'PB360'
+
 rules:
+
+# not_null fungerer slik at det er mulig å sjekke flere kolonner for blanke verdier i samme regel
 - rule_id: MIL-001
   name: Milepeltittel og faserelatering kan ikke være null
   description: 'Hver milepelrad må ha en gyldig milepeltittel og faserelatering.
@@ -18,10 +22,26 @@ rules:
       - milestone_title
       - to_stage_recno
   severity: kritisk
-  routing: individual
-  owner: individual
-- rule_id: MIL-004
-  name: Begge milepæler i et par må være tilstede
+  owner: Teknologi
+
+# Dette mer en teknisk sjekk
+- rule_id: MIL-002
+  name: Milepælen kan ikke være nådd uten sluttdato
+  description: 'Milepæler som er nådd må ha en sluttdato.'
+  expectation: not_null_when
+  parameters:
+    when_column: statusdescription
+    operator: ==
+    value: Nådd
+    columns:
+      - milestonedate
+  severity: høy
+  owner: Teknologi
+
+# I PB360 er det en del par av milepæler som skal komme sammen, denne sjekker disse
+# Merk completion_gate, som gjør at regelen kun sjekker milepælene for faser hvor "Sendt til politisk behandling" er nådd 
+- rule_id: MIL-003
+  name: Begge milepæler i et par for til politisk behandling må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
   expectation: pairs_present
   parameters:
@@ -35,18 +55,59 @@ rules:
       value: Sendt til politisk behandling
       order_column: milestonedate
   severity: kritisk
-  routing: individual
-  owner: individual
-- rule_id: MIL-005
-  name: Milepælen kan ikke være nådd uten sluttdato
-  description: 'Milepæler som er nådd må ha en sluttdato.'
-  expectation: not_null_when
+  owner: Teknologi
+
+# Denne fungerer på samme måte som den over, men for offentlig ettersyn
+- rule_id: MIL-004
+  name: Begge milepæler i et par for byggesak må være tilstede
+  description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
+  expectation: pairs_present
   parameters:
-    when_column: statusdescription
-    operator: ==
-    value: Nådd
-    columns:
-      - milestonedate
-  severity: høy
-  routing: individual
-  owner: individual
+    event_column: milestone_title
+    group_column: to_stage_recno
+    required_pairs:
+      - [Merknader oversendt, Mottatt revidert planforslag]
+      - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
+    completion_gate:
+      event_column: milestone_title
+      value: Sendt til politisk behandling
+      order_column: milestonedate
+  severity: kritisk
+  owner: Teknologi
+
+  # Denne fungerer på samme måte som den over, men for oppstartsmøte
+- rule_id: MIL-005
+  name: Begge milepæler i et par for byggesak må være tilstede
+  description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
+  expectation: pairs_present
+  parameters:
+    event_column: milestone_title
+    group_column: to_stage_recno
+    required_pairs:
+      - [Merknader oversendt, Mottatt revidert planforslag]
+      - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
+    completion_gate:
+      event_column: milestone_title
+      value: Sendt til politisk behandling
+      order_column: milestonedate
+  severity: kritisk
+  owner: Teknologi
+
+# Denne fungerer på samme måte som den over, men for byggesak
+- rule_id: MIL-006
+  name: Begge milepæler i et par for byggesak må være tilstede
+  description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
+  expectation: pairs_present
+  parameters:
+    event_column: milestone_title
+    group_column: to_stage_recno
+    required_pairs:
+      - [Merknader oversendt, Mottatt revidert planforslag]
+      - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
+    completion_gate:
+      event_column: milestone_title
+      value: Sendt til politisk behandling
+      order_column: milestonedate
+  severity: kritisk
+  owner: Teknologi
+

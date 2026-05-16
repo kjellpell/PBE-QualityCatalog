@@ -3,9 +3,13 @@ table: faser
 database: saksbehandling
 description: Validering av datakvalitet for faser
 pk_column: stage_recno
+
+# Jeg har valgt å kun se på PB360-saker per nå
 catalog_filter:
   type: custom
   where_clause: fagsystem = 'PB360'
+
+# Noen av reglene bruker saksbehandling.saker-tabellen, og det koster ikke noe ekstra å ha den med 
 joins:
 - table: saksbehandling.saker
   left_on: to_case_recno
@@ -14,6 +18,8 @@ joins:
   select:
   - case_recno
   - saksansvarlig_kode
+
+# not_null fungerer slik at det er mulig å sjekke flere kolonner for blanke verdier i samme regel
 rules:
 - rule_id: FAS-001
   name: Saksnummer og stage_recno kan ikke være null
@@ -24,8 +30,9 @@ rules:
       - to_case_recno
       - stage_recno
   severity: kritisk
-  routing: it-ops
-  owner: it-ops
+  owner: Teknologi
+
+# Dette er muligens en sjekk som allerede gjøres ved ingestion
 - rule_id: FAS-002
   name: Stage_recno må være unik på tvers av alle faser
   description: 'Dupliserte stage_recnoer indikerer et problem med dataregistrering.'
@@ -34,8 +41,12 @@ rules:
     columns:
     - stage_recno
   severity: kritisk
-  routing: it-ops
-  owner: it-ops
+  owner: Teknologi
+
+# Forskjellen mellom not_null og not_null_when er at den første sjekker at kolonnen 
+# ikke er null for alle rader, mens den andre sjekker at kolonnen ikke er null under visse betingelser. 
+# I dette tilfellet sjekker den om fase_lukket_dato er null når seneste_stoppmilepael_dato ikke er null. 
+# Dette betyr at for alle rader hvor seneste_stoppmilepael_dato har en verdi, må fase_lukket_dato også ha en verdi.
 - rule_id: FAS-003
   name: Når siste milepæl er satt, må også fasen lukkes
   description: 'Alle faser må være lukket.'
@@ -45,9 +56,12 @@ rules:
     operator: IS NOT NULL
     columns:
     - fase_lukket_dato
+    - tidligste_startmilepael_dato
   severity: høy
-  routing: it-ops
-  owner: it-ops
+  owner: Teknologi
+
+# Formålet med denne regelen er å unngå at det finnes åpne faser i en sak, uten at saken har en saksbehandler.
+# Det er veldig mange av disse, så kan det være at regelen er feil satt opp.
 - rule_id: FAS-004
   name: Saksbehandler_kode kan ikke være null for åpne saker
   description: 'Alle faser hvor sluttdato er null må være tildelt en saksbehandler.'
@@ -58,19 +72,21 @@ rules:
     columns:
     - saksansvarlig_kode
   severity: høy
-  routing: it-ops
-  owner: it-ops
+  owner: Teknologi
+
+# Dette er en viktig regelen, for å sikre at tidsbruk blir beregnet riktig
 - rule_id: FAS-005
   name: Seneste_stoppmilepael_dato må være større enn eller lik startdato
-  description: 'For ferdige faser må seneste_stoppmilepael_dato ikke være tidligere enn startdato.'
+  description: 'For ferdige faser må dato for vedtak/beslutning ikke være tidligere enn mottatt dato.'
   expectation: comparison
   parameters:
     left_column: seneste_stoppmilepael_dato
     right_column: tidligste_startmilepael_dato
     operator: '>='
   severity: høy
-  routing: it-ops
-  owner: it-ops
+  owner: Teknologi
+
+# Sjekk på tidsbruk er egentlig bare en sikkerhetsventil, siden vi får dette tallet fra PB360 direkte
 - rule_id: FAS-006
   name: Tidsbruk kan ikke være negativt tall
   description: 'Negativ tidsbruk er et tegn på feil registrering av start- eller sluttdato.'
@@ -80,8 +96,9 @@ rules:
     right_value: 0
     operator: '>='
   severity: høy
-  routing: it-ops
-  owner: it-ops
+  owner: Teknologi
+
+# Bransjetid beregner vi imidlertid selv, og må derfor ha en sjekk.
 - rule_id: FAS-007
   name: Bransjetid kan ikke være negativt tall
   description: 'Negativ bransjetid er et tegn på feil registrering av start- eller sluttdato.'
@@ -91,10 +108,13 @@ rules:
     right_value: 0
     operator: '>='
   severity: høy
-  routing: it-ops
-  owner: it-ops
+  owner: Teknologi
+
+# Fordi det ikke er noen begrensning på fristforlengelse i PB360, så må vi sjekke de indikatorene som normalt _ikke_ skal ha fristforlengelse
+# Se også regelen under, som sjekker hvor stor fristforlengelsen er for de fasene som skal ha det 
+# Det kan være fristforlengelse på Byggesak 12 uker, her kan vi vurdere om de skal bekreftes manuelt siden det er så få
 - rule_id: FAS-008
-  name: Opprinnelig frist og frist_dager må stemme overens
+  name: Opprinnelig frist og frist_dager må være lik for indikatorer uten fristforlengelse
   description: 'For faser uten fristforlengelse må opprinnelig_frist være lik frist_dager.'
   expectation: comparison
   parameters:
@@ -113,11 +133,28 @@ rules:
       - Ferdigattest
       - Seksjonering
       - Reseksjonering
+      - Oppstartsmøte
   severity: høy
-  routing: it-ops
-  owner: it-ops
+  owner: Teknologi
+
+# Denne sjekker om fristforlengelsen er lengre enn tillatt
 - rule_id: FAS-009
-  name: decisiondate kan ikke være lavere enn sluttdato
+  name: Forlenget frist kan ikke være lengre enn 126 dager for saker til politisk behandling
+  description: 'Forlenget frist kan ikke være lengre enn 126 dager for saker til politisk behandling.'
+  expectation: comparison
+  parameters:
+    left_column: frist_dager
+    operator: '>'
+    right_value: 126
+    filter_column: indikator
+    filter_values:
+      - Til politisk behandling
+  severity: høy
+  owner: Teknologi
+
+# Her er det en del avvik, og det stusser jeg litt på
+- rule_id: FAS-010
+  name: decisiondate kan ikke være lavere enn sluttdato 
   description: 'For ferdige faser må decisiondate ikke være tidligere enn sluttdato.'
   expectation: comparison
   parameters:
@@ -125,5 +162,16 @@ rules:
     right_column: seneste_stoppmilepael_dato
     operator: '>='
   severity: høy
-  routing: it-ops
-  owner: it-ops
+  owner: Teknologi
+
+# Her er det en del avvik, og det stusser jeg litt på
+- rule_id: FAS-011
+  name: decisiondate kan ikke være lavere enn sluttdato 
+  description: 'For ferdige faser må decisiondate ikke være tidligere enn sluttdato.'
+  expectation: comparison
+  parameters:
+    left_column: decisiondate
+    right_column: seneste_stoppmilepael_dato
+    operator: '>='
+  severity: høy
+  owner: Teknologi
