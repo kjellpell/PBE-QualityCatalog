@@ -83,6 +83,7 @@ def _build_routing_index(rules_dir: Path):
         table = doc.get("table", "")
         pk_column = doc.get("pk_column", "")
         context_columns = doc.get("context_columns", [])
+        joins_cfg = doc.get("joins", [])
         has_individual = False
 
         for rule in doc.get("rules", []):
@@ -99,6 +100,7 @@ def _build_routing_index(rules_dir: Path):
             "pk_column": pk_column,
             "ownership_col": ownership_col,
             "context_columns": context_columns,
+            "joins_cfg": joins_cfg,
             "has_individual": has_individual,
         })
 
@@ -154,13 +156,35 @@ def _enrich_catalog(cat: dict):
     need_src = database and table and pk_column and (do_owner_join or context_columns)
 
     if need_src:
-        select_exprs = [F.col(pk_column).cast("string").alias("_pk_str")]
-        if do_owner_join:
-            select_exprs.append(F.col(ownership_col).cast("string").alias("_owner_ref"))
-        for col in context_columns:
-            select_exprs.append(F.col(col))
+        src = spark.table(f"{database}.{table}")
 
-        src = spark.table(f"{database}.{table}").select(*select_exprs)
+        for jc in cat.get("joins_cfg", []):
+            j_table  = jc.get("table")
+            j_how    = jc.get("how", "left")
+            j_select = jc.get("select")
+            j_left   = jc.get("left_on")
+            j_right  = jc.get("right_on")
+            j_on     = jc.get("on")
+            if not j_table:
+                continue
+            j_df = spark.table(j_table)
+            if j_select:
+                sel = list(j_select)
+                if j_right and j_right not in sel:
+                    sel.append(j_right)
+                j_df = j_df.select(*sel)
+            if j_on:
+                src = src.join(j_df, on=j_on, how=j_how)
+            elif j_left and j_right:
+                src = src.join(j_df, src[j_left] == j_df[j_right], how=j_how)
+
+        select_exprs = [src[pk_column].cast("string").alias("_pk_str")]
+        if do_owner_join:
+            select_exprs.append(src[ownership_col].cast("string").alias("_owner_ref"))
+        for col in context_columns:
+            select_exprs.append(src[col])
+
+        src = src.select(*select_exprs)
 
         if do_owner_join:
             ans = spark.table(ANSATTE_TABLE).select(
