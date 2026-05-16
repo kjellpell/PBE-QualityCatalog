@@ -3,6 +3,7 @@ table: milepaeler
 database: saksbehandling
 description: Datakvalitet på milepæler knyttet til saksfaser
 pk_column: milestone_recno
+ownership_col: ""
 catalog_filter:
   type: custom
   where_clause: fagsystem = 'PB360'
@@ -17,7 +18,8 @@ rules:
       - milestone_title
       - to_stage_recno
   severity: kritisk
-  owner: Teknologi
+  routing: individual
+  owner: individual
 - rule_id: MIL-004
   name: Begge milepæler i et par må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
@@ -33,7 +35,8 @@ rules:
       value: Sendt til politisk behandling
       order_column: milestonedate
   severity: kritisk
-  owner: Teknologi
+  routing: individual
+  owner: individual
 - rule_id: MIL-005
   name: Milepælen kan ikke være nådd uten sluttdato
   description: 'Milepæler som er nådd må ha en sluttdato.'
@@ -45,4 +48,5 @@ rules:
     columns:
       - milestonedate
   severity: høy
-  owner: Teknologi
+  routing: individual
+  owner: individual

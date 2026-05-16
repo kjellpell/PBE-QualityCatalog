@@ -24,7 +24,8 @@ rules:
       - to_case_recno
       - stage_recno
   severity: kritisk
-  owner: Teknologi
+  routing: it-ops
+  owner: it-ops
 - rule_id: FAS-002
   name: Stage_recno må være unik på tvers av alle faser
   description: 'Dupliserte stage_recnoer indikerer et problem med dataregistrering.'
@@ -33,7 +34,8 @@ rules:
     columns:
     - stage_recno
   severity: kritisk
-  owner: Teknologi
+  routing: it-ops
+  owner: it-ops
 - rule_id: FAS-003
   name: Når siste milepæl er satt, må også fasen lukkes
   description: 'Alle faser må være lukket.'
@@ -44,7 +46,8 @@ rules:
     columns:
     - fase_lukket_dato
   severity: høy
-  owner: Teknologi
+  routing: it-ops
+  owner: it-ops
 - rule_id: FAS-004
   name: Saksbehandler_kode kan ikke være null for åpne saker
   description: 'Alle faser hvor sluttdato er null må være tildelt en saksbehandler.'
@@ -55,7 +58,8 @@ rules:
     columns:
     - saksansvarlig_kode
   severity: høy
-  owner: Teknologi
+  routing: it-ops
+  owner: it-ops
 - rule_id: FAS-005
   name: Seneste_stoppmilepael_dato må være større enn eller lik startdato
   description: 'For ferdige faser må seneste_stoppmilepael_dato ikke være tidligere enn startdato.'
@@ -65,7 +69,8 @@ rules:
     right_column: tidligste_startmilepael_dato
     operator: '>='
   severity: høy
-  owner: Teknologi
+  routing: it-ops
+  owner: it-ops
 - rule_id: FAS-006
   name: Tidsbruk kan ikke være negativt tall
   description: 'Negativ tidsbruk er et tegn på feil registrering av start- eller sluttdato.'
@@ -75,7 +80,8 @@ rules:
     right_value: 0
     operator: '>='
   severity: høy
-  owner: Teknologi
+  routing: it-ops
+  owner: it-ops
 - rule_id: FAS-007
   name: Bransjetid kan ikke være negativt tall
   description: 'Negativ bransjetid er et tegn på feil registrering av start- eller sluttdato.'
@@ -85,7 +91,8 @@ rules:
     right_value: 0
     operator: '>='
   severity: høy
-  owner: Teknologi
+  routing: it-ops
+  owner: it-ops
 - rule_id: FAS-008
   name: Opprinnelig frist og frist_dager må stemme overens
   description: 'For faser uten fristforlengelse må opprinnelig_frist være lik frist_dager.'
@@ -107,9 +114,10 @@ rules:
       - Seksjonering
       - Reseksjonering
   severity: høy
-  owner: Teknologi
+  routing: it-ops
+  owner: it-ops
 - rule_id: FAS-009
-  name: decisiondate kan ikke være lavere enn sluttdato 
+  name: decisiondate kan ikke være lavere enn sluttdato
   description: 'For ferdige faser må decisiondate ikke være tidligere enn sluttdato.'
   expectation: comparison
   parameters:
@@ -117,4 +125,5 @@ rules:
     right_column: seneste_stoppmilepael_dato
     operator: '>='
   severity: høy
-  owner: Teknologi
+  routing: it-ops
+  owner: it-ops
