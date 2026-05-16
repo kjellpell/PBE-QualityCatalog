@@ -834,44 +834,56 @@ class ValidateNotNullWhenExpectation:
         if total == 0:
             return _passed_result(0), _empty_violations(spark)
 
-        null_filter = F.col(check_cols[0]).isNull()
-        for col in check_cols[1:]:
-            null_filter = null_filter | F.col(col).isNull()
-
-        violations_df = conditional_rows.filter(null_filter)
-        failed = violations_df.count()
-        passed = total - failed
-
         check_cols_str = ", ".join(check_cols)
         expected_cond  = (
             f"When {cond_label}, all of [{check_cols_str}] must be NOT NULL"
         )
 
-        violations_out = violations_df.select(
-            F.col(pk_col).cast("string").alias("primary_key_value"),
-            F.lit(check_cols_str).alias("violated_column"),
-            F.lit(None).cast("string").alias("actual_value"),
-            F.lit(expected_cond).alias("expected_condition"),
-            F.concat(
-                F.lit("Følgende påkrevde felter mangler verdier: "),
-                F.lit(check_cols_str),
-            ).alias("violation_detail"),
+        per_col_viol_dfs = []
+        col_fail_counts  = {}
+        for col in check_cols:
+            viol_df = conditional_rows.filter(F.col(col).isNull())
+            n_fail  = viol_df.count()
+            col_fail_counts[col] = n_fail
+            if n_fail > 0:
+                per_col_viol_dfs.append(
+                    viol_df.select(
+                        F.col(pk_col).cast("string").alias("primary_key_value"),
+                        F.lit(col).alias("violated_column"),
+                        F.lit(None).cast("string").alias("actual_value"),
+                        F.lit(expected_cond).alias("expected_condition"),
+                        F.concat(F.lit("Column '"), F.lit(col), F.lit("' is NULL"))
+                         .alias("violation_detail"),
+                    )
+                )
+
+        total_failed = sum(col_fail_counts.values())
+        n_cols       = len(check_cols)
+        total_checks = total * n_cols
+        total_passed = total_checks - total_failed
+
+        violations_out = (
+            reduce(lambda a, b: a.unionByName(b), per_col_viol_dfs)
+            if per_col_viol_dfs
+            else _empty_violations(spark)
         )
 
+        if total_failed > 0:
+            breakdown = ", ".join(f"{c}: {n}" for c, n in col_fail_counts.items() if n > 0)
+            details = (
+                f"{total_failed} NULL value(s) across [{check_cols_str}] "
+                f"where {cond_label}. Breakdown: {breakdown}."
+            )
+        else:
+            details = f"All {total} row(s) where {cond_label} have [{check_cols_str}] populated."
+
         result = {
-            "total_rows":  total,
-            "passed_rows": passed,
-            "failed_rows": failed,
-            "success_pct": _safe_pct(passed, total),
-            "status":      "PASSED" if failed == 0 else "FAILED",
-            "details": (
-                f"{failed} row(s) where {cond_label} have NULL in [{check_cols_str}]."
-                if failed > 0
-                else (
-                    f"All {total} row(s) where {cond_label} "
-                    f"have [{check_cols_str}] populated."
-                )
-            ),
+            "total_rows":  total_checks,
+            "passed_rows": total_passed,
+            "failed_rows": total_failed,
+            "success_pct": _safe_pct(total_passed, total_checks),
+            "status":      "PASSED" if total_failed == 0 else "FAILED",
+            "details":     details,
         }
         return result, violations_out
 
