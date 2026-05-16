@@ -732,6 +732,69 @@ Key behaviours:
 - Use `on` when both tables share the same column name. Use `left_on` + `right_on` when they differ.
 - A join config with no key (`on`, `left_on`, or `right_on`) is skipped with a warning during the run.
 
+## Routing and Ownership
+
+Every rule entry must have a `routing` field. It controls how violations are escalated after a validation run.
+
+### `routing` values
+
+| Value | When to use | Who is notified |
+|---|---|---|
+| `it-ops` | Pipeline or ETL/system rules — failures indicate infrastructure or data load issues, not business user error | IT operations team via Power Automate |
+| `individual` | Business data rules — a specific record owner is responsible | The resolved owner via Power Automate |
+| `silent` | Metrics or KPI rules tracked but not actioned | Nobody |
+
+Assignment guidance:
+- Pipeline-sourced tables (faser, milepaeler) → `it-ops` (users cannot fix these directly)
+- Business-entered data (fakturalinjer) → `individual` (the record owner should be notified)
+
+### `ownership_col` (catalog header)
+
+Catalog-level field specifying which column in the source table holds the employee reference that links to `saksbehandling.ansatte`.
+
+```yaml
+ownership_col: saksansvarlig_kode   # or leave "" until confirmed
+```
+
+Leave as `""` until the team confirms the correct column. Individual notifications will be skipped and owner columns written as NULL until this and the ansatte config keys are set.
+
+Required ansatte config keys in `QualityCatalogConfig.py`:
+
+| Key | Purpose |
+|---|---|
+| `ANSATTE_KEY_COL` | Column in ansatte matching ownership_col values |
+| `ANSATTE_EMAIL_COL` | Email column |
+| `ANSATTE_NAME_COL` | Display name column |
+
+### Owner resolution join
+
+For catalogs with `individual` rules the routing notebook resolves each violating record's owner:
+
+```
+dq_violations.primary_key_value
+  → {source_table}.{pk_column}      (match on pk)
+  → {source_table}.{ownership_col}  (get employee reference)
+  → saksbehandling.ansatte          (get name + email)
+```
+
+### Power BI semantic model
+
+The routing notebook (`nb_dq_04_routing.py`) writes one per-catalog violation table after each run. Use these as bridge tables in the semantic model — each has `primary_key_value` as the join key plus `owner_name` and `owner_email` (no further join needed).
+
+| Table | Relate to source via |
+|---|---|
+| `qualitycatalog.dq_violations_faser` | `primary_key_value ↔ saksbehandling.faser.stage_recno` |
+| `qualitycatalog.dq_violations_faktura` | `primary_key_value ↔ saksbehandling.fakturalinjer.fakturanr` |
+| `qualitycatalog.dq_violations_milepeler` | `primary_key_value ↔ saksbehandling.milepaeler.milestone_recno` |
+
+For integer pk columns (`stage_recno`, `milestone_recno`), add a calculated column on the source table side in Power BI that casts the integer to string before creating the relationship. `fakturanr` is already string — no cast needed.
+
+### `owner` field
+
+The `owner` field is kept on every rule entry for Delta schema compatibility (the engine writes it to `dq_violations.owner`). Set it to match the `routing` value: `owner: it-ops`, `owner: individual`, or `owner: silent`. Do not use this field for routing logic — use `routing` instead.
+
+---
+
 ## Quality Checklist Before Save
 
 - Rule ID is unique in rule group

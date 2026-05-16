@@ -3,6 +3,7 @@ table: fakturalinjer
 database: saksbehandling
 description: Datakvalitet på fakturalinjer som kommer fra PB360
 pk_column: fakturanr
+ownership_col: ""
 rules:
 - rule_id: FAK-001
   name: Fakturanr kan ikke være null
@@ -13,7 +14,8 @@ rules:
     columns:
       - fakturanr
   severity: kritisk
-  owner: Styring
+  routing: individual
+  owner: individual
 - rule_id: FAK-002
   name: linje_belop kan ikke være null
   description: 'Hver fakturalinje må ha et beløp registrert. Et null beløp gjør det
@@ -23,7 +25,8 @@ rules:
     columns:
       - linje_belop
   severity: høy
-  owner: Styring
+  routing: individual
+  owner: individual
 - rule_id: FAK-003
   name: Alle fakturalinjer må ha samme sum som total
   description: 'Summen av alle linje_belop-verdier for en gitt Fakturanr må være lik
@@ -38,7 +41,8 @@ rules:
     aggregate: sum
     tolerance: 0.01
   severity: høy
-  owner: Styring
+  routing: individual
+  owner: individual
 - rule_id: FAK-004
   name: prosess_id må eksistere i faser-tabellen
   description: 'Hver prosess_id-verdi i fakturalinjer må referere til en eksisterende
@@ -50,4 +54,5 @@ rules:
     reference_table: saksbehandling.faser
     reference_column: prosess_id
   severity: høy
-  owner: Styring
+  routing: individual
+  owner: individual
