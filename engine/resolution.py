@@ -37,7 +37,7 @@ VIOLATION_SCHEMA = StructType([
     StructField("rule_id",             StringType(),    False),
     StructField("rule_name",           StringType(),    False),
     StructField("table_name",          StringType(),    False),
-    StructField("owner",               StringType(),    False),
+    StructField("routing_team",        StringType(),    False),
     StructField("primary_key_value",   StringType(),    True),
     StructField("violated_column",     StringType(),    True),
     StructField("actual_value",        StringType(),    True),

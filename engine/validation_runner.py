@@ -257,7 +257,7 @@ RESULT_SCHEMA = StructType([
     StructField("rule_name",            StringType(),    False),
     StructField("table_name",           StringType(),    False),
     StructField("expectation",          StringType(),    False),
-    StructField("owner",                StringType(),    False),
+    StructField("routing_team",          StringType(),    False),
     StructField("total_rows",           LongType(),      True),
     StructField("passed_rows",          LongType(),      True),
     StructField("failed_rows",          LongType(),      True),
@@ -417,7 +417,7 @@ def run_validation(
         rule_id   = rule["rule_id"]
         rule_name = rule["name"]
         exp_name  = rule["expectation"]
-        owner     = rule.get("owner", "")
+        routing_team = rule.get("routing", "none")
 
         print(f"  → [{rule_id}] {rule_name} ({exp_name}) ... ", end="")
         _rule_start = time.perf_counter()
@@ -484,7 +484,7 @@ def run_validation(
             rule_name,
             table_name,
             exp_name,
-            owner,
+            routing_team,
             result["total_rows"],
             result["passed_rows"],
             result["failed_rows"],
@@ -503,7 +503,7 @@ def run_validation(
                 F.lit(rule_id).alias("rule_id"),
                 F.lit(rule_name).alias("rule_name"),
                 F.lit(table_name).alias("table_name"),
-                F.lit(owner).alias("owner"),
+                F.lit(routing_team).alias("routing_team"),
                 F.col("primary_key_value"),
                 F.col("violated_column"),
                 F.col("actual_value"),

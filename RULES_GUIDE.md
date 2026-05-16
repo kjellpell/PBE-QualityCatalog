@@ -864,10 +864,6 @@ The routing notebook writes a single unified table `qualitycatalog.dq_violations
 
 Apply Row Level Security on `owner_email = USERPRINCIPALNAME()` to give each handler a filtered view of only their own violations. No bridge tables or per-catalog report pages needed — context columns carry the human-readable identifiers (case number, title, phase type) directly alongside each violation row.
 
-### `owner` field
-
-The `owner` field is kept on every rule entry for Delta schema compatibility (the engine writes it to `dq_violations.owner`). Set it to match the `routing` value: `owner: it-ops`, `owner: individual`, or `owner: silent`. Do not use this field for routing logic — use `routing` instead.
-
 ---
 
 ## Quality Checklist Before Save
