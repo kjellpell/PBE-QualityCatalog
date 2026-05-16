@@ -3,6 +3,7 @@ table: milepaeler
 database: saksbehandling
 description: Datakvalitet på milepæler knyttet til saksfaser
 pk_column: milestone_recno
+ownership_col: ""
 
 # Jeg har valgt å kun se på PB360-saker per nå
 catalog_filter:
@@ -26,7 +27,7 @@ rules:
     columns:
       - milestone_title
       - to_stage_recno
-  routing: it-ops
+  routing: Teknologi
 
 # Dette mer en teknisk sjekk
 - rule_id: MIL-002
@@ -39,7 +40,7 @@ rules:
     value: Nådd
     columns:
       - milestonedate
-  routing: it-ops
+  routing: Teknologi
 
 # I PB360 er det en del par av milepæler som skal komme sammen, denne sjekker disse
 # Merk completion_gate, som gjør at regelen kun sjekker milepælene for faser hvor "Sendt til politisk behandling" er nådd 
@@ -57,7 +58,7 @@ rules:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
-  routing: individual
+  routing: Avdeling
 
 # Denne fungerer på samme måte som den over, men for offentlig ettersyn
 - rule_id: MIL-004
@@ -74,7 +75,7 @@ rules:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
-  routing: individual
+  routing: Avdeling
   
   # Denne fungerer på samme måte som den over, men for oppstartsmøte
 - rule_id: MIL-005
@@ -91,7 +92,7 @@ rules:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
-  routing: individual
+  routing: Avdeling
 
 # Denne fungerer på samme måte som den over, men for byggesak
 - rule_id: MIL-006
@@ -108,4 +109,4 @@ rules:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
-  routing: individual
+  routing: Avdeling

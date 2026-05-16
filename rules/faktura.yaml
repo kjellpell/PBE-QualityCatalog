@@ -19,7 +19,7 @@ rules:
     columns:
       - fakturanr
       - linje_belop
-  routing: it-ops
+  routing: Teknologi
 
 # Avstem fakturalinjer og total, dette er en teknisk avstemming
 - rule_id: FAK-002
@@ -35,7 +35,7 @@ rules:
     reference_column: faktura_belop
     aggregate: sum
     tolerance: 0.01
-  routing: it-ops
+  routing: Teknologi
 
 # De neste gjør tekniske sjekker på fakturaen
 - rule_id: FAK-003
@@ -47,7 +47,7 @@ rules:
     allowed_values:
       - Standard
       - Kreditnota
-  routing: it-ops
+  routing: Teknologi
 
 - rule_id: FAK-004
   name: Sjekk negative beløp på kreditnota
@@ -59,6 +59,7 @@ rules:
     value: 0
     required_column: faktura_type
     required_value: Kreditnota
+  routing: Avdeling
 
 - rule_id: FAK-005
   name: Sjekk positive beløp på standardfaktura
@@ -70,3 +71,4 @@ rules:
     value: 0
     required_column: faktura_type
     required_value: Standard
+  routing: Avdeling
