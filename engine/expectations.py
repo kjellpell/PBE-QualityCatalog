@@ -165,21 +165,6 @@ class ExpectColumnValuesToNotBeNullExpectation:
                 _empty_violations(spark),
             )
 
-<<<<<<< HEAD
-        columns = column if isinstance(column, list) else [column]
-
-        missing = [c for c in columns if c not in df.columns]
-        if missing:
-            return (
-                _error_result(f"Column(s) not found in DataFrame: {missing}"),
-                _empty_violations(spark),
-            )
-
-        total = df.count()
-        if total == 0:
-            return _passed_result(0), _empty_violations(spark)
-
-=======
         missing_cols = [c for c in columns if c not in df.columns]
         if missing_cols:
             return (
@@ -187,34 +172,13 @@ class ExpectColumnValuesToNotBeNullExpectation:
                 _empty_violations(spark),
             )
 
->>>>>>> 3258c39 (feat(not_null): replace column with columns list for multi-column checks)
+
         pk_expr = (
             F.col(pk_col).cast("string")
             if pk_col in df.columns
             else F.lit(None).cast("string")
         )
 
-<<<<<<< HEAD
-        violation_dfs = []
-        total_failed = 0
-        for col in columns:
-            col_viols = df.filter(F.col(col).isNull())
-            col_failed = col_viols.count()
-            total_failed += col_failed
-            violation_dfs.append(
-                col_viols.select(
-                    pk_expr.alias("primary_key_value"),
-                    F.lit(col).alias("violated_column"),
-                    F.lit(None).cast("string").alias("actual_value"),
-                    F.lit("NOT NULL").alias("expected_condition"),
-                    F.lit("Verdi mangler.").alias("violation_detail"),
-                )
-            )
-
-        violations_out = reduce(lambda a, b: a.unionByName(b), violation_dfs)
-        checked = total * len(columns)
-        passed  = checked - total_failed
-=======
         total = df.count()
         if total == 0:
             return _passed_result(0), _empty_violations(spark)
@@ -247,7 +211,6 @@ class ExpectColumnValuesToNotBeNullExpectation:
             if per_col_viol_dfs
             else _empty_violations(spark)
         )
->>>>>>> 3258c39 (feat(not_null): replace column with columns list for multi-column checks)
 
         cols_label = ", ".join(f"'{c}'" for c in columns)
         if total_failed > 0:
@@ -262,25 +225,12 @@ class ExpectColumnValuesToNotBeNullExpectation:
             details = f"All rows non-null across [{cols_label}]."
 
         result = {
-<<<<<<< HEAD
-            "total_rows":  checked,
-            "passed_rows": passed,
-            "failed_rows": total_failed,
-            "success_pct": _safe_pct(passed, checked),
-            "status":      "PASSED" if total_failed == 0 else "FAILED",
-            "details": (
-                f"{total_failed} null value(s) found across {columns}."
-                if total_failed > 0
-                else f"All {total} rows have non-null values in {columns}."
-            ),
-=======
             "total_rows":  total_checks,
             "passed_rows": total_passed,
             "failed_rows": total_failed,
             "success_pct": _safe_pct(total_passed, total_checks),
             "status":      "PASSED" if total_failed == 0 else "FAILED",
             "details":     details,
->>>>>>> 3258c39 (feat(not_null): replace column with columns list for multi-column checks)
         }
         return result, violations_out
 
@@ -827,15 +777,15 @@ class RowCountExpectation:
 # -----------------------------------------------------------------------------
 class ValidateNotNullWhenExpectation:
     """
-    Validates that all checked_columns are not null when when_column
+    Validates that all columns are not null when when_column
     satisfies the trigger condition.
 
     YAML parameters (canonical names):
-      when_column        - column that triggers the check (was: trigger_column, condition_column)
-      operator           - "==" (equality), "IS NOT NULL", or "IS NULL"
-      value              - required when operator is "=="
-      checked_columns    - list of columns that must be NOT NULL when triggered (was: check_columns)
-      pk_column          - primary key column
+      when_column  - column that triggers the check (was: trigger_column, condition_column)
+      operator     - "==" (equality), "IS NOT NULL", or "IS NULL"
+      value        - required when operator is "=="
+      columns      - block list of columns that must be NOT NULL when triggered (was: checked_columns)
+      pk_column    - primary key column
     """
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
@@ -843,13 +793,13 @@ class ValidateNotNullWhenExpectation:
         condition_col = params.get("when_column")
         condition_op  = params.get("operator", "==")
         condition_val = params.get("value")
-        check_cols    = params.get("checked_columns", [])
+        check_cols    = params.get("columns", [])
         pk_col        = params.get("pk_column", "id")
 
         if not condition_col or not check_cols:
             return (
                 _error_result(
-                    "Parameters 'when_column' and 'checked_columns' "
+                    "Parameters 'when_column' and 'columns' "
                     "(non-empty list) are required."
                 ),
                 _empty_violations(spark),
@@ -977,7 +927,7 @@ class ValidateSequenceOrderExpectation:
         if not value_col:
             return (
                 _error_result(
-                    "Parameter 'value_column' is required for validate_sequence_order."
+                    "Parameter 'event_column' is required for validate_sequence_order."
                 ),
                 _empty_violations(spark),
             )
@@ -1006,7 +956,7 @@ class ValidateSequenceOrderExpectation:
         if not sort_col or sort_col not in df.columns:
             return (
                 _error_result(
-                    f"Parameter 'sort_column' ('{sort_col}') is required and must "
+                    f"Parameter 'order_column' ('{sort_col}') is required and must "
                     f"exist in the dataframe for validate_sequence_order."
                 ),
                 _empty_violations(spark),
@@ -1248,15 +1198,10 @@ class ValidatePairedPresenceExpectation:
                     f"'{start_type}' must exist whenever {stop_present_phrase.lower()} "
                     f"for the same {group_col}"
                 )
-<<<<<<< HEAD
-                detail_expr = F.lit(
-                    f"En av {stop_label} er tilstede, men '{start_type}' mangler."
-=======
                 detail_expr = F.concat(
                     F.lit(f"{stop_present_phrase} but '{start_type}' missing "
                           f"for {group_col}='"),
                     F.col(group_col).cast("string"), F.lit("'"),
->>>>>>> c951fef (fix(pairs_present): clean up violation_detail phrasing for single stop type)
                 )
                 actual_expr = F.lit(stop_label)
             else:
@@ -1267,11 +1212,6 @@ class ValidatePairedPresenceExpectation:
                 )
                 detail_expr = F.when(
                     F.col(has_start) & ~F.col("_has_any_stop"),
-<<<<<<< HEAD
-                    F.lit(f"'{start_type}' er tilstede, men {stop_label} mangler."),
-                ).otherwise(
-                    F.lit(f"En av {stop_label} er tilstede, men '{start_type}' mangler."),
-=======
                     F.concat(
                         F.lit(f"'{start_type}' present but {stop_missing_phrase} "
                               f"for {group_col}='"),
@@ -1283,7 +1223,6 @@ class ValidatePairedPresenceExpectation:
                               f"for {group_col}='"),
                         F.col(group_col).cast("string"), F.lit("'"),
                     ),
->>>>>>> c951fef (fix(pairs_present): clean up violation_detail phrasing for single stop type)
                 )
                 actual_expr = (
                     F.when(F.col(has_start), F.lit(start_type))
@@ -1359,7 +1298,7 @@ class ValidateGateExpectation:
         if not value_col:
             return (
                 _error_result(
-                    "Parameter 'value_column' is required for validate_gate."
+                    "Parameter 'event_column' is required for validate_gate."
                 ),
                 _empty_violations(spark),
             )
@@ -1683,11 +1622,11 @@ class ValidateGroupAggregateMatchExpectation:
 # -----------------------------------------------------------------------------
 class ValidateActiveReferenceExpectation:
     """
-    Validates that all non-null values in 'source_column' exist in the
+    Validates that all non-null values in 'column' exist in the
     reference table and match a row where active_column equals active_value.
 
     YAML parameters (canonical names):
-      source_column            - column in the source table whose values are checked
+      column                   - column in the source table whose values are checked
       pk_column                - primary key column for violation reporting
       reference_table          - fully-qualified reference table name (was: reference.table)
       reference_column         - column in the reference table to join on (was: reference.column)
@@ -1697,25 +1636,25 @@ class ValidateActiveReferenceExpectation:
 
     def validate(self, df: DataFrame, rule: dict, spark, ref_cache: dict = None) -> tuple:
         params     = rule.get("parameters", {})
-        src_col    = params.get("source_column")
-        pk_col     = params.get("pk_column") or src_col
+        col        = params.get("column")
+        pk_col     = params.get("pk_column") or col
         ref_table  = params.get("reference_table")
         ref_col    = params.get("reference_column")
         active_col = params.get("reference_active_column")
         active_val = params.get("reference_active_value")
 
-        if not src_col or not ref_table or not ref_col or not active_col or active_val is None:
+        if not col or not ref_table or not ref_col or not active_col or active_val is None:
             return (
                 _error_result(
-                    "Parameters 'source_column', 'reference_table', 'reference_column', "
+                    "Parameters 'column', 'reference_table', 'reference_column', "
                     "'reference_active_column', and 'reference_active_value' are all required."
                 ),
                 _empty_violations(spark),
             )
 
-        if src_col not in df.columns:
+        if col not in df.columns:
             return (
-                _error_result(f"Column '{src_col}' not found in source DataFrame."),
+                _error_result(f"Column '{col}' not found in source DataFrame."),
                 _empty_violations(spark),
             )
 
@@ -1725,11 +1664,8 @@ class ValidateActiveReferenceExpectation:
             active_ref_df = ref_cache[cache_key]
         else:
             try:
-                        detail_expr = F.concat(
-                            F.lit(f"{stop_present_phrase} but '{start_type}' missing "
-                                  f"for {group_col}='"),
-                            F.col(group_col).cast("string"), F.lit("'"),
-                        )
+                raw_ref = spark.table(ref_table)
+            except Exception as exc:
                 return (
                     _error_result(f"Could not load reference table '{ref_table}': {exc}"),
                     _empty_violations(spark),
@@ -1756,7 +1692,7 @@ class ValidateActiveReferenceExpectation:
             if ref_cache is not None:
                 ref_cache[cache_key] = active_ref_df
 
-        evaluated = df.filter(F.col(src_col).isNotNull())
+        evaluated = df.filter(F.col(col).isNotNull())
         total     = evaluated.count()
 
         if total == 0:
@@ -1764,25 +1700,25 @@ class ValidateActiveReferenceExpectation:
 
         violations_df = evaluated.alias("src").join(
             active_ref_df,
-            F.col("src." + src_col).cast("string") == F.col("_active_ref_key"),
+            F.col("src." + col).cast("string") == F.col("_active_ref_key"),
             how="left_anti",
         )
         failed = violations_df.count()
         passed = total - failed
 
         expected_cond = (
-            f"{src_col} must reference an active row in "
+            f"{col} must reference an active row in "
             f"{ref_table}.{ref_col} where {active_col} = {active_val}"
         )
 
         violations_out = violations_df.select(
             F.col(pk_col).cast("string").alias("primary_key_value"),
-            F.lit(src_col).alias("violated_column"),
-            F.col(src_col).cast("string").alias("actual_value"),
+            F.lit(col).alias("violated_column"),
+            F.col(col).cast("string").alias("actual_value"),
             F.lit(expected_cond).alias("expected_condition"),
             F.concat(
                 F.lit("Verdi '"),
-                F.col(src_col).cast("string"),
+                F.col(col).cast("string"),
                 F.lit("' ble ikke funnet eller er inaktiv i referansetabellen."),
             ).alias("violation_detail"),
         )
@@ -1794,11 +1730,11 @@ class ValidateActiveReferenceExpectation:
             "success_pct": _safe_pct(passed, total),
             "status":      "PASSED" if failed == 0 else "FAILED",
             "details": (
-                f"{failed} value(s) in '{src_col}' not found or inactive "
+                f"{failed} value(s) in '{col}' not found or inactive "
                 f"in {ref_table}.{ref_col} (active filter: {active_col} = {active_val})."
                 if failed > 0
                 else (
-                    f"All {total} non-null '{src_col}' values reference an active row "
+                    f"All {total} non-null '{col}' values reference an active row "
                     f"in {ref_table}.{ref_col}."
                 )
             ),
@@ -1948,7 +1884,7 @@ class ValueInListExpectation:
 
     def validate(self, df: DataFrame, rule: dict, spark) -> tuple:
         params        = rule.get("parameters", {})
-        column        = params.get("column") or rule.get("column")
+        column        = params.get("column")
         pk_col        = params.get("pk_column") or column
         allowed_values = params.get("allowed_values", [])
 

@@ -42,7 +42,7 @@ rules:
     when_column: statusdescription
     operator: ==
     value: Nådd
-    checked_columns:
+    columns:
       - milestonedate
   severity: høy
   owner: Teknologi

@@ -68,19 +68,22 @@ Use the correct operator family for the rule type.
 
 ### Common keys
 
-- `column` for single-column checks
-- `pk_column` for violation identity
-- `parameters` for multi-column or advanced rules
+All parameters live inside `parameters:`. Two conventions for specifying columns:
+
+- `columns:` — block list of columns to check (`not_null`, `not_null_when`, `combination_unique`)
+- `column:` — single column in `parameters` (`value_in_list`, `reference_exists`, `reference_active`)
+- `pk_column` — primary key for violation identity (default: catalog `pk_column`)
 
 ### Canonical parameter keys
 
 | Parameter key | Meaning |
 |---|---|
+| `columns` | Block list of columns to check |
+| `column` | Single column to act on |
 | `left_column` | Left side for field comparison |
 | `right_column` | Right-hand column for field comparison |
 | `right_value` | Scalar numeric value for column-vs-scalar comparison |
 | `when_column` | Column evaluated by trigger condition |
-| `checked_columns` | List of columns required under trigger |
 | `allowed_values` | Approved value list |
 | `event_column` | Event or milestone name column |
 | `order_column` | Sequencing or ordering column |
@@ -91,7 +94,6 @@ Use the correct operator family for the rule type.
 | `reference_active_column` | Active flag column in reference table |
 | `reference_active_value` | Active flag value |
 | `group_column` | Group identity for grouped checks |
-| `source_column` | Source-side reference field |
 | `max_days` | Max allowed days in state |
 
 ## Expectation Reference
@@ -140,25 +142,25 @@ non-null in all rows. Columns that need different severities must use separate r
 
 ### `not_null_when`
 
-All `checked_columns` must be non-null whenever `when_column` satisfies the trigger.
+All listed `columns` must be non-null whenever `when_column` satisfies the trigger.
 
 | Parameter | Required | Notes |
 |---|---|---|
 | `when_column` | yes | Column that triggers the check |
 | `operator` | yes | `IS NULL`, `IS NOT NULL`, or `==` |
 | `value` | if `operator` is `==` | The value `when_column` must equal |
-| `checked_columns` | yes | List of columns that must be non-null when triggered |
-| `pk_column` | no | Default: catalog `pk_column`. Override per rule only when the violation key differs from the catalog PK. |
+| `columns` | yes | Block list of columns that must be non-null when triggered |
+| `pk_column` | no | Default: catalog `pk_column` |
 
 ```yaml
-- rule_id: PROC-012
+- rule_id: PROC-021
   name: Open cases must have a handler
   description: Cases with no end date must be assigned.
   expectation: not_null_when
   parameters:
     when_column: ActualEndDate
     operator: IS NULL
-    checked_columns:
+    columns:
       - Saksbehandler_kode
   severity: high
   owner: Saksteam
@@ -232,19 +234,19 @@ Use `filter_column` + `filter_values` to restrict evaluation to a subset of rows
 
 All non-null values in the column must belong to an approved list.
 
-| Parameter | Level | Required | Notes |
-|---|---|---|---|
-| `column` | top-level or parameters | yes | Column to check |
-| `parameters.allowed_values` | parameters | yes | Non-empty list of permitted values |
-| `parameters.pk_column` | parameters | no | Default: same as `column` |
+| Parameter | Required | Notes |
+|---|---|---|
+| `column` | yes | Column to check (in `parameters`) |
+| `allowed_values` | yes | Block list of permitted values |
+| `pk_column` | no | Default: same as `column` |
 
 ```yaml
 - rule_id: INV-010
   name: Invoice type must be approved
   description: Only approved business values are allowed.
   expectation: value_in_list
-  column: Faktura_type
   parameters:
+    column: Faktura_type
     allowed_values:
       - Standard
       - Kreditnota
@@ -314,16 +316,16 @@ Every non-null value in `column` must exist in `reference_table.reference_column
 
 ### `reference_active`
 
-Every non-null value in `source_column` must exist in the reference table **and** match a row where `reference_active_column` equals `reference_active_value`.
+Every non-null value in `column` must exist in the reference table **and** match a row where `reference_active_column` equals `reference_active_value`.
 
 | Parameter | Required | Notes |
 |---|---|---|
-| `source_column` | yes | Source column whose values are checked |
+| `column` | yes | Source column whose values are checked |
 | `reference_table` | yes | Fully-qualified reference table |
 | `reference_column` | yes | Join column in the reference table |
 | `reference_active_column` | yes | Column holding the active flag |
 | `reference_active_value` | yes | Value that means "active" (string or boolean) |
-| `pk_column` | no | Default: same as `source_column` |
+| `pk_column` | no | Default: same as `column` |
 
 ```yaml
 - rule_id: PROC-014
@@ -331,7 +333,7 @@ Every non-null value in `source_column` must exist in the reference table **and*
   description: Open assignments must reference active personnel.
   expectation: reference_active
   parameters:
-    source_column: Saksbehandler_kode
+    column: Saksbehandler_kode
     reference_table: HR.Employees
     reference_column: EmployeeCode
     reference_active_column: IsActive
@@ -584,7 +586,7 @@ Flags every row that satisfies a forbidden-state condition. Use this instead of 
 | `show_columns` | no | List of columns whose actual values appear in `violation_detail` |
 
 ```yaml
-- rule_id: FAS-008
+- rule_id: PROC-030
   name: Opprinnelig frist og frist_dager må stemme overens
   description: >
     For the four indikator types, opprinnelig_frist must equal frist_dager.

@@ -25,6 +25,7 @@ rules:
       - stage_recno
   severity: kritisk
   owner: Teknologi
+- rule_id: FAS-002
   name: Stage_recno må være unik på tvers av alle faser
   description: 'Dupliserte stage_recnoer indikerer et problem med dataregistrering.'
   expectation: combination_unique
@@ -34,13 +35,13 @@ rules:
   severity: kritisk
   owner: Teknologi
 - rule_id: FAS-003
-  name: Når siste milepæl er satt, må også fasen lukkesr
+  name: Når siste milepæl er satt, må også fasen lukkes
   description: 'Alle faser må være lukket.'
   expectation: not_null_when
   parameters:
     when_column: seneste_stoppmilepael_dato
     operator: IS NOT NULL
-    checked_columns:
+    columns:
     - fase_lukket_dato
   severity: høy
   owner: Teknologi
@@ -51,7 +52,7 @@ rules:
   parameters:
     when_column: seneste_stoppmilepael_dato
     operator: IS NULL
-    checked_columns:
+    columns:
     - saksansvarlig_kode
   severity: høy
   owner: Teknologi
@@ -105,7 +106,6 @@ rules:
       - Ferdigattest
       - Seksjonering
       - Reseksjonering
-    pk_column: stage_recno
   severity: høy
   owner: Teknologi
 - rule_id: FAS-009
