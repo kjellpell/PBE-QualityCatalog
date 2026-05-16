@@ -800,19 +800,27 @@ Any column available after `joins` are applied can be listed here — including 
 
 ## Routing and Ownership
 
-Every rule entry must have a `routing` field. It controls how violations are escalated after a validation run.
+### `routing` — responsible team label
 
-### `routing` values
+`routing` is a free-form team label that identifies who is responsible for fixing violations from a rule. It is stored as `routing_team` in `dq_violations_owners` and used as a slicer in Power BI.
 
-| Value | When to use | Who is notified |
-|---|---|---|
-| `it-ops` | Pipeline or ETL/system rules — failures indicate infrastructure or data load issues, not business user error | IT operations team via Power Automate |
-| `individual` | Business data rules — a specific record owner is responsible | The resolved owner via Power Automate |
-| `silent` | Metrics or KPI rules tracked but not actioned | Nobody |
+```yaml
+- rule_id: FAS-001
+  name: Verdier kan ikke være null
+  expectation: not_null
+  parameters:
+    columns:
+      - to_case_recno
+  routing: Teknologi
+  owner: Teknologi
+```
 
-Assignment guidance:
-- Pipeline-sourced tables (faser, milepaeler) → `it-ops` (users cannot fix these directly)
-- Business-entered data (fakturalinjer) → `individual` (the record owner should be notified)
+Convention:
+- Use a team name that matches how your organisation is structured (`Teknologi`, `Saksteam`, `Finansteam`, etc.)
+- Use `none` for rules that are tracked but have no directly responsible team
+- Any string is valid — the engine does not validate the value
+
+`routing` does not trigger any notification. It is purely an ownership label for Power BI filtering and future escalation logic.
 
 ### `ownership_col` (catalog header)
 
@@ -824,24 +832,27 @@ ownership_col: saksansvarlig_kode   # or leave "" until confirmed
 
 Leave as `""` until the team confirms the correct column. Individual notifications will be skipped and owner columns written as NULL until this and the ansatte config keys are set.
 
-Required ansatte config keys in `QualityCatalogConfig.py`:
+Required config keys in `QualityCatalogConfig.py` for owner resolution:
 
 | Key | Purpose |
 |---|---|
-| `ANSATTE_KEY_COL` | Column in ansatte matching ownership_col values |
-| `ANSATTE_EMAIL_COL` | Email column |
-| `ANSATTE_NAME_COL` | Display name column |
+| `ANSATTE_TABLE` | Fully-qualified ansatte table (default: `saksbehandling.ansatte`) |
+| `ANSATTE_KEY_COL` | Column in ansatte matching `ownership_col` values |
+| `ANSATTE_EMAIL_COL` | Email column — written to `owner_email` in `dq_violations_owners` |
+| `ANSATTE_NAME_COL` | Display name column — written to `owner_name` |
 
 ### Owner resolution join
 
-For catalogs with `individual` rules the routing notebook resolves each violating record's owner:
+For catalogs with `ownership_col` configured, the routing notebook resolves each violating record's owner:
 
 ```
 dq_violations.primary_key_value
-  → {source_table}.{pk_column}      (match on pk)
+  → {source_table}.{pk_column}      (match on pk, after applying catalog joins)
   → {source_table}.{ownership_col}  (get employee reference)
   → saksbehandling.ansatte          (get name + email)
 ```
+
+`owner_email` and `owner_name` are written to `dq_violations_owners` and used for Power BI RLS.
 
 ### Power BI semantic model
 

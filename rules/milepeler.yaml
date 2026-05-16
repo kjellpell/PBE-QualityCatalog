@@ -3,29 +3,30 @@ table: milepaeler
 database: saksbehandling
 description: Datakvalitet på milepæler knyttet til saksfaser
 pk_column: milestone_recno
-context_columns:
-  - to_stage_recno
-  - milestone_title
 
 # Jeg har valgt å kun se på PB360-saker per nå
 catalog_filter:
   type: custom
   where_clause: fagsystem = 'PB360'
 
+# Context_columns er kolonner som brukes for å gi mer kontekst i rapporteringen av regelbrudd,
+# Disse kolonnene brukes f.eks. når det skal sendes ut varsler og i Power BI-rapporter
+context_columns:
+  - to_stage_recno
+  - milestone_title
+
 rules:
 
 # not_null fungerer slik at det er mulig å sjekke flere kolonner for blanke verdier i samme regel
 - rule_id: MIL-001
-  name: Milepeltittel og faserelatering kan ikke være null
-  description: 'Hver milepelrad må ha en gyldig milepeltittel og faserelatering.
-    Manglende verdier gjør at posten ikke kan kategoriseres eller tilordnes noen fase.'
+  name: Verdier kan ikke være null
+  description: 'Alle påkrevde felt må ha en verdi.'
   expectation: not_null
   parameters:
     columns:
       - milestone_title
       - to_stage_recno
-
-  owner: Teknologi
+  routing: it-ops
 
 # Dette mer en teknisk sjekk
 - rule_id: MIL-002
@@ -38,8 +39,7 @@ rules:
     value: Nådd
     columns:
       - milestonedate
-
-  owner: Teknologi
+  routing: it-ops
 
 # I PB360 er det en del par av milepæler som skal komme sammen, denne sjekker disse
 # Merk completion_gate, som gjør at regelen kun sjekker milepælene for faser hvor "Sendt til politisk behandling" er nådd 
@@ -57,8 +57,7 @@ rules:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
-
-  owner: Teknologi
+  routing: individual
 
 # Denne fungerer på samme måte som den over, men for offentlig ettersyn
 - rule_id: MIL-004
@@ -75,9 +74,8 @@ rules:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
-
-  owner: Teknologi
-
+  routing: individual
+  
   # Denne fungerer på samme måte som den over, men for oppstartsmøte
 - rule_id: MIL-005
   name: Begge milepæler i et par for byggesak må være tilstede
@@ -93,8 +91,7 @@ rules:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
-
-  owner: Teknologi
+  routing: individual
 
 # Denne fungerer på samme måte som den over, men for byggesak
 - rule_id: MIL-006
@@ -111,6 +108,4 @@ rules:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
-
-  owner: Teknologi
-
+  routing: individual

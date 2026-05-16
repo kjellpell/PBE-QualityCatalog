@@ -216,7 +216,7 @@ DQ Score Change % =
 Source table: `dq_violations_owners` (not `dq_violations` — see Section 7).
 
 - **KPI cards**: `Active Violations`, `Rules With Active Violations`, `Latest Batch Date`
-- **Slicers**: `rule_group`, `batch_date`, `issue_status`, `owner_name`
+- **Slicers**: `rule_group`, `routing_team`, `batch_date`, `issue_status`, `owner_name`
 - **Main table**: `saksnummer`, `rule_name`, `violated_column`, `violation_detail`,
   `indikator`, `batch_date`, `issue_status`, `owner_name`
 - **Trend line**: Active violation count by `batch_date`

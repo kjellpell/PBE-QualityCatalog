@@ -3,16 +3,15 @@ table: faser
 database: saksbehandling
 description: Validering av datakvalitet for faser
 pk_column: stage_recno
-context_columns:
-  - to_case_recno
-  - indikator
+ownership_col: saksansvarlig_kode
 
 # Jeg har valgt å kun se på PB360-saker per nå
 catalog_filter:
   type: custom
   where_clause: fagsystem = 'PB360'
 
-# Noen av reglene bruker saksbehandling.saker-tabellen, og det koster ikke noe ekstra å ha den med 
+# I de fleste tilfeller trenger vi å koble oss til saksbehandling.saker for å få saksbehandler_id, saksnummer etc.
+# Denne informasjonen er nødvendig for Power BI rapporter over avvik og e-poster
 joins:
 - table: saksbehandling.saker
   left_on: to_case_recno
@@ -22,18 +21,23 @@ joins:
   - case_recno
   - saksansvarlig_kode
 
+# Context_columns er kolonner som brukes for å gi mer kontekst i rapporteringen av regelbrudd,
+# Disse kolonnene brukes f.eks. når det skal sendes ut varsler og i Power BI-rapporter
+context_columns:
+  - to_case_recno
+  - indikator
+
 # not_null fungerer slik at det er mulig å sjekke flere kolonner for blanke verdier i samme regel
 rules:
 - rule_id: FAS-001
-  name: Saksnummer og stage_recno kan ikke være null
-  description: 'Alle rader i faser må ha et gyldig saksnummer og stage_recno.'
+  name: Verdier kan ikke være null
+  description: 'Alle påkrevde rader må ha en verdi.'
   expectation: not_null
   parameters:
     columns:
       - to_case_recno
       - stage_recno
-
-  owner: Teknologi
+  routing: it-ops
 
 # Dette er muligens en sjekk som allerede gjøres ved ingestion
 - rule_id: FAS-002
@@ -43,8 +47,7 @@ rules:
   parameters:
     columns:
     - stage_recno
-
-  owner: Teknologi
+  routing: it-ops
 
 # Forskjellen mellom not_null og not_null_when er at den første sjekker at kolonnen 
 # ikke er null for alle rader, mens den andre sjekker at kolonnen ikke er null under visse betingelser. 
@@ -60,8 +63,7 @@ rules:
     columns:
     - fase_lukket_dato
     - tidligste_startmilepael_dato
-
-  owner: Teknologi
+  routing: individual
 
 # Formålet med denne regelen er å unngå at det finnes åpne faser i en sak, uten at saken har en saksbehandler.
 # Det er veldig mange av disse, så kan det være at regelen er feil satt opp.
@@ -74,8 +76,7 @@ rules:
     operator: IS NULL
     columns:
     - saksansvarlig_kode
-
-  owner: Teknologi
+  routing: individual
 
 # Dette er en viktig regelen, for å sikre at tidsbruk blir beregnet riktig
 - rule_id: FAS-005
@@ -86,8 +87,7 @@ rules:
     left_column: seneste_stoppmilepael_dato
     right_column: tidligste_startmilepael_dato
     operator: '>='
-
-  owner: Teknologi
+  routing: individual
 
 # Sjekk på tidsbruk er egentlig bare en sikkerhetsventil, siden vi får dette tallet fra PB360 direkte
 - rule_id: FAS-006
@@ -98,8 +98,7 @@ rules:
     left_column: tidsbruk
     right_value: 0
     operator: '>='
-
-  owner: Teknologi
+  routing: it-ops
 
 # Bransjetid beregner vi imidlertid selv, og må derfor ha en sjekk.
 - rule_id: FAS-007
@@ -110,8 +109,7 @@ rules:
     left_column: bransjetid
     right_value: 0
     operator: '>='
-
-  owner: Teknologi
+  routing: it-ops
 
 # Fordi det ikke er noen begrensning på fristforlengelse i PB360, så må vi sjekke de indikatorene som normalt _ikke_ skal ha fristforlengelse
 # Se også regelen under, som sjekker hvor stor fristforlengelsen er for de fasene som skal ha det 
@@ -137,8 +135,7 @@ rules:
       - Seksjonering
       - Reseksjonering
       - Oppstartsmøte
-
-  owner: Teknologi
+  routing: it-ops
 
 # Denne sjekker om fristforlengelsen er lengre enn tillatt
 - rule_id: FAS-009
@@ -152,8 +149,7 @@ rules:
     filter_column: indikator
     filter_values:
       - Til politisk behandling
-
-  owner: Teknologi
+  routing: individual
 
 # Her er det en del avvik, og det stusser jeg litt på
 - rule_id: FAS-010
@@ -164,17 +160,4 @@ rules:
     left_column: decisiondate
     right_column: seneste_stoppmilepael_dato
     operator: '>='
-
-  owner: Teknologi
-
-# Her er det en del avvik, og det stusser jeg litt på
-- rule_id: FAS-011
-  name: decisiondate kan ikke være lavere enn sluttdato 
-  description: 'For ferdige faser må decisiondate ikke være tidligere enn sluttdato.'
-  expectation: comparison
-  parameters:
-    left_column: decisiondate
-    right_column: seneste_stoppmilepael_dato
-    operator: '>='
-
-  owner: Teknologi
+    routing: it-ops
