@@ -41,71 +41,28 @@ print(f"Spark ready. Target schema: {_schema}")
 #   expectation      – the expectation type applied
 #   table_name       – the source table validated
 #   status           – PASSED | FAILED | ERROR
-#   column_a         – left-hand column (validate_column_comparison only)
-#   column_b         – right-hand column (validate_column_comparison only)
-#   operator         – comparison operator (validate_column_comparison only)
-#   sql_query        – the SQL string executed (sql / sql_validation only)
-#   reference_table  – reference table name (validate_foreign_key only)
-#   reference_column – reference column name (validate_foreign_key only)
 # -----------------------------------------------------------------------------
 spark.sql(f"""
 CREATE TABLE IF NOT EXISTS {_results_table} (
-    run_id          STRING,
-    run_timestamp   TIMESTAMP,
-    batch_date      DATE,
-    rule_group      STRING,
-    rule_id         STRING,
-    rule_name       STRING,
-    table_name      STRING,
-    expectation     STRING,
-    owner           STRING,
-    owner_email          STRING,
-    total_rows      BIGINT,
-    passed_rows     BIGINT,
-    failed_rows     BIGINT,
-    success_pct     DOUBLE,
-    status          STRING,
-    details         STRING,
-    column_a        STRING,
-    column_b        STRING,
-    operator        STRING,
-    sql_query       STRING,
-    reference_table      STRING,
-    reference_column     STRING,
-    rule_duration_seconds DOUBLE,
-    control_ref          STRING,
-    control_type         STRING,
-    risk_domain          STRING,
-    remediation_due_days INT
+    run_id                STRING,
+    run_timestamp         TIMESTAMP,
+    batch_date            DATE,
+    rule_group            STRING,
+    rule_id               STRING,
+    rule_name             STRING,
+    table_name            STRING,
+    expectation           STRING,
+    owner                 STRING,
+    total_rows            BIGINT,
+    passed_rows           BIGINT,
+    failed_rows           BIGINT,
+    success_pct           DOUBLE,
+    status                STRING,
+    details               STRING,
+    rule_duration_seconds DOUBLE
 )
 USING DELTA
 """)
-
-# Add new columns to the existing table if this script is re-run against an
-# older deployment that pre-dates these fields.
-for _col_def in [
-    "column_a             STRING",
-    "column_b             STRING",
-    "operator             STRING",
-    "sql_query            STRING",
-    "reference_table      STRING",
-    "reference_column     STRING",
-    "rule_duration_seconds DOUBLE",
-    "owner_email          STRING",
-    "control_ref          STRING",
-    "control_type         STRING",
-    "risk_domain          STRING",
-    "remediation_due_days INT",
-]:
-    try:
-        spark.sql(
-            f"ALTER TABLE {_results_table} ADD COLUMNS ({_col_def})"
-        )
-    except Exception as _exc:
-        # Silently skip if the column already exists; surface all other errors.
-        _msg = str(_exc).lower()
-        if "already exists" not in _msg and "duplicate" not in _msg:
-            print(f"  Warning: could not add column '{_col_def}': {_exc}")
 
 print("dq_run_results ready.")
 
@@ -220,33 +177,22 @@ print("dq_notifications ready.")
 # never has to auto-create them at runtime.
 spark.sql(f"""
 CREATE TABLE IF NOT EXISTS {_results_table}_tmp (
-    run_id          STRING,
-    run_timestamp   TIMESTAMP,
-    batch_date      DATE,
-    rule_group      STRING,
-    rule_id         STRING,
-    rule_name       STRING,
-    table_name      STRING,
-    expectation     STRING,
-    owner           STRING,
-    owner_email          STRING,
-    total_rows      BIGINT,
-    passed_rows     BIGINT,
-    failed_rows     BIGINT,
-    success_pct     DOUBLE,
-    status          STRING,
-    details         STRING,
-    column_a        STRING,
-    column_b        STRING,
-    operator        STRING,
-    sql_query       STRING,
-    reference_table      STRING,
-    reference_column     STRING,
-    rule_duration_seconds DOUBLE,
-    control_ref          STRING,
-    control_type         STRING,
-    risk_domain          STRING,
-    remediation_due_days INT
+    run_id                STRING,
+    run_timestamp         TIMESTAMP,
+    batch_date            DATE,
+    rule_group            STRING,
+    rule_id               STRING,
+    rule_name             STRING,
+    table_name            STRING,
+    expectation           STRING,
+    owner                 STRING,
+    total_rows            BIGINT,
+    passed_rows           BIGINT,
+    failed_rows           BIGINT,
+    success_pct           DOUBLE,
+    status                STRING,
+    details               STRING,
+    rule_duration_seconds DOUBLE
 )
 USING DELTA
 """)

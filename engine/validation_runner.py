@@ -24,14 +24,14 @@
 import concurrent.futures
 import time
 import uuid
-import math
+
 from datetime import datetime, date, timezone
 from pathlib import Path
 
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.types import (
     StructType, StructField,
-    StringType, LongType, DoubleType, TimestampType, DateType, IntegerType,
+    StringType, LongType, DoubleType, TimestampType, DateType,
 )
 
 spark = SparkSession.builder.getOrCreate()
@@ -258,25 +258,13 @@ RESULT_SCHEMA = StructType([
     StructField("table_name",           StringType(),    False),
     StructField("expectation",          StringType(),    False),
     StructField("owner",                StringType(),    False),
-    StructField("owner_email",          StringType(),    True),
     StructField("total_rows",           LongType(),      True),
     StructField("passed_rows",          LongType(),      True),
     StructField("failed_rows",          LongType(),      True),
     StructField("success_pct",          DoubleType(),    True),
     StructField("status",               StringType(),    False),
     StructField("details",              StringType(),    True),
-    StructField("column_a",             StringType(),    True),
-    StructField("column_b",             StringType(),    True),
-    StructField("operator",             StringType(),    True),
-    StructField("sql_query",            StringType(),    True),
-    StructField("reference_table",      StringType(),    True),
-    StructField("reference_column",     StringType(),    True),
     StructField("rule_duration_seconds", DoubleType(),   True),
-    # IC passthrough fields — populated for IC rules, None for DQ-only rules
-    StructField("control_ref",           StringType(),   True),
-    StructField("control_type",          StringType(),   True),
-    StructField("risk_domain",           StringType(),   True),
-    StructField("remediation_due_days",  IntegerType(),  True),
 ])
 
 
@@ -431,20 +419,6 @@ def run_validation(
         exp_name  = rule["expectation"]
         owner     = rule.get("owner", "")
 
-        params    = rule.get("parameters", {})
-        column_a  = params.get("column_A") if exp_name == "comparison" else None
-        column_b  = params.get("column_B") if exp_name == "comparison" else None
-        operator  = params.get("operator")  if exp_name == "comparison" else None
-        sql_query = (
-            params.get("sql") or rule.get("sql")
-            if exp_name == "sql_violations"
-            else None
-        )
-
-        ref_block        = params.get("reference", {})
-        reference_table  = ref_block.get("table")  if exp_name == "reference_exists" else None
-        reference_column = ref_block.get("column") if exp_name == "reference_exists" else None
-
         print(f"  → [{rule_id}] {rule_name} ({exp_name}) ... ", end="")
         _rule_start = time.perf_counter()
 
@@ -511,25 +485,13 @@ def run_validation(
             table_name,
             exp_name,
             owner,
-            rule.get("owner_email"),
             result["total_rows"],
             result["passed_rows"],
             result["failed_rows"],
             result["success_pct"],
             result["status"],
             result["details"],
-            column_a,
-            column_b,
-            operator,
-            sql_query,
-            reference_table,
-            reference_column,
             round(_rule_elapsed, 3),
-            # IC passthrough (None for DQ-only rules)
-            rule.get("control_ref"),
-            rule.get("control_type"),
-            rule.get("risk_domain"),
-            _as_int_or_none(rule.get("remediation_due_days")),
         ))
 
         if viols_spark is not None:
@@ -561,20 +523,6 @@ def run_validation(
     return results_df, all_violations
 
 
-def _as_int_or_none(value):
-    if value in (None, ""):
-        return None
-    try:
-        if math.isnan(value):
-            return None
-    except TypeError:
-        pass
-    if isinstance(value, str) and value.strip().lower() in {"nan", "none", "null"}:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _run_validator(

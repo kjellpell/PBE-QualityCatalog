@@ -183,28 +183,6 @@ for cat in catalogs:
     _write_catalog_table(cat)
 
 # -----------------------------------------------------------------------------
-# STEP 5: Update dq_run_results.owner_email for this run
-# -----------------------------------------------------------------------------
-_union_parts = " UNION ALL ".join(
-    f"SELECT rule_id, owner_email"
-    f" FROM {SCHEMA}.dq_violations_{cat['catalog_name']}"
-    f" WHERE run_id = '{run_id}' AND owner_email IS NOT NULL"
-    for cat in catalogs
-)
-if _union_parts:
-    spark.sql(f"""
-        MERGE INTO {RESULTS_TABLE} AS target
-        USING (
-            SELECT rule_id, CONCAT_WS(';', COLLECT_SET(owner_email)) AS owner_email
-            FROM ({_union_parts}) AS _all
-            GROUP BY rule_id
-        ) AS source
-        ON target.run_id = '{run_id}' AND target.rule_id = source.rule_id
-        WHEN MATCHED THEN UPDATE SET target.owner_email = source.owner_email
-    """)
-    print(f"  Updated owner_email in {RESULTS_TABLE} for run {run_id}")
-
-# -----------------------------------------------------------------------------
 # STEP 6: IT-ops notifications
 # -----------------------------------------------------------------------------
 def _send_itops_notification() -> list[dict]:
