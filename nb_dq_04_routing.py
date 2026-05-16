@@ -59,6 +59,34 @@ if _not_set:
 # -----------------------------------------------------------------------------
 # STEP 2: Build routing index from YAML catalogs
 # -----------------------------------------------------------------------------
+def _apply_catalog_filter(src_df, catalog_filter, rule_group: str):
+    if not catalog_filter:
+        return src_df
+    filter_type = catalog_filter.get("type")
+    if filter_type == "custom":
+        where_clause = catalog_filter.get("where_clause", "")
+        if not where_clause:
+            return src_df
+        filtered = src_df.filter(F.expr(where_clause))
+        print(f"  [{rule_group}] catalog_filter applied: custom — {where_clause}")
+        return filtered
+    if filter_type == "date_range":
+        date_column   = catalog_filter.get("date_column")
+        lookback_days = catalog_filter.get("lookback_days")
+        include_nulls = bool(catalog_filter.get("include_nulls", False))
+        if not date_column or not lookback_days:
+            return src_df
+        cutoff    = F.date_sub(F.current_date(), int(lookback_days))
+        predicate = F.col(date_column).cast("date") >= cutoff
+        if include_nulls:
+            predicate = predicate | F.col(date_column).isNull()
+        filtered = src_df.filter(predicate)
+        print(f"  [{rule_group}] catalog_filter applied: date_range — {date_column} last {lookback_days}d")
+        return filtered
+    print(f"  [{rule_group}] catalog_filter type '{filter_type}' not recognised — skipped")
+    return src_df
+
+
 def _build_routing_index(rules_dir: Path):
     rules_index = {}  # rule_id → {routing, rule_group}
     catalogs = []     # one entry per YAML file
@@ -75,6 +103,7 @@ def _build_routing_index(rules_dir: Path):
         pk_column       = doc.get("pk_column", "")
         context_columns = doc.get("context_columns", [])
         joins_cfg       = doc.get("joins", [])
+        catalog_filter  = doc.get("catalog_filter")
 
         for rule in doc.get("rules", []):
             routing = rule.get("routing", "none")
@@ -89,6 +118,7 @@ def _build_routing_index(rules_dir: Path):
             "ownership_col":  ownership_col,
             "context_columns": context_columns,
             "joins_cfg":      joins_cfg,
+            "catalog_filter": catalog_filter,
         })
 
     print(f"  Loaded {len(catalogs)} catalogs, {len(rules_index)} rules from {rules_dir}")
@@ -169,6 +199,8 @@ def _enrich_catalog(cat: dict):
                 src = src.join(j_df, on=j_on, how=j_how)
             elif j_left and j_right:
                 src = src.join(j_df, src[j_left] == j_df[j_right], how=j_how)
+
+        src = _apply_catalog_filter(src, cat.get("catalog_filter"), rule_group)
 
         select_exprs = [src[pk_column].cast("string").alias("_pk_str")]
         if do_owner_join:
