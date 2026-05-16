@@ -213,7 +213,7 @@ DQ Score Change % =
 - **Enable drill-through** from Pages 2–4 on `rule_id`
 
 ### Page 6 — My Violations (handler/manager view)
-Source table: `dq_violations_owners` (not `dq_violations` — see Section 7).
+Source table: `dq_violations_enriched` (not `dq_violations` — see Section 7).
 
 - **KPI cards**: `Active Violations`, `Rules With Active Violations`, `Latest Batch Date`
 - **Slicers**: `rule_group`, `routing_team`, `batch_date`, `issue_status`, `owner_name`
@@ -229,7 +229,7 @@ context columns carry human-readable identifiers directly.
 
 ## 5. Relating Violations to Source Tables
 
-> **Handler/manager report (Page 6):** uses `dq_violations_owners`, which already contains context columns (`saksnummer`, `indikator`, etc.) alongside each violation row. No bridge tables are needed for that report.
+> **Handler/manager report (Page 6):** uses `dq_violations_enriched`, which already contains context columns (`saksnummer`, `indikator`, etc.) alongside each violation row. No bridge tables are needed for that report.
 
 The bridge table pattern below applies to the management summary report (Pages 1–5), which is built on `dq_run_results` and `dq_violations`. `dq_violations[primary_key_value]` is always stored as **text**. Source tables like `Prosess` use a typed key (integer, GUID, etc.). Power BI cannot create a direct relationship across mismatched types, so use a calculated table as a typed bridge per rule group.
 
@@ -303,7 +303,7 @@ CALCULATE(
 
 ### Data source
 
-All measures and visuals on Page 6 use `dq_violations_owners` — the unified
+All measures and visuals on Page 6 use `dq_violations_enriched` — the unified
 table written by `nb_dq_04_routing.py` after each run.
 
 ### Role-Level Security setup
@@ -312,14 +312,14 @@ In **Power BI Desktop → Modeling → Manage Roles**, create two roles:
 
 | Role | Table | DAX filter | Who gets this role |
 |---|---|---|---|
-| `Handler` | `dq_violations_owners` | `[owner_email] = USERPRINCIPALNAME()` | Individual saksbehandlere |
+| `Handler` | `dq_violations_enriched` | `[owner_email] = USERPRINCIPALNAME()` | Individual saksbehandlere |
 | `Manager` | *(no filter)* | *(leave empty)* | Team leads, business teams, top of hierarchy |
 
 After publishing to Power BI Service, assign users to the correct role under
 **Workspace → Dataset settings → Row-level security**.
 
 With RLS active, all DAX measures on the page scope automatically to the
-logged-in user's visible rows — `COUNTROWS(dq_violations_owners)` returns the
+logged-in user's visible rows — `COUNTROWS(dq_violations_enriched)` returns the
 handler's own count, and the manager's full count. No separate "My violations"
 measures are needed.
 
@@ -328,22 +328,22 @@ measures are needed.
 ```dax
 Active Violations =
 CALCULATE(
-    COUNTROWS( dq_violations_owners ),
-    dq_violations_owners[issue_status] = "Active"
+    COUNTROWS( dq_violations_enriched ),
+    dq_violations_enriched[issue_status] = "Active"
 )
 ```
 
 ```dax
 Rules With Active Violations =
 CALCULATE(
-    DISTINCTCOUNT( dq_violations_owners[rule_id] ),
-    dq_violations_owners[issue_status] = "Active"
+    DISTINCTCOUNT( dq_violations_enriched[rule_id] ),
+    dq_violations_enriched[issue_status] = "Active"
 )
 ```
 
 ```dax
 Latest Batch Date =
-CALCULATE( MAX( dq_violations_owners[batch_date] ), ALL( dq_violations_owners ) )
+CALCULATE( MAX( dq_violations_enriched[batch_date] ), ALL( dq_violations_enriched ) )
 ```
 
 ---

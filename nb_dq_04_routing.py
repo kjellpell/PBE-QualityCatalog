@@ -1,7 +1,7 @@
 # =============================================================================
 # nb_dq_04_routing.py
 # Post-validation routing: enriches violations with owner and context data,
-# then writes dq_violations_owners for Power BI reporting.
+# then writes dq_violations_enriched for Power BI reporting.
 #
 # Pipeline position: run after nb_dq_03_run_validation.py
 #
@@ -44,7 +44,7 @@ cfg = _cfg_mod
 SCHEMA = cfg.DEFAULT_SCHEMA
 RESULTS_TABLE = f"{SCHEMA}.{cfg.DQ_RESULTS_TABLE}"
 VIOLATIONS_TABLE = f"{SCHEMA}.{cfg.DQ_VIOLATIONS_TABLE}"
-OWNERS_TABLE = f"{SCHEMA}.{getattr(cfg, 'DQ_OWNERS_TABLE', 'dq_violations_owners')}"
+ENRICHED_TABLE = f"{SCHEMA}.{getattr(cfg, 'DQ_ENRICHED_TABLE', 'dq_violations_enriched')}"
 
 ANSATTE_TABLE = getattr(cfg, "ANSATTE_TABLE", "saksbehandling.ansatte")
 ANSATTE_KEY_COL = getattr(cfg, "ANSATTE_KEY_COL", "")
@@ -124,7 +124,7 @@ _routing_df   = spark.createDataFrame(_routing_rows, ["rule_id", "routing_team"]
 violations_df = violations_df.join(_routing_df, on="rule_id", how="left")
 
 # -----------------------------------------------------------------------------
-# STEP 4: Write dq_violations_owners — unified across all catalogs
+# STEP 4: Write dq_violations_enriched — unified across all catalogs
 #
 # One row per violation, enriched with owner_email/owner_name, routing_team,
 # and any context_columns declared in the catalog YAML. Columns unique to one
@@ -215,7 +215,7 @@ def _enrich_catalog(cat: dict):
 
 _frames = [_enrich_catalog(cat) for cat in catalogs]
 owners_df = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), _frames)
-owners_df.write.mode("overwrite").format("delta").saveAsTable(OWNERS_TABLE)
-print(f"  {OWNERS_TABLE}: {owners_df.count()} rows written")
+owners_df.write.mode("overwrite").format("delta").saveAsTable(ENRICHED_TABLE)
+print(f"  {ENRICHED_TABLE}: {owners_df.count()} rows written")
 
 print("\nRouting complete.")
