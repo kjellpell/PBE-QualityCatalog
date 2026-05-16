@@ -1,19 +1,19 @@
 # =============================================================================
 # nb_dq_04_routing.py
-# Post-validation routing: writes per-catalog violation tables and sends
-# notifications via Power Automate.
+# Post-validation routing: writes dq_violations_owners (unified, enriched) and
+# sends notifications via Power Automate.
 #
 # Pipeline position: run after nb_dq_03_run_validation.py
 #
 # Prerequisites:
 #   - qualitycatalog.dq_run_results and qualitycatalog.dq_violations are populated
-#   - rules/*.yaml files contain `routing` and optional `ownership_col` fields
+#   - rules/*.yaml files contain optional `ownership_col` and `context_columns` fields
 #   - QualityCatalogConfig.py is deployed to /lakehouse/default/Files/Configs/
 #
 # Skip conditions:
-#   - No failures in the latest run → per-catalog tables written empty, notifications no-ops
 #   - POWER_AUTOMATE_*_URL empty → that notification channel is silently skipped
 #   - ownership_col empty OR ansatte config keys empty → owner columns written as NULL
+#   - context_columns empty → no context enrichment for that catalog
 # =============================================================================
 
 from __future__ import annotations
@@ -48,6 +48,7 @@ SCHEMA = cfg.DEFAULT_SCHEMA
 RESULTS_TABLE = f"{SCHEMA}.{cfg.DQ_RESULTS_TABLE}"
 VIOLATIONS_TABLE = f"{SCHEMA}.{cfg.DQ_VIOLATIONS_TABLE}"
 NOTIFICATIONS_TABLE = f"{SCHEMA}.{getattr(cfg, 'DQ_NOTIFICATIONS_TABLE', 'dq_notifications')}"
+OWNERS_TABLE = f"{SCHEMA}.{getattr(cfg, 'DQ_OWNERS_TABLE', 'dq_violations_owners')}"
 
 ANSATTE_TABLE = getattr(cfg, "ANSATTE_TABLE", "saksbehandling.ansatte")
 ANSATTE_KEY_COL = getattr(cfg, "ANSATTE_KEY_COL", "")
@@ -119,35 +120,35 @@ print(f"  Latest run_id: {run_id}")
 
 _VIOLATION_COLS = [
     "run_id", "run_timestamp", "batch_date",
-    "rule_id", "rule_name",
+    "rule_id", "rule_name", "rule_group",
     "primary_key_value", "violated_column", "actual_value",
     "expected_condition", "violation_detail", "issue_status",
-    "rule_group",  # used for per-catalog filtering; excluded from output tables
 ]
 violations_df = spark.sql(
     f"SELECT {', '.join(_VIOLATION_COLS)} FROM {VIOLATIONS_TABLE} WHERE run_id = '{run_id}'"
 )
 print(f"  Violations in this run: {violations_df.count()}")
 
-_OUTPUT_COLS = [c for c in _VIOLATION_COLS if c != "rule_group"]
-
 # -----------------------------------------------------------------------------
-# STEP 4: Write per-catalog violation tables
+# STEP 4: Write dq_violations_owners — unified across all catalogs
+#
+# One row per violation, enriched with owner_email/owner_name and any
+# context_columns declared in the catalog YAML. Columns unique to one catalog
+# are NULL for all other catalogs' rows (unionByName fills gaps automatically).
+# Power BI applies RLS on owner_email to give each handler their own view.
 # -----------------------------------------------------------------------------
 _ansatte_ready = all([ANSATTE_KEY_COL, ANSATTE_EMAIL_COL, ANSATTE_NAME_COL])
 
 
-def _write_catalog_table(cat: dict) -> None:
-    catalog_name = cat["catalog_name"]
-    rule_group = cat["rule_group"]
+def _enrich_catalog(cat: dict):
+    rule_group    = cat["rule_group"]
     ownership_col = cat["ownership_col"]
-    database = cat["database"]
-    table = cat["table"]
-    pk_column = cat["pk_column"]
+    database      = cat["database"]
+    table         = cat["table"]
+    pk_column     = cat["pk_column"]
     context_columns = cat.get("context_columns", [])
-    target = f"{SCHEMA}.dq_violations_{catalog_name}"
 
-    cat_df = violations_df.filter(F.col("rule_group") == rule_group).select(_OUTPUT_COLS)
+    cat_df = violations_df.filter(F.col("rule_group") == rule_group)
 
     do_owner_join = ownership_col and _ansatte_ready
     need_src = database and table and pk_column and (do_owner_join or context_columns)
@@ -181,26 +182,25 @@ def _write_catalog_table(cat: dict) -> None:
                 .dropDuplicates(["_pk_str"])
             )
 
-        out_df = (
+        return (
             cat_df
             .join(lookup, cat_df["primary_key_value"] == lookup["_pk_str"], "left")
             .drop("_pk_str")
         )
     else:
         if ownership_col and not _ansatte_ready:
-            print(f"  Info: {catalog_name} has ownership_col='{ownership_col}' but ansatte keys not configured — owner columns NULL")
-        out_df = (
+            print(f"  Info: {cat['catalog_name']} has ownership_col='{ownership_col}' but ansatte keys not configured — owner columns NULL")
+        return (
             cat_df
-            .withColumn("owner_name", F.lit(None).cast("string"))
             .withColumn("owner_email", F.lit(None).cast("string"))
+            .withColumn("owner_name", F.lit(None).cast("string"))
         )
 
-    out_df.write.mode("overwrite").format("delta").saveAsTable(target)
-    print(f"  {target}: {out_df.count()} rows written")
 
-
-for cat in catalogs:
-    _write_catalog_table(cat)
+_frames = [_enrich_catalog(cat) for cat in catalogs]
+owners_df = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), _frames)
+owners_df.write.mode("overwrite").format("delta").saveAsTable(OWNERS_TABLE)
+print(f"  {OWNERS_TABLE}: {owners_df.count()} rows written")
 
 # -----------------------------------------------------------------------------
 # STEP 6: IT-ops notifications
@@ -256,29 +256,23 @@ def _send_individual_digests() -> list[dict]:
         logs.append(_log(now, "individual", None, 0, "skipped", "POWER_AUTOMATE_INDIVIDUAL_URL not configured"))
         return logs
 
-    individual_cats = [c for c in catalogs if c["has_individual"]]
-    if not individual_cats:
+    individual_ids = [rid for rid, m in rules_index.items() if m["routing"] == "individual"]
+    if not individual_ids:
         return logs
 
-    frames = []
-    for cat in individual_cats:
-        tbl = f"{SCHEMA}.dq_violations_{cat['catalog_name']}"
-        try:
-            df = spark.sql(f"""
-                SELECT owner_email, owner_name, rule_id, rule_name,
-                       primary_key_value, violated_column, violation_detail
-                FROM {tbl}
-                WHERE run_id = '{run_id}' AND owner_email IS NOT NULL
-            """)
-            frames.append(df)
-        except Exception as exc:
-            print(f"  Warning: could not read {tbl} — {exc}")
+    in_list = ", ".join(f"'{r}'" for r in individual_ids)
+    combined_pd = spark.sql(f"""
+        SELECT owner_email, owner_name, rule_id, rule_name,
+               primary_key_value, violated_column, violation_detail
+        FROM {OWNERS_TABLE}
+        WHERE run_id = '{run_id}'
+          AND owner_email IS NOT NULL
+          AND rule_id IN ({in_list})
+    """).toPandas()
 
-    if not frames:
+    if combined_pd.empty:
         print("  Individual: no violations with resolved owners")
         return logs
-
-    combined_pd = reduce(lambda a, b: a.union(b), frames).toPandas()
 
     for email, group in combined_pd.groupby("owner_email"):
         send_time = datetime.now(timezone.utc)
