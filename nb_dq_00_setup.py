@@ -24,9 +24,10 @@ _cfg_mod = importlib.util.module_from_spec(_cfg_spec)
 _cfg_spec.loader.exec_module(_cfg_mod)
 
 _schema = getattr(_cfg_mod, "DEFAULT_SCHEMA", "qualitycatalog")
-_results_table   = f"{_schema}.{_cfg_mod.DQ_RESULTS_TABLE}"
-_violations_table = f"{_schema}.{_cfg_mod.DQ_VIOLATIONS_TABLE}"
-_metrics_table   = f"{_schema}.{_cfg_mod.DQ_EXECUTION_METRICS_TABLE}"
+_results_table        = f"{_schema}.{_cfg_mod.DQ_RESULTS_TABLE}"
+_violations_table     = f"{_schema}.{_cfg_mod.DQ_VIOLATIONS_TABLE}"
+_metrics_table        = f"{_schema}.{_cfg_mod.DQ_EXECUTION_METRICS_TABLE}"
+_notifications_table  = f"{_schema}.{getattr(_cfg_mod, 'DQ_NOTIFICATIONS_TABLE', 'dq_notifications')}"
 
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {_schema}")
 print(f"Spark ready. Target schema: {_schema}")
@@ -192,7 +193,32 @@ USING DELTA
 print("dq_execution_metrics ready.")
 
 
-# CELL 5 — dry-run tmp tables
+# CELL 5 — dq_notifications
+# One row per notification attempt written by nb_dq_04_routing.py.
+# Append-only — preserves the full history of what was sent, skipped, or failed.
+# Key fields for Power BI:
+#   notification_type  – 'it-ops' or 'individual'
+#   recipient_email    – owner email for individual; NULL for it-ops (recipient is team alias in PA)
+#   status             – 'sent', 'skipped', or 'failed'
+#   error_message      – populated only on failure
+# -----------------------------------------------------------------------------
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {_notifications_table} (
+    run_id              STRING,
+    notified_at         TIMESTAMP,
+    notification_type   STRING,
+    recipient_email     STRING,
+    violation_count     INT,
+    status              STRING,
+    error_message       STRING
+)
+USING DELTA
+""")
+
+print("dq_notifications ready.")
+
+
+# CELL 6 — dry-run tmp tables
 # Same schema as production tables. Created here so the validation runner
 # never has to auto-create them at runtime.
 spark.sql(f"""
@@ -271,6 +297,6 @@ USING DELTA
 print("dry-run tmp tables ready.")
 
 print("\n=== DQ SETUP COMPLETE ===")
-print(f"Delta tables: {_results_table}, {_violations_table}, {_metrics_table}")
+print(f"Delta tables: {_results_table}, {_violations_table}, {_metrics_table}, {_notifications_table}")
 print(f"Dry-run tmp: {_results_table}_tmp, {_violations_table}_tmp, {_metrics_table}_tmp")
 
