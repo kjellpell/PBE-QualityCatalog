@@ -3,6 +3,9 @@ table: milepaeler
 database: saksbehandling
 description: Datakvalitet på milepæler knyttet til saksfaser
 pk_column: milestone_recno
+context_columns:
+  - to_stage_recno
+  - milestone_title
 
 # Jeg har valgt å kun se på PB360-saker per nå
 catalog_filter:

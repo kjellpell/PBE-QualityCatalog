@@ -3,6 +3,9 @@ table: faser
 database: saksbehandling
 description: Validering av datakvalitet for faser
 pk_column: stage_recno
+context_columns:
+  - to_case_recno
+  - indikator
 
 # Jeg har valgt å kun se på PB360-saker per nå
 catalog_filter:

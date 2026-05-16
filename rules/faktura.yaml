@@ -4,6 +4,8 @@ database: saksbehandling
 description: Datakvalitet på fakturalinjer som kommer fra PB360
 pk_column: fakturanr
 ownership_col: ""
+context_columns:
+  - prosess_id
 rules:
 - rule_id: FAK-001
   name: Fakturanr kan ikke være null

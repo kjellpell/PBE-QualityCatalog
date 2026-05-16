@@ -81,6 +81,7 @@ def _build_routing_index(rules_dir: Path):
         database = doc.get("database", "")
         table = doc.get("table", "")
         pk_column = doc.get("pk_column", "")
+        context_columns = doc.get("context_columns", [])
         has_individual = False
 
         for rule in doc.get("rules", []):
@@ -96,6 +97,7 @@ def _build_routing_index(rules_dir: Path):
             "table": table,
             "pk_column": pk_column,
             "ownership_col": ownership_col,
+            "context_columns": context_columns,
             "has_individual": has_individual,
         })
 
@@ -142,28 +144,46 @@ def _write_catalog_table(cat: dict) -> None:
     database = cat["database"]
     table = cat["table"]
     pk_column = cat["pk_column"]
+    context_columns = cat.get("context_columns", [])
     target = f"{SCHEMA}.dq_violations_{catalog_name}"
 
     cat_df = violations_df.filter(F.col("rule_group") == rule_group).select(_OUTPUT_COLS)
 
-    if ownership_col and _ansatte_ready and database and table and pk_column:
-        src = spark.table(f"{database}.{table}").select(
-            F.col(pk_column).cast("string").alias("_pk_str"),
-            F.col(ownership_col).cast("string").alias("_owner_ref"),
-        )
-        ans = spark.table(ANSATTE_TABLE).select(
-            F.col(ANSATTE_KEY_COL).cast("string").alias("_ansatte_key"),
-            F.col(ANSATTE_EMAIL_COL).alias("owner_email"),
-            F.col(ANSATTE_NAME_COL).alias("owner_name"),
-        )
-        owner_lookup = (
-            src.join(ans, src["_owner_ref"] == ans["_ansatte_key"], "left")
-            .select("_pk_str", "owner_email", "owner_name")
-            .dropDuplicates(["_pk_str"])
-        )
+    do_owner_join = ownership_col and _ansatte_ready
+    need_src = database and table and pk_column and (do_owner_join or context_columns)
+
+    if need_src:
+        select_exprs = [F.col(pk_column).cast("string").alias("_pk_str")]
+        if do_owner_join:
+            select_exprs.append(F.col(ownership_col).cast("string").alias("_owner_ref"))
+        for col in context_columns:
+            select_exprs.append(F.col(col))
+
+        src = spark.table(f"{database}.{table}").select(*select_exprs)
+
+        if do_owner_join:
+            ans = spark.table(ANSATTE_TABLE).select(
+                F.col(ANSATTE_KEY_COL).cast("string").alias("_ansatte_key"),
+                F.col(ANSATTE_EMAIL_COL).alias("owner_email"),
+                F.col(ANSATTE_NAME_COL).alias("owner_name"),
+            )
+            lookup = (
+                src.join(ans, src["_owner_ref"] == ans["_ansatte_key"], "left")
+                .select(["_pk_str", "owner_email", "owner_name"] + context_columns)
+                .dropDuplicates(["_pk_str"])
+            )
+        else:
+            lookup = (
+                src
+                .withColumn("owner_email", F.lit(None).cast("string"))
+                .withColumn("owner_name", F.lit(None).cast("string"))
+                .select(["_pk_str", "owner_email", "owner_name"] + context_columns)
+                .dropDuplicates(["_pk_str"])
+            )
+
         out_df = (
             cat_df
-            .join(owner_lookup, cat_df["primary_key_value"] == owner_lookup["_pk_str"], "left")
+            .join(lookup, cat_df["primary_key_value"] == lookup["_pk_str"], "left")
             .drop("_pk_str")
         )
     else:
