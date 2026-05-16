@@ -726,11 +726,77 @@ joins:
       - Department
 ```
 
+**Chained joins (Table1 → Table2 → Table3):**
+
+Joins are applied in order, and each join updates the working DataFrame. Columns brought in by an earlier join are immediately available as `left_on` in a later one.
+
+```yaml
+joins:
+  - table: Saksbehandling.faser          # join 1: primary → faser
+    left_on: to_stage_recno
+    right_on: stage_recno
+    how: left
+    select:
+      - stage_recno
+      - to_case_recno                    # now available for join 2
+      - indikator
+
+  - table: Saksbehandling.saker          # join 2: (primary + faser) → saker
+    left_on: to_case_recno               # from faser, available after join 1
+    right_on: case_recno
+    how: left
+    select:
+      - case_recno
+      - saksnummer
+      - sakstittel
+```
+
+**Fan-out joins (Table1 → Table2 and Table1 → Table3):**
+
+Two join entries can each reference a column from the original source table independently — order does not matter here.
+
+```yaml
+joins:
+  - table: HR.Employees
+    left_on: saksbehandler_kode
+    right_on: employee_code
+    how: left
+    select:
+      - employee_code
+      - display_name
+
+  - table: Config.CaseTypes
+    left_on: case_type_code
+    right_on: type_code
+    how: left
+    select:
+      - type_code
+      - type_label
+```
+
 Key behaviours:
 - `how` defaults to `left` if omitted.
 - `select` is optional. If provided, only those columns are brought in from the joined table (the join key is automatically included if missing from the list).
 - Use `on` when both tables share the same column name. Use `left_on` + `right_on` when they differ.
 - A join config with no key (`on`, `left_on`, or `right_on`) is skipped with a warning during the run.
+- Joins apply both during validation (so rules can reference joined columns) and during routing (so `context_columns` and `ownership_col` can reference joined columns).
+
+### `context_columns` — human-readable context for handlers
+
+Lists columns that are written alongside each violation in `dq_violations_owners`. The purpose is to give handlers enough information to find and fix the offending record without having to look up external tables.
+
+```yaml
+context_columns:
+  - saksnummer      # human-readable case number
+  - sakstittel      # case title
+  - indikator       # phase type
+```
+
+Any column available after `joins` are applied can be listed here — including columns from joined tables. This is the primary reason to chain joins: to surface a case number or title that lives two hops away from the primary table.
+
+`dq_violations_owners` is a single unified table covering all catalogs. Columns that are unique to one catalog (e.g. `indikator` for faser, `milestone_title` for milepeler) are NULL for rows from other catalogs. Power BI hides NULL columns automatically, so each handler sees only the context relevant to their violations.
+
+---
 
 ## Routing and Ownership
 
@@ -779,15 +845,13 @@ dq_violations.primary_key_value
 
 ### Power BI semantic model
 
-The routing notebook (`nb_dq_04_routing.py`) writes one per-catalog violation table after each run. Use these as bridge tables in the semantic model — each has `primary_key_value` as the join key plus `owner_name` and `owner_email` (no further join needed).
+The routing notebook writes a single unified table `qualitycatalog.dq_violations_owners` after each run. It contains one row per violation across all catalogs, enriched with:
 
-| Table | Relate to source via |
-|---|---|
-| `qualitycatalog.dq_violations_faser` | `primary_key_value ↔ saksbehandling.faser.stage_recno` |
-| `qualitycatalog.dq_violations_faktura` | `primary_key_value ↔ saksbehandling.fakturalinjer.fakturanr` |
-| `qualitycatalog.dq_violations_milepeler` | `primary_key_value ↔ saksbehandling.milepaeler.milestone_recno` |
+- `owner_email` / `owner_name` — resolved via `ownership_col` → ansatte lookup
+- all `context_columns` declared in each catalog YAML (catalog-specific columns are NULL for other catalogs' rows)
+- `rule_group` — use as a slicer to separate faser / faktura / milepeler violations in one report
 
-For integer pk columns (`stage_recno`, `milestone_recno`), add a calculated column on the source table side in Power BI that casts the integer to string before creating the relationship. `fakturanr` is already string — no cast needed.
+Apply Row Level Security on `owner_email = USERPRINCIPALNAME()` to give each handler a filtered view of only their own violations. No bridge tables or per-catalog report pages needed — context columns carry the human-readable identifiers (case number, title, phase type) directly alongside each violation row.
 
 ### `owner` field
 
