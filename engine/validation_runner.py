@@ -257,7 +257,6 @@ RESULT_SCHEMA = StructType([
     StructField("rule_name",            StringType(),    False),
     StructField("table_name",           StringType(),    False),
     StructField("expectation",          StringType(),    False),
-    StructField("severity",             StringType(),    False),
     StructField("owner",                StringType(),    False),
     StructField("owner_email",          StringType(),    True),
     StructField("total_rows",           LongType(),      True),
@@ -430,7 +429,6 @@ def run_validation(
         rule_id   = rule["rule_id"]
         rule_name = rule["name"]
         exp_name  = rule["expectation"]
-        severity  = rule.get("severity", "medium")
         owner     = rule.get("owner", "")
 
         params    = rule.get("parameters", {})
@@ -512,7 +510,6 @@ def run_validation(
             rule_name,
             table_name,
             exp_name,
-            severity,
             owner,
             rule.get("owner_email"),
             result["total_rows"],
@@ -544,7 +541,6 @@ def run_validation(
                 F.lit(rule_id).alias("rule_id"),
                 F.lit(rule_name).alias("rule_name"),
                 F.lit(table_name).alias("table_name"),
-                F.lit(severity).alias("severity"),
                 F.lit(owner).alias("owner"),
                 F.col("primary_key_value"),
                 F.col("violated_column"),

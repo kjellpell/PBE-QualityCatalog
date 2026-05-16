@@ -114,7 +114,7 @@ After each run, confirm:
 ## Ownership
 
 - IT owns runtime, deployment, scheduling, support, and engine changes.
-- Business owns YAML rule intent, severity/category/owner, and follow-up decisions.
+- Business owns YAML rule intent, category/owner, and follow-up decisions.
 
 Business authoring reference: RULES_GUIDE.md.
 

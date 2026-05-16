@@ -29,7 +29,7 @@ rules:
     columns:
       - to_case_recno
       - stage_recno
-  severity: kritisk
+
   owner: Teknologi
 
 # Dette er muligens en sjekk som allerede gjøres ved ingestion
@@ -40,7 +40,7 @@ rules:
   parameters:
     columns:
     - stage_recno
-  severity: kritisk
+
   owner: Teknologi
 
 # Forskjellen mellom not_null og not_null_when er at den første sjekker at kolonnen 
@@ -57,7 +57,7 @@ rules:
     columns:
     - fase_lukket_dato
     - tidligste_startmilepael_dato
-  severity: høy
+
   owner: Teknologi
 
 # Formålet med denne regelen er å unngå at det finnes åpne faser i en sak, uten at saken har en saksbehandler.
@@ -71,7 +71,7 @@ rules:
     operator: IS NULL
     columns:
     - saksansvarlig_kode
-  severity: høy
+
   owner: Teknologi
 
 # Dette er en viktig regelen, for å sikre at tidsbruk blir beregnet riktig
@@ -83,7 +83,7 @@ rules:
     left_column: seneste_stoppmilepael_dato
     right_column: tidligste_startmilepael_dato
     operator: '>='
-  severity: høy
+
   owner: Teknologi
 
 # Sjekk på tidsbruk er egentlig bare en sikkerhetsventil, siden vi får dette tallet fra PB360 direkte
@@ -95,7 +95,7 @@ rules:
     left_column: tidsbruk
     right_value: 0
     operator: '>='
-  severity: høy
+
   owner: Teknologi
 
 # Bransjetid beregner vi imidlertid selv, og må derfor ha en sjekk.
@@ -107,7 +107,7 @@ rules:
     left_column: bransjetid
     right_value: 0
     operator: '>='
-  severity: høy
+
   owner: Teknologi
 
 # Fordi det ikke er noen begrensning på fristforlengelse i PB360, så må vi sjekke de indikatorene som normalt _ikke_ skal ha fristforlengelse
@@ -134,7 +134,7 @@ rules:
       - Seksjonering
       - Reseksjonering
       - Oppstartsmøte
-  severity: høy
+
   owner: Teknologi
 
 # Denne sjekker om fristforlengelsen er lengre enn tillatt
@@ -149,7 +149,7 @@ rules:
     filter_column: indikator
     filter_values:
       - Til politisk behandling
-  severity: høy
+
   owner: Teknologi
 
 # Her er det en del avvik, og det stusser jeg litt på
@@ -161,7 +161,7 @@ rules:
     left_column: decisiondate
     right_column: seneste_stoppmilepael_dato
     operator: '>='
-  severity: høy
+
   owner: Teknologi
 
 # Her er det en del avvik, og det stusser jeg litt på
@@ -173,5 +173,5 @@ rules:
     left_column: decisiondate
     right_column: seneste_stoppmilepael_dato
     operator: '>='
-  severity: høy
+
   owner: Teknologi

@@ -13,7 +13,7 @@ rules:
   parameters:
     columns:
       - fakturanr
-  severity: kritisk
+
   routing: individual
   owner: individual
 - rule_id: FAK-002
@@ -24,7 +24,7 @@ rules:
   parameters:
     columns:
       - linje_belop
-  severity: høy
+
   routing: individual
   owner: individual
 - rule_id: FAK-003
@@ -40,7 +40,7 @@ rules:
     reference_column: faktura_belop
     aggregate: sum
     tolerance: 0.01
-  severity: høy
+
   routing: individual
   owner: individual
 - rule_id: FAK-004
@@ -53,6 +53,6 @@ rules:
     column: prosess_id
     reference_table: saksbehandling.faser
     reference_column: prosess_id
-  severity: høy
+
   routing: individual
   owner: individual

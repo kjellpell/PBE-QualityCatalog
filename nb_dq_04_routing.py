@@ -117,7 +117,7 @@ print(f"  Latest run_id: {run_id}")
 
 _VIOLATION_COLS = [
     "run_id", "run_timestamp", "batch_date",
-    "rule_id", "rule_name", "severity",
+    "rule_id", "rule_name",
     "primary_key_value", "violated_column", "actual_value",
     "expected_condition", "violation_detail", "issue_status",
     "rule_group",  # used for per-catalog filtering; excluded from output tables
@@ -222,7 +222,7 @@ def _send_itops_notification() -> list[dict]:
 
     in_list = ", ".join(f"'{r}'" for r in itops_ids)
     rows = spark.sql(f"""
-        SELECT rule_id, rule_name, rule_group, severity, failed_rows, status
+        SELECT rule_id, rule_name, rule_group, failed_rows, status
         FROM {RESULTS_TABLE}
         WHERE run_id = '{run_id}'
           AND rule_id IN ({in_list})
@@ -267,7 +267,7 @@ def _send_individual_digests() -> list[dict]:
         tbl = f"{SCHEMA}.dq_violations_{cat['catalog_name']}"
         try:
             df = spark.sql(f"""
-                SELECT owner_email, owner_name, rule_id, rule_name, severity,
+                SELECT owner_email, owner_name, rule_id, rule_name,
                        primary_key_value, violated_column, violation_detail
                 FROM {tbl}
                 WHERE run_id = '{run_id}' AND owner_email IS NOT NULL

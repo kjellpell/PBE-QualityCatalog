@@ -122,10 +122,10 @@ non-null in all rows. Columns that need different severities must use separate r
   parameters:
     columns:
       - StartDate
-  severity: high
+
   owner: Saksteam
 
-# Multiple columns (same severity):
+# Multiple columns:
 - rule_id: PROC-012
   name: Required identifiers cannot be null
   description: Every row must have both a case number and a process ID.
@@ -134,7 +134,7 @@ non-null in all rows. Columns that need different severities must use separate r
     columns:
       - case_recno
       - prosess_id
-  severity: kritisk
+
   owner: Teknologi
 ```
 
@@ -162,7 +162,7 @@ All listed `columns` must be non-null whenever `when_column` satisfies the trigg
     operator: IS NULL
     columns:
       - Saksbehandler_kode
-  severity: high
+
   owner: Saksteam
 ```
 
@@ -196,7 +196,7 @@ Use `filter_column` + `filter_values` to restrict evaluation to a subset of rows
     left_column: ActualEndDate
     right_column: StartDate
     operator: ">="
-  severity: high
+
   owner: Saksteam
 
 # Column vs scalar:
@@ -208,7 +208,7 @@ Use `filter_column` + `filter_values` to restrict evaluation to a subset of rows
     left_column: linje_belop
     right_value: 0
     operator: ">"
-  severity: high
+
   owner: Finansteam
 
 # Column vs column, restricted to a subset of rows:
@@ -224,7 +224,7 @@ Use `filter_column` + `filter_values` to restrict evaluation to a subset of rows
     left_column: opprinnelig_frist_dager
     right_column: frist_dager
     operator: "=="
-  severity: høy
+
   owner: Teknologi
 ```
 
@@ -250,7 +250,7 @@ All non-null values in the column must belong to an approved list.
     allowed_values:
       - Standard
       - Kreditnota
-  severity: medium
+
   owner: Finansteam
 ```
 
@@ -281,7 +281,7 @@ When `when_column <operator> value`, `required_column` must equal `required_valu
     required_column: Faktura_type
     required_value: Kreditnota
     pk_column: Fakturanr
-  severity: high
+
   owner: Finansteam
 ```
 
@@ -308,7 +308,7 @@ Every non-null value in `column` must exist in `reference_table.reference_column
     reference_table: Config.CaseTypes
     reference_column: TypeCode
     pk_column: Saksnummer
-  severity: high
+
   owner: Saksteam
 ```
 
@@ -339,7 +339,7 @@ Every non-null value in `column` must exist in the reference table **and** match
     reference_active_column: IsActive
     reference_active_value: true
     pk_column: Saksnummer
-  severity: critical
+
   owner: Saksteam
 ```
 
@@ -364,7 +364,7 @@ The combination of `columns` must be unique across all rows.
       - Fakturanr
       - LinjeNr
     pk_column: Fakturanr
-  severity: critical
+
   owner: Finansteam
 ```
 
@@ -390,7 +390,7 @@ Use this to detect failed data loads (table unexpectedly empty) or runaway loads
   parameters:
     operator: ">="
     threshold: 1
-  severity: critical
+
   owner: Saksteam
 
 # Row count ceiling:
@@ -401,7 +401,7 @@ Use this to detect failed data loads (table unexpectedly empty) or runaway loads
   parameters:
     operator: "<="
     threshold: 10000000
-  severity: critical
+
   owner: Saksteam
 ```
 
@@ -433,7 +433,7 @@ Rows still in the open state must not have been open longer than `max_days`.
     open_state_column: ActualEndDate
     pk_column: Saksnummer
     max_days: 90
-  severity: high
+
   owner: Saksteam
 ```
 
@@ -469,7 +469,7 @@ Within each group, values in `event_column` must appear in the order defined by 
     completion_gate:
       event_column: MilestoneType
       value: Closed
-  severity: high
+
   owner: Saksteam
 ```
 
@@ -498,7 +498,7 @@ Within each group, checks that required pairs of events are both present. `mode`
     group_column: Saksnummer
     required_pairs:
       - [Received, Closed]
-  severity: high
+
   owner: Saksteam
 
 # Stop implies start (one-way):
@@ -512,7 +512,7 @@ Within each group, checks that required pairs of events are both present. `mode`
     required_pairs:
       - [Received, Closed]
     mode: stop_requires_start
-  severity: critical
+
   owner: Saksteam
 ```
 
@@ -540,7 +540,7 @@ Every group must contain at least one row where `event_column` equals `value_to_
     group_column: Saksnummer
     value_to_check: Approved
     trigger: Case approval
-  severity: critical
+
   owner: Saksteam
 ```
 
@@ -569,7 +569,7 @@ The aggregate of `aggregate_column` within each group must equal the value in `r
     reference_column: Faktura_totalbelop
     aggregate: sum
     tolerance: 0.01
-  severity: critical
+
   owner: Finansteam
 ```
 
@@ -601,7 +601,7 @@ Flags every row that satisfies a forbidden-state condition. Use this instead of 
       - indikator
       - opprinnelig_frist
       - frist_dager
-  severity: høy
+
   owner: Teknologi
 ```
 
@@ -629,7 +629,7 @@ Runs a custom SQL query. Every row returned is treated as a violation — write 
       FROM Saksbehandling.Fakturalinjer
       GROUP BY Fakturanr
       HAVING SUM(linje_belop) = 0
-  severity: medium
+
   owner: Finansteam
 ```
 
@@ -650,7 +650,7 @@ rules:
     name: Example
     expectation: not_null
     column: Saksnummer
-    severity: critical
+  
     category: Completeness
     owner: Saksteam
 ```

@@ -22,7 +22,6 @@
                   "properties": {
                     "rule_id":           {"type": "string"},
                     "rule_name":         {"type": "string"},
-                    "severity":          {"type": "string"},
                     "primary_key_value": {"type": "string"},
                     "violated_column":   {"type": "string"},
                     "violation_detail":  {"type": "string"}
@@ -53,7 +52,6 @@
                   "properties": {
                     "rule_id":           {"type": "string"},
                     "rule_name":         {"type": "string"},
-                    "severity":          {"type": "string"},
                     "primary_key_value": {"type": "string"},
                     "violated_column":   {"type": "string"},
                     "violation_detail":  {"type": "string"}
@@ -72,7 +70,6 @@
           "select": {
             "Regel-ID":      "@item()?['rule_id']",
             "Regelnavn":     "@item()?['rule_name']",
-            "Alvorlighet":   "@item()?['severity']",
             "Primærnøkkel": "@item()?['primary_key_value']",
             "Kolonne":       "@item()?['violated_column']",
             "Beskrivelse":   "@item()?['violation_detail']"

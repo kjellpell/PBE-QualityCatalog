@@ -40,7 +40,6 @@ print(f"Spark ready. Target schema: {_schema}")
 #   rule_group       – Process | Milestone | Invoice
 #   expectation      – the expectation type applied
 #   table_name       – the source table validated
-#   severity         – critical | high | medium | low
 #   status           – PASSED | FAILED | ERROR
 #   column_a         – left-hand column (validate_column_comparison only)
 #   column_b         – right-hand column (validate_column_comparison only)
@@ -59,7 +58,6 @@ CREATE TABLE IF NOT EXISTS {_results_table} (
     rule_name       STRING,
     table_name      STRING,
     expectation     STRING,
-    severity        STRING,
     owner           STRING,
     owner_email          STRING,
     total_rows      BIGINT,
@@ -118,7 +116,7 @@ print("dq_run_results ready.")
 # Key fields for the semantic model:
 #   primary_key_value    – the PK value of the offending row in its own table
 #   violated_column      – which column caused the violation
-#   severity / owner     – copied from the rule definition for easy filtering
+#   owner                – copied from the rule definition for easy filtering
 #   issue_status         – 'Active' while the violation persists; 'Resolved' once fixed
 #   resolution_timestamp – ISO timestamp of when the violation was resolved (NULL if still Active)
 # -----------------------------------------------------------------------------
@@ -131,7 +129,6 @@ CREATE TABLE IF NOT EXISTS {_violations_table} (
     rule_id              STRING,
     rule_name            STRING,
     table_name           STRING,
-    severity             STRING,
     owner                STRING,
     primary_key_value    STRING,
     violated_column      STRING,
@@ -231,7 +228,6 @@ CREATE TABLE IF NOT EXISTS {_results_table}_tmp (
     rule_name       STRING,
     table_name      STRING,
     expectation     STRING,
-    severity        STRING,
     owner           STRING,
     owner_email          STRING,
     total_rows      BIGINT,
@@ -264,7 +260,6 @@ CREATE TABLE IF NOT EXISTS {_violations_table}_tmp (
     rule_id              STRING,
     rule_name            STRING,
     table_name           STRING,
-    severity             STRING,
     owner                STRING,
     primary_key_value    STRING,
     violated_column      STRING,

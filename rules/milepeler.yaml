@@ -21,7 +21,7 @@ rules:
     columns:
       - milestone_title
       - to_stage_recno
-  severity: kritisk
+
   owner: Teknologi
 
 # Dette mer en teknisk sjekk
@@ -35,7 +35,7 @@ rules:
     value: Nådd
     columns:
       - milestonedate
-  severity: høy
+
   owner: Teknologi
 
 # I PB360 er det en del par av milepæler som skal komme sammen, denne sjekker disse
@@ -54,7 +54,7 @@ rules:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
-  severity: kritisk
+
   owner: Teknologi
 
 # Denne fungerer på samme måte som den over, men for offentlig ettersyn
@@ -72,7 +72,7 @@ rules:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
-  severity: kritisk
+
   owner: Teknologi
 
   # Denne fungerer på samme måte som den over, men for oppstartsmøte
@@ -90,7 +90,7 @@ rules:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
-  severity: kritisk
+
   owner: Teknologi
 
 # Denne fungerer på samme måte som den over, men for byggesak
@@ -108,6 +108,6 @@ rules:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
-  severity: kritisk
+
   owner: Teknologi
 

@@ -21,7 +21,6 @@
                     "rule_id":    {"type": "string"},
                     "rule_name":  {"type": "string"},
                     "rule_group": {"type": "string"},
-                    "severity":   {"type": "string"},
                     "failed_rows":{"type": "integer"},
                     "status":     {"type": "string"}
                   }
@@ -50,7 +49,6 @@
                     "rule_id":    {"type": "string"},
                     "rule_name":  {"type": "string"},
                     "rule_group": {"type": "string"},
-                    "severity":   {"type": "string"},
                     "failed_rows":{"type": "integer"},
                     "status":     {"type": "string"}
                   }
@@ -69,7 +67,6 @@
             "Regel-ID":    "@item()?['rule_id']",
             "Regelnavn":   "@item()?['rule_name']",
             "Katalog":     "@item()?['rule_group']",
-            "Alvorlighet": "@item()?['severity']",
             "Antall feil": "@item()?['failed_rows']",
             "Status":      "@item()?['status']"
           }

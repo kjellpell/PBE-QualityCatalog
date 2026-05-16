@@ -107,34 +107,7 @@ CALCULATE(
 
 ---
 
-### 2.2 Violations by Severity
-
-```dax
-Critical Violations =
-CALCULATE(
-    COUNTROWS( dq_violations ),
-    dq_violations[severity]     = "critical",
-    dq_violations[issue_status] = "Active"
-)
-
-High Violations =
-CALCULATE(
-    COUNTROWS( dq_violations ),
-    dq_violations[severity]     = "high",
-    dq_violations[issue_status] = "Active"
-)
-
-Medium Violations =
-CALCULATE(
-    COUNTROWS( dq_violations ),
-    dq_violations[severity]     = "medium",
-    dq_violations[issue_status] = "Active"
-)
-```
-
----
-
-### 2.3 Violation Rate (per 1 000 rows)
+### 2.2 Violation Rate (per 1 000 rows)
 
 ```dax
 Violation Rate per 1000 =
@@ -223,8 +196,8 @@ DQ Score Change % =
 - **Line chart**: `DQ Score % Latest Run` over `batch_date` (trend)
 
 ### Page 2 — Process Rule Detail
-- **Slicer**: `batch_date`, `severity`, `rule_id`
-- **Table**: `rule_id`, `rule_name`, `severity`, `total_rows`, `failed_rows`,
+- **Slicer**: `batch_date`, `rule_id`
+- **Table**: `rule_id`, `rule_name`, `total_rows`, `failed_rows`,
   `success_pct`, `status`, `details` filtered to `rule_group = "Process"`
 - **Bar chart**: `failed_rows` by `rule_id`
 
@@ -236,7 +209,7 @@ DQ Score Change % =
 
 ### Page 5 — Violation Drill-down
 - **Table**: `violation_detail`, `primary_key_value`, `rule_name`,
-  `severity`, `batch_date` filtered to `issue_status = "Active"`
+  `batch_date` filtered to `issue_status = "Active"`
 - **Enable drill-through** from Pages 2–4 on `rule_id`
 
 ---
@@ -316,13 +289,12 @@ CALCULATE(
 Connect the following measure to a notification flow (e.g. Power Automate) when alert functionality is added:
 
 ```dax
-Has Critical Violations Today =
+Has Active Violations Today =
 VAR Today = TODAY()
 RETURN
 IF(
     CALCULATE(
         COUNTROWS( dq_violations ),
-        dq_violations[severity]     = "critical",
         dq_violations[issue_status] = "Active",
         dq_violations[batch_date]   = Today
     ) > 0,
