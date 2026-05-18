@@ -13,8 +13,8 @@ catalog_filter:
 # Context_columns er kolonner som brukes for å gi mer kontekst i rapporteringen av regelbrudd,
 # Disse kolonnene brukes f.eks. når det skal sendes ut varsler og i Power BI-rapporter
 context_columns:
-  - to_stage_recno
   - milestone_title
+  - milestonedate
 
 rules:
 
@@ -62,51 +62,32 @@ rules:
 
 # Denne fungerer på samme måte som den over, men for offentlig ettersyn
 - rule_id: MIL-004
-  name: Begge milepæler i et par for byggesak må være tilstede
+  name: Begge milepæler i et par for offentlig ettersyn må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
   expectation: pairs_present
   parameters:
     event_column: milestone_title
     group_column: to_stage_recno
     required_pairs:
-      - [Merknader oversendt, Mottatt revidert planforslag]
       - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
     completion_gate:
       event_column: milestone_title
-      value: Sendt til politisk behandling
+      value: Vedtak høring og offentlig ettersyn
       order_column: milestonedate
   routing: Avdeling
   
   # Denne fungerer på samme måte som den over, men for oppstartsmøte
 - rule_id: MIL-005
-  name: Begge milepæler i et par for byggesak må være tilstede
+  name: Begge milepæler i et par for oppstartsmøte må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
   expectation: pairs_present
   parameters:
     event_column: milestone_title
     group_column: to_stage_recno
     required_pairs:
-      - [Merknader oversendt, Mottatt revidert planforslag]
       - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
     completion_gate:
       event_column: milestone_title
-      value: Sendt til politisk behandling
-      order_column: milestonedate
-  routing: Avdeling
-
-# Denne fungerer på samme måte som den over, men for byggesak
-- rule_id: MIL-006
-  name: Begge milepæler i et par for byggesak må være tilstede
-  description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
-  expectation: pairs_present
-  parameters:
-    event_column: milestone_title
-    group_column: to_stage_recno
-    required_pairs:
-      - [Merknader oversendt, Mottatt revidert planforslag]
-      - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
-    completion_gate:
-      event_column: milestone_title
-      value: Sendt til politisk behandling
+      value: Innkalling til oppstartsmøte
       order_column: milestonedate
   routing: Avdeling

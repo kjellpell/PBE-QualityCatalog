@@ -123,7 +123,7 @@ non-null in all rows. Columns that need different severities must use separate r
     columns:
       - StartDate
 
-  owner: Saksteam
+  routing: Saksteam
 
 # Multiple columns:
 - rule_id: PROC-012
@@ -135,7 +135,7 @@ non-null in all rows. Columns that need different severities must use separate r
       - case_recno
       - prosess_id
 
-  owner: Teknologi
+  routing: Teknologi
 ```
 
 ---
@@ -163,7 +163,7 @@ All listed `columns` must be non-null whenever `when_column` satisfies the trigg
     columns:
       - Saksbehandler_kode
 
-  owner: Saksteam
+  routing: Saksteam
 ```
 
 ---
@@ -197,7 +197,7 @@ Use `filter_column` + `filter_values` to restrict evaluation to a subset of rows
     right_column: StartDate
     operator: ">="
 
-  owner: Saksteam
+  routing: Saksteam
 
 # Column vs scalar:
 - rule_id: INV-020
@@ -209,7 +209,7 @@ Use `filter_column` + `filter_values` to restrict evaluation to a subset of rows
     right_value: 0
     operator: ">"
 
-  owner: Finansteam
+  routing: Finansteam
 
 # Column vs column, restricted to a subset of rows:
 - rule_id: FAS-008
@@ -225,7 +225,7 @@ Use `filter_column` + `filter_values` to restrict evaluation to a subset of rows
     right_column: frist_dager
     operator: "=="
 
-  owner: Teknologi
+  routing: Teknologi
 ```
 
 ---
@@ -251,7 +251,7 @@ All non-null values in the column must belong to an approved list.
       - Standard
       - Kreditnota
 
-  owner: Finansteam
+  routing: Finansteam
 ```
 
 ---
@@ -282,7 +282,7 @@ When `when_column <operator> value`, `required_column` must equal `required_valu
     required_value: Kreditnota
     pk_column: Fakturanr
 
-  owner: Finansteam
+  routing: Finansteam
 ```
 
 ---
@@ -309,7 +309,7 @@ Every non-null value in `column` must exist in `reference_table.reference_column
     reference_column: TypeCode
     pk_column: Saksnummer
 
-  owner: Saksteam
+  routing: Saksteam
 ```
 
 ---
@@ -340,7 +340,7 @@ Every non-null value in `column` must exist in the reference table **and** match
     reference_active_value: true
     pk_column: Saksnummer
 
-  owner: Saksteam
+  routing: Saksteam
 ```
 
 ---
@@ -365,7 +365,7 @@ The combination of `columns` must be unique across all rows.
       - LinjeNr
     pk_column: Fakturanr
 
-  owner: Finansteam
+  routing: Finansteam
 ```
 
 ---
@@ -391,7 +391,7 @@ Use this to detect failed data loads (table unexpectedly empty) or runaway loads
     operator: ">="
     threshold: 1
 
-  owner: Saksteam
+  routing: Saksteam
 
 # Row count ceiling:
 - rule_id: PROC-007b
@@ -402,7 +402,7 @@ Use this to detect failed data loads (table unexpectedly empty) or runaway loads
     operator: "<="
     threshold: 10000000
 
-  owner: Saksteam
+  routing: Saksteam
 ```
 
 > **`row_count` vs `comparison`:** `comparison` checks each row individually. `row_count` checks the total number of rows in the table. Use `comparison` when the rule is about values on individual rows; use `row_count` when the rule is about dataset health.
@@ -434,7 +434,7 @@ Rows still in the open state must not have been open longer than `max_days`.
     pk_column: Saksnummer
     max_days: 90
 
-  owner: Saksteam
+  routing: Saksteam
 ```
 
 ---
@@ -470,7 +470,7 @@ Within each group, values in `event_column` must appear in the order defined by 
       event_column: MilestoneType
       value: Closed
 
-  owner: Saksteam
+  routing: Saksteam
 ```
 
 ---
@@ -499,7 +499,7 @@ Within each group, checks that required pairs of events are both present. `mode`
     required_pairs:
       - [Received, Closed]
 
-  owner: Saksteam
+  routing: Saksteam
 
 # Stop implies start (one-way):
 - rule_id: PROC-052
@@ -513,7 +513,7 @@ Within each group, checks that required pairs of events are both present. `mode`
       - [Received, Closed]
     mode: stop_requires_start
 
-  owner: Saksteam
+  routing: Saksteam
 ```
 
 ---
@@ -541,7 +541,7 @@ Every group must contain at least one row where `event_column` equals `value_to_
     value_to_check: Approved
     trigger: Case approval
 
-  owner: Saksteam
+  routing: Saksteam
 ```
 
 ---
@@ -570,39 +570,7 @@ The aggregate of `aggregate_column` within each group must equal the value in `r
     aggregate: sum
     tolerance: 0.01
 
-  owner: Finansteam
-```
-
----
-
-### `validate_column_exclusions`
-
-Flags every row that satisfies a forbidden-state condition. Use this instead of `sql_violations` when the condition can be expressed as a Spark SQL predicate against the catalog's source table — it is simpler, and the `catalog_filter` is already applied so you do not need to repeat the table name or schema filter.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `condition` | yes | Spark SQL expression; any row matching it is a violation |
-| `pk_column` | no | Default: `id` |
-| `show_columns` | no | List of columns whose actual values appear in `violation_detail` |
-
-```yaml
-- rule_id: PROC-030
-  name: Opprinnelig frist og frist_dager må stemme overens
-  description: >
-    For the four indikator types, opprinnelig_frist must equal frist_dager.
-  expectation: validate_column_exclusions
-  parameters:
-    pk_column: stage_recno
-    condition: >-
-      indikator IN ('Delesak 3 uker', 'Delesak 12 uker', 'Byggesak 3 uker',
-      'Byggesak 12 uker') AND opprinnelig_frist IS NOT NULL AND frist_dager
-      IS NOT NULL AND opprinnelig_frist != frist_dager
-    show_columns:
-      - indikator
-      - opprinnelig_frist
-      - frist_dager
-
-  owner: Teknologi
+  routing: Finansteam
 ```
 
 ---
@@ -630,7 +598,7 @@ Runs a custom SQL query. Every row returned is treated as a violation — write 
       GROUP BY Fakturanr
       HAVING SUM(linje_belop) = 0
 
-  owner: Finansteam
+  routing: Finansteam
 ```
 
 ---
@@ -652,7 +620,7 @@ rules:
     column: Saksnummer
   
     category: Completeness
-    owner: Saksteam
+    routing: Saksteam
 ```
 
 ### `catalog_filter` — scope the source rows before rules run
@@ -812,7 +780,6 @@ Any column available after `joins` are applied can be listed here — including 
     columns:
       - to_case_recno
   routing: Teknologi
-  owner: Teknologi
 ```
 
 Convention:

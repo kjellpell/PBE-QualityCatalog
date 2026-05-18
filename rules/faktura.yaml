@@ -5,9 +5,9 @@ description: Datakvalitet på fakturalinjer som kommer fra PB360
 pk_column: fakturanr
 ownership_col: ""
 
-# Sjekk kdenne
-context_columns:
-  - prosess_id 
+# Sjekk denne
+context_columns: []
+
 rules:
 
 # Sjekk for påkrevde kolonner
@@ -21,7 +21,7 @@ rules:
       - linje_belop
   routing: Teknologi
 
-# Avstem fakturalinjer og total, dette er en teknisk avstemming
+# De neste gjør tekniske sjekker på fakturalinjene
 - rule_id: FAK-002
   name: Alle fakturalinjer må ha samme sum som total
   description: 'Summen av alle linje_belop-verdier for en gitt Fakturanr må være lik
@@ -32,43 +32,7 @@ rules:
   parameters:
     group_column: fakturanr
     aggregate_column: linje_belop
-    reference_column: faktura_belop
+    reference_column: fakturasum
     aggregate: sum
     tolerance: 0.01
   routing: Teknologi
-
-# De neste gjør tekniske sjekker på fakturaen
-- rule_id: FAK-003
-  name: Kun godkjente fakturatyper kan brukes
-  description: Kun godkjente fakturatyper kan brukes.
-  expectation: value_in_list
-  parameters:
-    column: faktura_type
-    allowed_values:
-      - Standard
-      - Kreditnota
-  routing: Teknologi
-
-- rule_id: FAK-004
-  name: Sjekk negative beløp på kreditnota
-  description: Negative beløp er ikke tillatt, med mindre det er en kreditnota.
-  expectation: value_when
-  parameters:
-    when_column: linje_belop
-    operator: "<"
-    value: 0
-    required_column: faktura_type
-    required_value: Kreditnota
-  routing: Avdeling
-
-- rule_id: FAK-005
-  name: Sjekk positive beløp på standardfaktura
-  description: Alle standardfaktura må ha positive beløp.
-  expectation: value_when
-  parameters:
-    when_column: linje_belop
-    operator: ">"
-    value: 0
-    required_column: faktura_type
-    required_value: Standard
-  routing: Avdeling

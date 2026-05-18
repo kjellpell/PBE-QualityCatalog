@@ -53,8 +53,6 @@ PBE-QualityCatalog/
 │   ├── runtime.py
 │   └── validation_runner.py
 ├── rules/                          (YAML rule files — loaded directly by validation engine)
-│   ├── ic_invoice_rules.yaml
-│   ├── ic_process_rules.yaml
 │   ├── invoice_rules.yaml
 │   ├── milestone_rules.yaml
 │   └── process_rules.yaml
@@ -65,8 +63,6 @@ PBE-QualityCatalog/
 ├── nb_dq_00_setup.py
 ├── nb_dq_01_preflight.py
 ├── nb_dq_02_migrate_rules.py
-├── nb_ic_01_manage_exceptions.py
-├── nb_ic_02_attest_manual_control.py
 ├── ARCHITECTURE.md
 ├── DEPLOY.md
 ├── IC_RULES_GUIDE.md
@@ -121,8 +117,7 @@ The engine will raise a clear error if either file is missing.
    - Dispatch each rule to its validator in CUSTOM_EXPECTATION_REGISTRY.
 5. Append summary rows to dq_run_results.
 6. Apply MERGE-based issue lifecycle to dq_violations.
-7. Apply IC 4-state lifecycle to ic_exceptions (for IC-flagged rules).
-8. Write execution evidence to dq_execution_metrics.
+7. Write execution evidence to dq_execution_metrics.
 
 ---
 
@@ -196,26 +191,6 @@ For a one-page checklist, see OPERATIONS_QUICK_REF.md.
 
 ---
 
-## Ownership
-
-### IT team
-
-- Runtime, deployment, scheduling
-- Config control and environment hardening
-- Output table lifecycle and schema compatibility
-- Monitoring, alerting, incident response
-- Custom expectation engineering when needed
-
-### Business team
-
-- Rule definition and maintenance in rule_catalog
-- Severity/category/owner governance
-- Interpretation and follow-up of violations
-
-Business authoring guidance is in RULES_GUIDE.md.
-
----
-
 ## Troubleshooting
 
 - No active rules found:
@@ -254,5 +229,4 @@ Tests cover core custom expectations, YAML rule parsing, and resolution helper b
 - DEPLOY.md: deployment and environment guidance
 - dq_powerbi_measures.md: reporting measures reference
 - RULES_GUIDE.md: business rule authoring guide
-- IC_RULES_GUIDE.md: internal control rule authoring guide
 - OPERATIONS_QUICK_REF.md: one-page operations checklist

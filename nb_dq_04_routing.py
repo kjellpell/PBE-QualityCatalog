@@ -170,7 +170,7 @@ def _enrich_catalog(cat: dict):
     database        = cat["database"]
     table           = cat["table"]
     pk_column       = cat["pk_column"]
-    context_columns = cat.get("context_columns", [])
+    context_columns = [c for c in cat.get("context_columns", []) if c]
 
     cat_df = violations_df.filter(F.col("rule_group") == rule_group)
 

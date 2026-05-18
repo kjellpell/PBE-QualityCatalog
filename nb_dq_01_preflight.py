@@ -103,6 +103,7 @@ except ModuleNotFoundError:
 # All keys use canonical names per ARCHITECTURE.md "Expectation Naming Contract".
 _RULE_COLUMN_KEYS = {
     "column",
+    "columns",
     "left_column",
     "right_column",
     "pk_column",
@@ -123,8 +124,8 @@ _RULE_COLUMN_KEYS = {
 # Per-expectation required canonical parameter keys.
 # Preflight rejects any rule missing a required key for its expectation.
 _REQUIRED_PARAMETER_KEYS: dict[str, list[str]] = {
-    "not_null":                   ["column"],
-    "not_null_when":              ["when_column", "checked_columns"],
+    "not_null":                   ["columns"],
+    "not_null_when":              ["when_column", "columns"],
     "comparison":                 ["left_column", "operator"],
     "value_when":                 ["when_column", "required_column", "required_value"],
     "reference_exists":           ["column", "reference_table", "reference_column"],

@@ -24,10 +24,12 @@ joins:
 # Context_columns er kolonner som brukes for å gi mer kontekst i rapporteringen av regelbrudd,
 # Disse kolonnene brukes f.eks. når det skal sendes ut varsler og i Power BI-rapporter
 context_columns:
-  - to_case_recno
-  - indikator
+  - saksnummer
+  - stage_title
+  - fase_opprettet_dato
 
 # not_null fungerer slik at det er mulig å sjekke flere kolonner for blanke verdier i samme regel
+# her ligger tidligste_startmilepael_dato dobbelt med FAS-003, men tenker den hører mer hjemme i FAS-003 når ting er bøgfritt
 rules:
 - rule_id: FAS-001
   name: Verdier kan ikke være null
@@ -37,7 +39,17 @@ rules:
     columns:
       - to_case_recno
       - stage_recno
-  routing: it-ops
+  routing: Teknologi
+
+# Denne anser jeg for å være midlertidig?
+- rule_id: FAS-001a
+  name: tidligste_startmilepael_dato kan ikke være null
+  description: 'Alle påkrevde rader må ha en verdi.'
+  expectation: not_null
+  parameters:
+    columns:
+      - tidligste_startmilepael_dato
+  routing: Teknologi
 
 # Dette er muligens en sjekk som allerede gjøres ved ingestion
 - rule_id: FAS-002
@@ -47,14 +59,14 @@ rules:
   parameters:
     columns:
     - stage_recno
-  routing: it-ops
+  routing: Teknologi
 
 # Forskjellen mellom not_null og not_null_when er at den første sjekker at kolonnen 
 # ikke er null for alle rader, mens den andre sjekker at kolonnen ikke er null under visse betingelser. 
 # I dette tilfellet sjekker den om fase_lukket_dato er null når seneste_stoppmilepael_dato ikke er null. 
 # Dette betyr at for alle rader hvor seneste_stoppmilepael_dato har en verdi, må fase_lukket_dato også ha en verdi.
 - rule_id: FAS-003
-  name: Når siste milepæl er satt, må også fasen lukkes
+  name: Når siste milepæl er satt, må også andre kolonner ha verdi
   description: 'Alle faser må være lukket.'
   expectation: not_null_when
   parameters:
@@ -63,7 +75,7 @@ rules:
     columns:
     - fase_lukket_dato
     - tidligste_startmilepael_dato
-  routing: individual
+  routing: Avdeling
 
 # Formålet med denne regelen er å unngå at det finnes åpne faser i en sak, uten at saken har en saksbehandler.
 # Det er veldig mange av disse, så kan det være at regelen er feil satt opp.
@@ -76,7 +88,7 @@ rules:
     operator: IS NULL
     columns:
     - saksansvarlig_kode
-  routing: individual
+  routing: Avdeling
 
 # Dette er en viktig regelen, for å sikre at tidsbruk blir beregnet riktig
 - rule_id: FAS-005
@@ -87,7 +99,7 @@ rules:
     left_column: seneste_stoppmilepael_dato
     right_column: tidligste_startmilepael_dato
     operator: '>='
-  routing: individual
+  routing: Avdeling
 
 # Sjekk på tidsbruk er egentlig bare en sikkerhetsventil, siden vi får dette tallet fra PB360 direkte
 - rule_id: FAS-006
@@ -98,7 +110,7 @@ rules:
     left_column: tidsbruk
     right_value: 0
     operator: '>='
-  routing: it-ops
+  routing: Teknologi
 
 # Bransjetid beregner vi imidlertid selv, og må derfor ha en sjekk.
 - rule_id: FAS-007
@@ -109,7 +121,7 @@ rules:
     left_column: bransjetid
     right_value: 0
     operator: '>='
-  routing: it-ops
+  routing: Teknologi
 
 # Fordi det ikke er noen begrensning på fristforlengelse i PB360, så må vi sjekke de indikatorene som normalt _ikke_ skal ha fristforlengelse
 # Se også regelen under, som sjekker hvor stor fristforlengelsen er for de fasene som skal ha det 
@@ -135,7 +147,7 @@ rules:
       - Seksjonering
       - Reseksjonering
       - Oppstartsmøte
-  routing: it-ops
+  routing: Teknologi
 
 # Denne sjekker om fristforlengelsen er lengre enn tillatt
 - rule_id: FAS-009
@@ -144,12 +156,12 @@ rules:
   expectation: comparison
   parameters:
     left_column: frist_dager
-    operator: '>'
+    operator: '<='
     right_value: 126
     filter_column: indikator
     filter_values:
       - Til politisk behandling
-  routing: individual
+  routing: Avdeling
 
 # Her er det en del avvik, og det stusser jeg litt på
 - rule_id: FAS-010
@@ -160,4 +172,4 @@ rules:
     left_column: decisiondate
     right_column: seneste_stoppmilepael_dato
     operator: '>='
-    routing: it-ops
+    routing: Teknologi
