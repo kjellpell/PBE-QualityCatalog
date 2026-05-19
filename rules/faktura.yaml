@@ -28,6 +28,7 @@ rules:
     Faktura_belop registrert på fakturahodet (innenfor en liten toleranse). En
     avvik indikerer enten manglende linjer eller en oppdatering av hodet som ikke ble reflektert
     i detaljlinjene.'
+  user_message: 'Faktura {primary_key_value}: summen av fakturalinjer ({actual_value}) stemmer ikke med totalbeløpet på fakturahodet. Kontroller at alle linjer er korrekt registrert i fagsystemet.'
   expectation: group_aggregate_matches
   parameters:
     group_column: fakturanr

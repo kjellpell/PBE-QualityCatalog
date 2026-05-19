@@ -27,6 +27,8 @@ context_columns:
   - saksnummer
   - stage_title
   - fase_opprettet_dato
+  - seneste_stoppmilepael_dato
+  - tidligste_startmilepael_dato
 
 # not_null fungerer slik at det er mulig å sjekke flere kolonner for blanke verdier i samme regel
 # her ligger tidligste_startmilepael_dato dobbelt med FAS-003, men tenker den hører mer hjemme i FAS-003 når ting er bøgfritt
@@ -68,6 +70,7 @@ rules:
 - rule_id: FAS-003
   name: Når siste milepæl er satt, må også andre kolonner ha verdi
   description: 'Alle faser må være lukket.'
+  user_message: 'Fase mangler lukkedato selv om siste milepæl er registrert ({seneste_stoppmilepael_dato}). Kontroller sak {saksnummer} i fagsystemet.'
   expectation: not_null_when
   parameters:
     when_column: seneste_stoppmilepael_dato
@@ -82,6 +85,7 @@ rules:
 - rule_id: FAS-004
   name: Saksbehandler_kode kan ikke være null for åpne saker
   description: 'Alle faser hvor sluttdato er null må være tildelt en saksbehandler.'
+  user_message: 'Fasen er åpen, men mangler saksbehandler. Tildel saksbehandler for sak {saksnummer} i fagsystemet.'
   expectation: not_null_when
   parameters:
     when_column: seneste_stoppmilepael_dato
@@ -94,6 +98,7 @@ rules:
 - rule_id: FAS-005
   name: Seneste_stoppmilepael_dato må være større enn eller lik startdato
   description: 'For ferdige faser må dato for vedtak/beslutning ikke være tidligere enn mottatt dato.'
+  user_message: 'Fase ble avsluttet {seneste_stoppmilepael_dato}, men startdatoen er {tidligste_startmilepael_dato} — sluttdato kan ikke være før startdato. Kontroller milepælsdatoer for sak {saksnummer} i fagsystemet.'
   expectation: comparison
   parameters:
     left_column: seneste_stoppmilepael_dato
@@ -153,6 +158,7 @@ rules:
 - rule_id: FAS-009
   name: Forlenget frist kan ikke være lengre enn 126 dager for saker til politisk behandling
   description: 'Forlenget frist kan ikke være lengre enn 126 dager for saker til politisk behandling.'
+  user_message: 'Forlenget frist er {actual_value} dager, som overstiger grensen på 126 dager for saker til politisk behandling. Kontroller sak {saksnummer} i fagsystemet.'
   expectation: comparison
   parameters:
     left_column: frist_dager

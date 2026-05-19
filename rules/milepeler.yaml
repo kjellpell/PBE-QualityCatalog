@@ -33,6 +33,7 @@ rules:
 - rule_id: MIL-002
   name: Milepælen kan ikke være nådd uten sluttdato
   description: 'Milepæler som er nådd må ha en sluttdato.'
+  user_message: 'Milepælen «{milestone_title}» er registrert som Nådd, men mangler dato. Registrer dato i fagsystemet.'
   expectation: not_null_when
   parameters:
     when_column: statusdescription
