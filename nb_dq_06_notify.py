@@ -73,6 +73,10 @@ _LOG_SCHEMA = StructType([
 DRY_RUN_NOTIFY   = getattr(runtime, "DRY_RUN_NOTIFY", True)
 HANDLER_WEBHOOK  = getattr(runtime, "POWER_AUTOMATE_HANDLER_WEBHOOK", "")
 MANAGER_WEBHOOK  = getattr(runtime, "POWER_AUTOMATE_MANAGER_WEBHOOK", "")
+TEST_EMAIL       = getattr(runtime, "NOTIFY_TEST_EMAIL", "")
+
+if TEST_EMAIL:
+    print(f"  *** TEST MODE: all DMs will be sent to {TEST_EMAIL} ***")
 
 # -----------------------------------------------------------------------------
 # Webhook helper
@@ -135,22 +139,23 @@ else:
                 }
                 for _, row in group.iterrows()
             ]
+            recipient = TEST_EMAIL or email
             payload = {
-                "recipient_email":     email,
+                "recipient_email":     recipient,
                 "owner_name":          group["owner_name"].iloc[0] or email,
                 "new_violation_count": len(violations),
                 "violations":          violations[:10],
                 "report_url":          REPORT_URL,
             }
             status, err = _post_webhook(HANDLER_WEBHOOK, payload)
-            _log_rows.append((RUN_TIMESTAMP, TODAY, "handler", email, len(violations), status, DRY_RUN_NOTIFY, err))
+            _log_rows.append((RUN_TIMESTAMP, TODAY, "handler", recipient, len(violations), status, DRY_RUN_NOTIFY, err))
             dm_count += 1
         print(f"  Handler DMs sent: {dm_count}")
     elif new_count > 0 and not HANDLER_WEBHOOK:
         print("  Warning: new violations found but POWER_AUTOMATE_HANDLER_WEBHOOK is not set — skipped.")
 
     # --- Manager DM ---
-    if escalated_count > 0 and MANAGER_WEBHOOK and MANAGER_EMAIL:
+    if escalated_count > 0 and MANAGER_WEBHOOK and (MANAGER_EMAIL or TEST_EMAIL):
         esc_rows = (
             escalated_df
             .withColumn("days_open", F.datediff(F.current_date(), F.col("first_seen_at").cast("date")))
@@ -158,15 +163,16 @@ else:
             .orderBy("days_open", ascending=False)
             .toPandas()
         )
+        manager_recipient = TEST_EMAIL or MANAGER_EMAIL
         payload = {
-            "recipient_email": MANAGER_EMAIL,
+            "recipient_email": manager_recipient,
             "escalated_count": escalated_count,
             "escalated":       esc_rows.head(20).to_dict("records"),
             "report_url":      REPORT_URL,
         }
         status, err = _post_webhook(MANAGER_WEBHOOK, payload)
-        _log_rows.append((RUN_TIMESTAMP, TODAY, "manager", MANAGER_EMAIL, escalated_count, status, DRY_RUN_NOTIFY, err))
-        print(f"  Manager DM sent to {MANAGER_EMAIL}")
+        _log_rows.append((RUN_TIMESTAMP, TODAY, "manager", manager_recipient, escalated_count, status, DRY_RUN_NOTIFY, err))
+        print(f"  Manager DM sent to {manager_recipient}")
     elif escalated_count > 0 and not MANAGER_WEBHOOK:
         print("  Warning: escalated violations found but POWER_AUTOMATE_MANAGER_WEBHOOK is not set — skipped.")
 

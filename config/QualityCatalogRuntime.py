@@ -69,3 +69,7 @@ CATALOG_FILTER_OVERRIDES = {}
 DRY_RUN_NOTIFY = True
 POWER_AUTOMATE_HANDLER_WEBHOOK = ""   # flow: handler new-violation DM
 POWER_AUTOMATE_MANAGER_WEBHOOK = ""   # flow: manager escalation DM
+
+# When set, all DMs are sent to this address instead of real owners/manager.
+# Use for end-to-end testing before going to production. Leave "" in production.
+NOTIFY_TEST_EMAIL = ""
