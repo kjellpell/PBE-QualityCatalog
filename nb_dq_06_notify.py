@@ -32,45 +32,38 @@ spark = SparkSession.builder.getOrCreate()
 CONFIG_DIR = Path("/lakehouse/default/Files/Configs")
 
 # -----------------------------------------------------------------------------
-# CONSTANTS — fill in before first run
+# Load config
 # -----------------------------------------------------------------------------
-REPORT_URL = ""  # https://app.powerbi.com/groups/.../reports/...
+def _load_cfg(name: str):
+    spec = importlib.util.spec_from_file_location(name, str(CONFIG_DIR / f"{name}.py"))
+    mod  = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
-MANAGER_EMAIL = ""  # manager@org.com
-
-# Azure AD app registration (application permissions: Chat.Create, ChatMessage.Send)
-# Prefer reading from Key Vault or Fabric environment secrets in production.
-TENANT_ID     = ""
-CLIENT_ID     = ""
-CLIENT_SECRET = ""
-
-# Set True to print adaptive cards to console instead of sending DMs.
-DRY_RUN_NOTIFY = True
-
-# -----------------------------------------------------------------------------
-# Config
-# -----------------------------------------------------------------------------
-_cfg_spec = importlib.util.spec_from_file_location(
-    "QualityCatalogConfig", str(CONFIG_DIR / "QualityCatalogConfig.py")
-)
-_cfg_mod = importlib.util.module_from_spec(_cfg_spec)
-_cfg_spec.loader.exec_module(_cfg_mod)
-cfg = _cfg_mod
+cfg     = _load_cfg("QualityCatalogConfig")
+runtime = _load_cfg("QualityCatalogRuntime")
 
 SCHEMA         = cfg.DEFAULT_SCHEMA
 ENRICHED_TABLE = f"{SCHEMA}.{getattr(cfg, 'DQ_ENRICHED_TABLE', 'dq_violations_enriched')}"
+
+REPORT_URL    = getattr(cfg, "REPORT_URL", "")
+MANAGER_EMAIL = getattr(cfg, "MANAGER_EMAIL", "")
+
+DRY_RUN_NOTIFY = getattr(runtime, "DRY_RUN_NOTIFY", True)
+TENANT_ID      = getattr(runtime, "GRAPH_TENANT_ID", "")
+CLIENT_ID      = getattr(runtime, "GRAPH_CLIENT_ID", "")
+CLIENT_SECRET  = getattr(runtime, "GRAPH_CLIENT_SECRET", "")
 
 # -----------------------------------------------------------------------------
 # Graph API helpers
 # -----------------------------------------------------------------------------
 _GRAPH_BASE  = "https://graph.microsoft.com/v1.0"
-_TOKEN_URL   = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
 _GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 
 
 def _get_graph_token() -> str:
     resp = requests.post(
-        _TOKEN_URL,
+        f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token",
         data={
             "grant_type":    "client_credentials",
             "client_id":     CLIENT_ID,

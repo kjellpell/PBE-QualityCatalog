@@ -60,3 +60,14 @@ RETRYABLE_ERROR_MARKERS = [
 # Set a rule_group override to None to disable its YAML catalog_filter.
 # ---------------------------------------------------------------------------
 CATALOG_FILTER_OVERRIDES = {}
+
+# ---------------------------------------------------------------------------
+# Teams notifications (nb_dq_06_notify).
+# Azure AD app registration with application permissions:
+#   Chat.Create, ChatMessage.Send
+# Set DRY_RUN_NOTIFY = True to print cards to console without sending DMs.
+# ---------------------------------------------------------------------------
+DRY_RUN_NOTIFY  = True
+GRAPH_TENANT_ID = ""
+GRAPH_CLIENT_ID = ""
+GRAPH_CLIENT_SECRET = ""      # prefer Key Vault in production
