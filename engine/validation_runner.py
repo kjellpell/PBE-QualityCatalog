@@ -265,7 +265,33 @@ RESULT_SCHEMA = StructType([
     StructField("status",               StringType(),    False),
     StructField("details",              StringType(),    True),
     StructField("rule_duration_seconds", DoubleType(),   True),
+    # Populated only when status = 'ERROR'; NULL for PASSED/FAILED rules.
+    # Values: 'infrastructure' | 'configuration' | 'source_data'
+    StructField("error_category",       StringType(),    True),
 ])
+
+
+_INFRA_ERROR_MARKERS = ["timeout", "connection", "unavailable", "throttle"]
+_SOURCE_ERROR_MARKERS = [
+    "source table is empty", "table not found", "table or view not found",
+    "no such table", "path does not exist",
+]
+_CONFIG_ERROR_MARKERS = [
+    "unknown expectation", "column(s) not found", "column not found",
+    "missing required", "unsupported operator", "must be numeric",
+    "must be a mapping", "invalid parameter",
+]
+
+
+def _classify_error_category(status: str, details: str | None) -> str | None:
+    if status != "ERROR":
+        return None
+    lowered = (details or "").lower()
+    if any(m in lowered for m in _INFRA_ERROR_MARKERS):
+        return "infrastructure"
+    if any(m in lowered for m in _SOURCE_ERROR_MARKERS):
+        return "source_data"
+    return "configuration"
 
 
 def _empty_results():
@@ -492,6 +518,7 @@ def run_validation(
             result["status"],
             result["details"],
             round(_rule_elapsed, 3),
+            _classify_error_category(result["status"], result["details"]),
         ))
 
         if viols_spark is not None:
@@ -511,6 +538,9 @@ def run_validation(
                 F.col("violation_detail"),
                 F.lit("Active").alias("issue_status"),
                 F.lit(None).cast("string").alias("resolution_timestamp"),
+                # resolution.py preserves this value for still-active violations;
+                # brand-new violations use the current run timestamp as their origin.
+                F.lit(RUN_TIMESTAMP).alias("first_seen_at"),
             )
             violation_dfs.append(viols_spark)
 

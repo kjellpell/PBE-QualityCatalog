@@ -116,15 +116,18 @@ def _build_routing_index(rules_dir: Path):
             }
 
         catalogs.append({
-            "catalog_name":   catalog_name,
-            "rule_group":     rule_group,
-            "database":       database,
-            "table":          table,
-            "pk_column":      pk_column,
-            "ownership_col":  ownership_col,
+            "catalog_name":    catalog_name,
+            "rule_group":      rule_group,
+            "database":        database,
+            "table":           table,
+            "pk_column":       pk_column,
+            "ownership_col":   ownership_col,
             "context_columns": context_columns,
-            "joins_cfg":      joins_cfg,
-            "catalog_filter": catalog_filter,
+            "joins_cfg":       joins_cfg,
+            "catalog_filter":  catalog_filter,
+            # Optional: number of days an Active violation may remain open before
+            # management follow-up is flagged. NULL means no escalation threshold.
+            "escalation_days": doc.get("escalation_days"),
         })
 
     print(f"  Loaded {len(catalogs)} catalogs, {len(rules_index)} rules from {rules_dir}")
@@ -148,6 +151,7 @@ _VIOLATION_COLS = [
     "rule_id", "rule_name", "rule_group",
     "primary_key_value", "violated_column", "actual_value",
     "expected_condition", "violation_detail", "issue_status",
+    "first_seen_at",
 ]
 violations_df = spark.sql(
     f"SELECT {', '.join(_VIOLATION_COLS)} FROM {VIOLATIONS_TABLE} WHERE run_id = '{run_id}'"
@@ -266,18 +270,22 @@ def _enrich_catalog(cat: dict):
                 .dropDuplicates(["_pk_str"])
             )
 
+        escalation_days = cat.get("escalation_days")
         return (
             cat_df
             .join(lookup, cat_df["primary_key_value"] == lookup["_pk_str"], "left")
             .drop("_pk_str")
+            .withColumn("escalation_days", F.lit(escalation_days).cast("integer"))
         )
     else:
         if ownership_col and not _ansatte_ready:
             print(f"  Info: {cat['catalog_name']} has ownership_col='{ownership_col}' but ansatte keys not configured — owner columns NULL")
+        escalation_days = cat.get("escalation_days")
         return (
             cat_df
             .withColumn("owner_email", F.lit(None).cast("string"))
             .withColumn("owner_name", F.lit(None).cast("string"))
+            .withColumn("escalation_days", F.lit(escalation_days).cast("integer"))
         )
 
 

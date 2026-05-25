@@ -4,6 +4,7 @@ database: saksbehandling
 description: Datakvalitet på fakturalinjer som kommer fra PB360
 pk_column: fakturanr
 ownership_col: ""
+escalation_days: 7
 
 # Sjekk denne
 context_columns: []
