@@ -226,13 +226,6 @@ Handlers see only their own rows (RLS). Managers see all rows and slice by
 `owner_name` to inspect a specific handler's work. No bridge tables needed —
 context columns carry human-readable identifiers directly.
 
-### Page 8 — Coverage (Governance)
-Source table: `dq_coverage_report` (written by `nb_dq_05_coverage.py`).
-
-- **KPI card**: `% Columns Covered` = DIVIDE(COUNTROWS(FILTER(dq_coverage_report, dq_coverage_report[has_rule])), COUNTROWS(dq_coverage_report)) * 100
-- **Stacked bar**: covered vs uncovered column count by `table_name`
-- **Detail table**: `table_name`, `column_name`, `has_rule`, `rule_ids` — filterable to show only uncovered columns
-
 ### Page 7 — IT Ops Errors
 
 Source table: `dq_run_results` (filtered to status = "ERROR") + `dq_execution_metrics`.

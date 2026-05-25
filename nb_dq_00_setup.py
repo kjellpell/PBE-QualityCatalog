@@ -229,25 +229,7 @@ USING DELTA
 
 print("dry-run tmp tables ready.")
 
-
-# CELL 6 — dq_coverage_report
-# One row per source column per snapshot run (overwritten each time nb_dq_05 runs).
-# Used by Power BI governance page to show which columns are monitored.
-_coverage_table = f"{_schema}.dq_coverage_report"
-spark.sql(f"""
-CREATE TABLE IF NOT EXISTS {_coverage_table} (
-    snapshot_date DATE,
-    table_name    STRING,
-    column_name   STRING,
-    has_rule      BOOLEAN,
-    rule_ids      STRING
-)
-USING DELTA
-""")
-print("dq_coverage_report ready.")
-
-
 print("\n=== DQ SETUP COMPLETE ===")
-print(f"Delta tables: {_results_table}, {_violations_table}, {_metrics_table}, {_coverage_table}")
+print(f"Delta tables: {_results_table}, {_violations_table}, {_metrics_table}")
 print(f"Dry-run tmp: {_results_table}_tmp, {_violations_table}_tmp, {_metrics_table}_tmp")
 
