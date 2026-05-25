@@ -63,11 +63,9 @@ CATALOG_FILTER_OVERRIDES = {}
 
 # ---------------------------------------------------------------------------
 # Teams notifications (nb_dq_06_notify).
-# Azure AD app registration with application permissions:
-#   Chat.Create, ChatMessage.Send
-# Set DRY_RUN_NOTIFY = True to print cards to console without sending DMs.
+# Both values are HTTP trigger URLs from Power Automate flows.
+# Set DRY_RUN_NOTIFY = True to print payloads to console without posting.
 # ---------------------------------------------------------------------------
-DRY_RUN_NOTIFY  = True
-GRAPH_TENANT_ID = ""
-GRAPH_CLIENT_ID = ""
-GRAPH_CLIENT_SECRET = ""      # prefer Key Vault in production
+DRY_RUN_NOTIFY = True
+POWER_AUTOMATE_HANDLER_WEBHOOK = ""   # flow: handler new-violation DM
+POWER_AUTOMATE_MANAGER_WEBHOOK = ""   # flow: manager escalation DM
