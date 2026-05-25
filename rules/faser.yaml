@@ -4,6 +4,7 @@ database: saksbehandling
 description: Validering av datakvalitet for faser
 pk_column: stage_recno
 ownership_col: saksansvarlig_kode
+escalation_days: 14
 
 # Jeg har valgt å kun se på PB360-saker per nå
 catalog_filter:

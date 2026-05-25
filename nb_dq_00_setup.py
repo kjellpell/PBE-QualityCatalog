@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS {_results_table} (
     success_pct           DOUBLE,
     status                STRING,
     details               STRING,
-    rule_duration_seconds DOUBLE
+    rule_duration_seconds DOUBLE,
+    error_category        STRING
 )
 USING DELTA
 """)
@@ -92,7 +93,8 @@ CREATE TABLE IF NOT EXISTS {_violations_table} (
     expected_condition   STRING,
     violation_detail     STRING,
     issue_status         STRING,
-    resolution_timestamp STRING
+    resolution_timestamp STRING,
+    first_seen_at        TIMESTAMP
 )
 USING DELTA
 """)
@@ -102,6 +104,7 @@ USING DELTA
 for _col_def in [
     "issue_status         STRING",
     "resolution_timestamp STRING",
+    "first_seen_at        TIMESTAMP",
 ]:
     try:
         spark.sql(
@@ -113,6 +116,19 @@ for _col_def in [
             print(f"  Warning: could not add column '{_col_def}': {_exc}")
 
 print("dq_violations ready.")
+
+# Add error_category to dq_run_results for deployments pre-dating this field.
+for _col_def in [
+    "error_category STRING",
+]:
+    try:
+        spark.sql(
+            f"ALTER TABLE {_results_table} ADD COLUMNS ({_col_def})"
+        )
+    except Exception as _exc:
+        _msg = str(_exc).lower()
+        if "already exists" not in _msg and "duplicate" not in _msg:
+            print(f"  Warning: could not add column '{_col_def}': {_exc}")
 
 # Performance tip: after the first significant data load, run the following
 # OPTIMIZE command to apply Z-order clustering on the columns most commonly
@@ -166,7 +182,8 @@ CREATE TABLE IF NOT EXISTS {_results_table}_tmp (
     success_pct           DOUBLE,
     status                STRING,
     details               STRING,
-    rule_duration_seconds DOUBLE
+    rule_duration_seconds DOUBLE,
+    error_category        STRING
 )
 USING DELTA
 """)
@@ -187,7 +204,8 @@ CREATE TABLE IF NOT EXISTS {_violations_table}_tmp (
     expected_condition   STRING,
     violation_detail     STRING,
     issue_status         STRING,
-    resolution_timestamp STRING
+    resolution_timestamp STRING,
+    first_seen_at        TIMESTAMP
 )
 USING DELTA
 """)

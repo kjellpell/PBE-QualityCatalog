@@ -4,6 +4,7 @@ database: saksbehandling
 description: Datakvalitet på milepæler knyttet til saksfaser
 pk_column: milestone_recno
 ownership_col: ""
+escalation_days: 14
 
 # Jeg har valgt å kun se på PB360-saker per nå
 catalog_filter:
@@ -48,6 +49,7 @@ rules:
 - rule_id: MIL-003
   name: Begge milepæler i et par for til politisk behandling må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
+  user_message: 'Fasen mangler én av to påkrevde milepæler for politisk behandling. Kontroller at begge milepælene i paret er registrert i fagsystemet.'
   expectation: pairs_present
   parameters:
     event_column: milestone_title
@@ -65,6 +67,7 @@ rules:
 - rule_id: MIL-004
   name: Begge milepæler i et par for offentlig ettersyn må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
+  user_message: 'Fasen mangler én av to påkrevde milepæler for offentlig ettersyn. Kontroller at begge milepælene i paret er registrert i fagsystemet.'
   expectation: pairs_present
   parameters:
     event_column: milestone_title
@@ -81,6 +84,7 @@ rules:
 - rule_id: MIL-005
   name: Begge milepæler i et par for oppstartsmøte må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
+  user_message: 'Fasen mangler én av to påkrevde milepæler for oppstartsmøte. Kontroller at begge milepælene i paret er registrert i fagsystemet.'
   expectation: pairs_present
   parameters:
     event_column: milestone_title

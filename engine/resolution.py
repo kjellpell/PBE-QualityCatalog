@@ -47,6 +47,9 @@ VIOLATION_SCHEMA = StructType([
     # Stored as an ISO-8601 string ("2026-04-03T10:00:00") so that the value
     # can be read in environments without full Delta/Spark type coercion.
     StructField("resolution_timestamp", StringType(),   True),
+    # Set once when the violation is first detected; preserved on every subsequent
+    # run so violation age can be calculated as (now - first_seen_at).
+    StructField("first_seen_at",       TimestampType(), True),
 ])
 
 
@@ -121,11 +124,16 @@ def _apply_resolution_tracking(
             .drop("_vk")
         )
 
-        # Still-active violations → refresh run metadata using current row
+        # Still-active violations → refresh run metadata but preserve first_seen_at
+        # from the existing row so violation age is measured from initial detection.
+        _orig_first_seen = act_jk.select(_jk + ["first_seen_at"]).withColumnRenamed(
+            "first_seen_at", "_orig_first_seen_at"
+        )
         still_active = (
             curr_jk
-            .join(act_jk.select(_jk), on=_jk, how="inner")
-            .drop("_vk")
+            .join(_orig_first_seen, on=_jk, how="inner")
+            .withColumn("first_seen_at", F.col("_orig_first_seen_at"))
+            .drop("_orig_first_seen_at", "_vk")
         )
 
         # Previously active, absent from current run → mark Resolved

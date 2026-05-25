@@ -215,15 +215,27 @@ DQ Score Change % =
 ### Page 6 — My Violations (handler/manager view)
 Source table: `dq_violations_enriched` (not `dq_violations` — see Section 7).
 
-- **KPI cards**: `Active Violations`, `Rules With Active Violations`, `Latest Batch Date`
+- **KPI cards**: `Active Violations`, `Rules With Active Violations`, `Latest Batch Date`, `Escalation Needed`
 - **Slicers**: `rule_group`, `routing_team`, `batch_date`, `issue_status`, `owner_name`
-- **Main table**: `saksnummer`, `rule_name`, `violated_column`, `violation_detail`,
-  `indikator`, `batch_date`, `issue_status`, `owner_name`
+- **Main table**: `saksnummer`, `rule_name`, `violated_column`, `user_message`,
+  `first_seen_at`, `batch_date`, `issue_status`, `owner_name`
+  - Conditional format: highlight rows red where `Escalation Needed` flag is 1
 - **Trend line**: Active violation count by `batch_date`
 
 Handlers see only their own rows (RLS). Managers see all rows and slice by
 `owner_name` to inspect a specific handler's work. No bridge tables needed —
 context columns carry human-readable identifiers directly.
+
+### Page 7 — IT Ops Errors
+
+Source table: `dq_run_results` (filtered to status = "ERROR") + `dq_execution_metrics`.
+
+- **KPI cards**: `Technical Errors`, `Infrastructure Errors`, `Configuration Errors`, `Source Data Errors`
+- **Slicer**: `error_category` (infrastructure / configuration / source_data), `batch_date`
+- **Error table**: `rule_id`, `rule_name`, `error_category`, `details`, `run_timestamp`
+  filtered to `status = "ERROR"`
+- **Script failures table**: `script_name`, `status`, `error_message`, `started_at_utc`,
+  `duration_seconds` from `dq_execution_metrics` filtered to `status = "Failed"`
 
 ---
 
@@ -367,3 +379,81 @@ IF(
 ```
 
 > A value of `1` can trigger a Power Automate alert to the responsible rule owner or team.
+
+---
+
+## 8. IT Ops Error Measures
+
+These measures operate on `dq_run_results` and `dq_execution_metrics`.
+
+```dax
+Technical Errors =
+CALCULATE(
+    COUNTROWS( dq_run_results ),
+    dq_run_results[status] = "ERROR"
+)
+```
+
+```dax
+Infrastructure Errors =
+CALCULATE(
+    COUNTROWS( dq_run_results ),
+    dq_run_results[status]         = "ERROR",
+    dq_run_results[error_category] = "infrastructure"
+)
+```
+
+```dax
+Configuration Errors =
+CALCULATE(
+    COUNTROWS( dq_run_results ),
+    dq_run_results[status]         = "ERROR",
+    dq_run_results[error_category] = "configuration"
+)
+```
+
+```dax
+Source Data Errors =
+CALCULATE(
+    COUNTROWS( dq_run_results ),
+    dq_run_results[status]         = "ERROR",
+    dq_run_results[error_category] = "source_data"
+)
+```
+
+---
+
+## 9. Escalation Measures
+
+These measures operate on `dq_violations_enriched` and require the `first_seen_at`
+and `escalation_days` columns added in v1.1. The `escalation_days` threshold is set
+per catalog in the YAML header (e.g. `escalation_days: 14`).
+
+```dax
+Escalation Needed =
+CALCULATE(
+    COUNTROWS( dq_violations_enriched ),
+    dq_violations_enriched[issue_status] = "Active",
+    NOT ISBLANK( dq_violations_enriched[escalation_days] ),
+    DATEDIFF(
+        dq_violations_enriched[first_seen_at],
+        TODAY(),
+        DAY
+    ) > dq_violations_enriched[escalation_days]
+)
+```
+
+> A value > 0 can trigger a Power Automate manager notification.
+> Use this on Page 6 as a KPI card and as a conditional formatting rule
+> (highlight rows red where violation age exceeds `escalation_days`).
+
+```dax
+Violation Age Days =
+DATEDIFF(
+    MAX( dq_violations_enriched[first_seen_at] ),
+    TODAY(),
+    DAY
+)
+```
+
+> Use in the Page 6 table to show how long each violation has been open.
