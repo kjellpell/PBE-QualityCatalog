@@ -229,7 +229,27 @@ USING DELTA
 
 print("dry-run tmp tables ready.")
 
+
+# CELL 6 — dq_notification_log
+# One row per notification attempt written by nb_dq_06_notify.py.
+_notification_log_table = f"{_schema}.dq_notification_log"
+spark.sql(f"""
+CREATE TABLE IF NOT EXISTS {_notification_log_table} (
+    run_timestamp      TIMESTAMP,
+    batch_date         DATE,
+    notification_type  STRING,
+    recipient_email    STRING,
+    violation_count    BIGINT,
+    status             STRING,
+    dry_run            BOOLEAN,
+    error_message      STRING
+)
+USING DELTA
+""")
+print("dq_notification_log ready.")
+
+
 print("\n=== DQ SETUP COMPLETE ===")
-print(f"Delta tables: {_results_table}, {_violations_table}, {_metrics_table}")
+print(f"Delta tables: {_results_table}, {_violations_table}, {_metrics_table}, {_notification_log_table}")
 print(f"Dry-run tmp: {_results_table}_tmp, {_violations_table}_tmp, {_metrics_table}_tmp")
 

@@ -30,6 +30,10 @@ from pathlib import Path
 import requests
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    BigIntType, BooleanType, DateType,
+    StringType, StructField, StructType, TimestampType,
+)
 
 spark = SparkSession.builder.getOrCreate()
 
@@ -53,6 +57,19 @@ ENRICHED_TABLE = f"{SCHEMA}.{getattr(cfg, 'DQ_ENRICHED_TABLE', 'dq_violations_en
 REPORT_URL    = getattr(cfg, "REPORT_URL", "")
 MANAGER_EMAIL = getattr(cfg, "MANAGER_EMAIL", "")
 
+NOTIFICATION_LOG_TABLE = f"{SCHEMA}.dq_notification_log"
+
+_LOG_SCHEMA = StructType([
+    StructField("run_timestamp",     TimestampType(), False),
+    StructField("batch_date",        DateType(),      False),
+    StructField("notification_type", StringType(),    False),
+    StructField("recipient_email",   StringType(),    True),
+    StructField("violation_count",   BigIntType(),    True),
+    StructField("status",            StringType(),    False),
+    StructField("dry_run",           BooleanType(),   False),
+    StructField("error_message",     StringType(),    True),
+])
+
 DRY_RUN_NOTIFY   = getattr(runtime, "DRY_RUN_NOTIFY", True)
 HANDLER_WEBHOOK  = getattr(runtime, "POWER_AUTOMATE_HANDLER_WEBHOOK", "")
 MANAGER_WEBHOOK  = getattr(runtime, "POWER_AUTOMATE_MANAGER_WEBHOOK", "")
@@ -60,19 +77,27 @@ MANAGER_WEBHOOK  = getattr(runtime, "POWER_AUTOMATE_MANAGER_WEBHOOK", "")
 # -----------------------------------------------------------------------------
 # Webhook helper
 # -----------------------------------------------------------------------------
-def _post_webhook(webhook_url: str, payload: dict) -> None:
+def _post_webhook(webhook_url: str, payload: dict) -> tuple[str, str | None]:
+    """POST payload to webhook. Returns (status, error_message)."""
     if DRY_RUN_NOTIFY:
         print(f"  [DRY RUN] POST to webhook:")
         print(json.dumps(payload, indent=2, ensure_ascii=False))
-        return
-    resp = requests.post(webhook_url, json=payload, timeout=30)
-    resp.raise_for_status()
+        return "dry_run", None
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=30)
+        resp.raise_for_status()
+        return "sent", None
+    except Exception as exc:
+        return "error", str(exc)[:2000]
 
 
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
-TODAY = date.today()
+from datetime import datetime, timezone
+RUN_TIMESTAMP = datetime.now(timezone.utc)
+TODAY         = date.today()
+_log_rows: list[tuple] = []
 
 enriched_df = spark.table(ENRICHED_TABLE).filter(F.col("issue_status") == "Active")
 
@@ -111,13 +136,14 @@ else:
                 for _, row in group.iterrows()
             ]
             payload = {
-                "recipient_email":    email,
-                "owner_name":         group["owner_name"].iloc[0] or email,
+                "recipient_email":     email,
+                "owner_name":          group["owner_name"].iloc[0] or email,
                 "new_violation_count": len(violations),
-                "violations":         violations[:10],
-                "report_url":         REPORT_URL,
+                "violations":          violations[:10],
+                "report_url":          REPORT_URL,
             }
-            _post_webhook(HANDLER_WEBHOOK, payload)
+            status, err = _post_webhook(HANDLER_WEBHOOK, payload)
+            _log_rows.append((RUN_TIMESTAMP, TODAY, "handler", email, len(violations), status, DRY_RUN_NOTIFY, err))
             dm_count += 1
         print(f"  Handler DMs sent: {dm_count}")
     elif new_count > 0 and not HANDLER_WEBHOOK:
@@ -133,14 +159,20 @@ else:
             .toPandas()
         )
         payload = {
-            "recipient_email":    MANAGER_EMAIL,
-            "escalated_count":    escalated_count,
-            "escalated":          esc_rows.head(20).to_dict("records"),
-            "report_url":         REPORT_URL,
+            "recipient_email": MANAGER_EMAIL,
+            "escalated_count": escalated_count,
+            "escalated":       esc_rows.head(20).to_dict("records"),
+            "report_url":      REPORT_URL,
         }
-        _post_webhook(MANAGER_WEBHOOK, payload)
+        status, err = _post_webhook(MANAGER_WEBHOOK, payload)
+        _log_rows.append((RUN_TIMESTAMP, TODAY, "manager", MANAGER_EMAIL, escalated_count, status, DRY_RUN_NOTIFY, err))
         print(f"  Manager DM sent to {MANAGER_EMAIL}")
     elif escalated_count > 0 and not MANAGER_WEBHOOK:
         print("  Warning: escalated violations found but POWER_AUTOMATE_MANAGER_WEBHOOK is not set — skipped.")
+
+if _log_rows:
+    log_df = spark.createDataFrame(_log_rows, schema=_LOG_SCHEMA)
+    log_df.write.mode("append").saveAsTable(NOTIFICATION_LOG_TABLE)
+    print(f"  {NOTIFICATION_LOG_TABLE}: {len(_log_rows)} rows written.")
 
 print("\nNotification run complete.")
