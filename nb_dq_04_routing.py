@@ -139,7 +139,11 @@ rules_index, catalogs = _build_routing_index(RULES_DIR)
 # -----------------------------------------------------------------------------
 # STEP 3: Read violations for the latest run
 # -----------------------------------------------------------------------------
-_run_row = spark.sql(f"SELECT MAX(run_id) AS run_id FROM {RESULTS_TABLE}").collect()
+# run_id is a random uuid4, so MAX(run_id) would pick an arbitrary run rather
+# than the most recent one — order by run_timestamp to get the latest run.
+_run_row = spark.sql(
+    f"SELECT run_id FROM {RESULTS_TABLE} ORDER BY run_timestamp DESC LIMIT 1"
+).collect()
 if not _run_row or _run_row[0]["run_id"] is None:
     raise RuntimeError(f"No runs found in {RESULTS_TABLE}. Run nb_dq_03 first.")
 

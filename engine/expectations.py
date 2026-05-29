@@ -354,8 +354,8 @@ class ColumnComparisonExpectation:
                 F.col(col_a).isNotNull() & F.col(col_b).isNotNull()
             )
 
-        if filter_col and filter_vals:
-            evaluated = evaluated.filter(F.col(filter_col).isin(filter_vals))
+        # Note: the filter_col / filter_vals restriction is already applied to
+        # df above (before deriving `evaluated`), so it is not repeated here.
 
         total = evaluated.count()
 
@@ -1451,9 +1451,10 @@ class ValidateConditionalColumnValueExpectation:
         total       = evaluated.count()
 
         if total == 0:
+            df_total = df.count()
             result = {
-                "total_rows":  df.count(),
-                "passed_rows": df.count(),
+                "total_rows":  df_total,
+                "passed_rows": df_total,
                 "failed_rows": 0,
                 "success_pct": 100.0,
                 "status":      "PASSED",
