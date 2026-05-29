@@ -31,7 +31,7 @@ import requests
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
-    BigIntType, BooleanType, DateType,
+    BooleanType, DateType, LongType,
     StringType, StructField, StructType, TimestampType,
 )
 
@@ -64,7 +64,7 @@ _LOG_SCHEMA = StructType([
     StructField("batch_date",        DateType(),      False),
     StructField("notification_type", StringType(),    False),
     StructField("recipient_email",   StringType(),    True),
-    StructField("violation_count",   BigIntType(),    True),
+    StructField("violation_count",   LongType(),      True),
     StructField("status",            StringType(),    False),
     StructField("dry_run",           BooleanType(),   False),
     StructField("error_message",     StringType(),    True),
