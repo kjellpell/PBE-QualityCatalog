@@ -16,7 +16,8 @@ The Quality Catalog runs data quality checks across Process, Milestone, and Invo
 Core capabilities:
 
 - Single validation pipeline across domains
-- Rules loaded from the `rule_catalog` Delta table
+- Rules loaded directly from YAML catalogs in `rules/` (the `rule_catalog` Delta
+  table is a legacy migration artifact — see ARCHITECTURE.md)
 - Run metrics for observability and support
 - Current-state issue tracking (Active and Resolved)
 - Clear IT/business ownership split
@@ -30,7 +31,7 @@ Core capabilities:
 - Reliable operations:
   preflight catches missing sources and config before schedule time.
 - Maintainable design:
-  stable engine code, rules managed in `rule_catalog` Delta table.
+  stable engine code, rules managed as YAML catalogs in `rules/`.
 - Observable runs:
   each execution logs status, timing, retryability, and targets.
 - Safer rollout:
@@ -98,7 +99,7 @@ The engine will raise a clear error if either file is missing.
 - DRY_RUN:
   write to temporary targets with _tmp suffix.
 - FAIL_ON_EMPTY_RULES:
-  fail if no active rules are found in rule_catalog.
+  fail if no rules are found in the YAML catalogs.
 - FAIL_ON_EMPTY_SOURCE:
   fail if a configured source table is empty.
 - MAX_RETRIES and RETRYABLE_ERROR_MARKERS:
@@ -110,7 +111,7 @@ The engine will raise a clear error if either file is missing.
 
 1. Load config/runtime modules and validate required keys.
 2. Resolve output targets (production or dry-run).
-3. Load active rules from rule_catalog Delta table.
+3. Load rules directly from the YAML catalogs in `rules/`.
 4. For each rule group:
    - Read source table from Spark metastore.
    - Apply optional pre-joins.
@@ -173,19 +174,23 @@ Rerun nb_dq_00_setup.py to ensure required tables and columns exist.
 ### First-time setup
 
 1. Run nb_dq_00_setup.py to create Delta tables.
-2. Run nb_dq_02_migrate_rules.py to populate rule_catalog from YAML files.
+2. Deploy the YAML catalogs in `rules/` to the Lakehouse (no Delta migration
+   needed — rules are loaded directly from YAML).
 
 ### Preflight before promotion or scheduling
 
 1. Run nb_dq_01_preflight.py.
-2. Confirm rule_catalog has Active rows.
+2. Confirm the YAML catalogs load and contain rules.
 3. Confirm all referenced source tables exist.
 
 ### Scheduled execution
 
-1. Run engine/validation_runner.py after source refresh.
+1. Run nb_dq_03_run_validation.py (the Fabric wrapper for
+   engine/validation_runner.py) after source refresh.
 2. Verify summary output and row counts.
 3. Confirm evidence in dq_execution_metrics.
+4. Optionally run nb_dq_04_routing.py (enrichment) and nb_dq_06_notify.py
+   (Teams notifications).
 
 For a one-page checklist, see OPERATIONS_QUICK_REF.md.
 
@@ -193,8 +198,8 @@ For a one-page checklist, see OPERATIONS_QUICK_REF.md.
 
 ## Troubleshooting
 
-- No active rules found:
-  verify rule_catalog has Active rows.
+- No rules found:
+  verify the YAML catalogs in `rules/` are deployed and contain rules.
 - Missing source tables:
   run preflight and confirm metastore names.
 - Config loading failures:
@@ -202,7 +207,7 @@ For a one-page checklist, see OPERATIONS_QUICK_REF.md.
 - Violation MERGE failures:
   rerun nb_dq_00_setup.py and verify Delta support.
 - Unexpected expectation errors:
-  validate expectation names, parameters, and source columns in rule_catalog.
+  validate expectation names, parameters, and source columns in the YAML rule files.
 - `validate_active_reference` errors:
   confirm reference table name, column names, and that `active_value` matches the exact value used in the reference table (including capitalisation).
 - `validate_time_in_state` errors:

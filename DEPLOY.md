@@ -38,6 +38,11 @@ If you run notebook-native entrypoints only, `engine/` does not need to be prese
    This notebook runner executes `/lakehouse/default/Files/engine/validation_runner.py`
    and prints a post-run summary.
 4. Validate `dq_run_results`, `dq_violations`, and `default.dq_execution_metrics`.
+5. Run `nb_dq_04_routing.py` to enrich violations with owner/context columns
+   into `dq_violations_enriched` (consumed by Power BI).
+6. Optionally run `nb_dq_06_notify.py` to send Teams DM notifications via Power
+   Automate (handler new-violation DMs and manager escalation DMs); attempts are
+   logged to `dq_notification_log`.
 
 ## Runtime controls
 
