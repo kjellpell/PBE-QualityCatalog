@@ -13,7 +13,7 @@ Use [ARCHITECTURE.md](ARCHITECTURE.md) for engine internals.
 
 All operations are expected to run in Microsoft Fabric notebooks.
 
-1. Update rule definitions in your managed source (typically `rule_catalog`; YAML may be used only as migration seed where applicable).
+1. Update rule definitions in the YAML catalogs under `rules/` (one file per rule group); they are loaded directly at runtime.
 2. Run [nb_dq_01_preflight.py](nb_dq_01_preflight.py).
 3. Run one validation cycle with `DRY_RUN = True`.
 4. Review outputs in temporary tables.
@@ -647,7 +647,7 @@ catalog_filter:
 
 Preflight checks that the type is one of the two allowed values, that required sub-keys are present, and (for `date_range`) that `date_column` exists in the source table.
 
-You can override or disable a YAML `catalog_filter` without touching the YAML file by setting `CATALOG_FILTER_OVERRIDES` in `QualityCatalogConfig.py`:
+You can override or disable a YAML `catalog_filter` without touching the YAML file by setting `CATALOG_FILTER_OVERRIDES` in `QualityCatalogRuntime.py`:
 
 ```python
 CATALOG_FILTER_OVERRIDES = {

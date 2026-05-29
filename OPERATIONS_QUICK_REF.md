@@ -14,10 +14,12 @@ Use this checklist to run, verify, and triage the Quality Catalog quickly.
 
 1. Confirm source data refresh is complete.
 2. Run preflight: nb_dq_01_preflight.py.
-3. Run validation: engine/validation_runner.py.
+3. Run validation: nb_dq_03_run_validation.py (executes the engine and prints a summary).
 4. Check execution evidence in default.dq_execution_metrics.
 5. Check latest summary rows in dq_run_results.
 6. Check issue lifecycle behavior in dq_violations.
+7. Run nb_dq_04_routing.py to refresh dq_violations_enriched (for Power BI).
+8. Optionally run nb_dq_06_notify.py to send Teams DMs (logged to dq_notification_log).
 
 ---
 
@@ -38,8 +40,8 @@ Set in config/QualityCatalogRuntime.py.
   fail if no YAML catalogs are found.
 - FAIL_ON_EMPTY_SOURCE:
   fail if a source table is empty.
-- MAX_RETRIES:
-  retry budget for orchestration logic.
+- MAX_RULE_RETRIES:
+  per-rule retry budget for retryable errors.
 - RETRYABLE_ERROR_MARKERS:
   strings used to classify retryable failures.
 

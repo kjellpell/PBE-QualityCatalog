@@ -15,8 +15,8 @@ Do not add GX imports, GX dependencies, or GX-based code paths.
 ### Rules live in YAML
 At runtime, the validation engine loads rules directly from YAML files in `rules/`.
 Each YAML file is a rule catalog for one rule group (Process, Milestone, Invoice).
-The `nb_dq_02_migrate_rules.py` script and `rule_catalog` Delta table are legacy
-migration artifacts — rules are maintained in YAML and do not go through Delta.
+Rules are maintained as YAML and do not go through Delta. (Earlier revisions
+migrated rules through a Delta `rule_catalog` table; that path is retired.)
 Do not add Delta-based rule loading to the validation engine.
 
 ### Custom expectations only
@@ -65,18 +65,14 @@ nb_dq_06_notify.py          → Teams DM notifications via Power Automate webhoo
 | `nb_dq_04_routing.py` | Post-validation enrichment → dq_violations_enriched |
 | `nb_dq_06_notify.py` | Teams DM notifications via Power Automate → dq_notification_log |
 | `rules/*.yaml` | Rule catalogs — one file per rule group, loaded at runtime |
-| `tests/test_expectations.py` | Unit tests for expectation classes |
-| `tests/test_yaml_rules.py` | Unit tests for YAML rule parsing |
 
 ## Status Constants
 
 The following string values are used as status/state values across the codebase.
 Use these exact strings — typos will silently break MERGE logic.
 
-- **Rule status** (rule_catalog): `"Active"`
 - **Run result status** (dq_run_results): `"PASSED"`, `"FAILED"`, `"ERROR"`
 - **Violation status** (dq_violations): `"Active"`, `"Resolved"`
-- **IC exception status** (ic_exceptions): `"Open"`, `"Remediated"`, `"Verified"`, `"Waived"`
 - **Execution metric status** (dq_execution_metrics): `"Succeeded"`, `"Failed"`
 
 
@@ -106,42 +102,46 @@ All parameter names use the `_column` suffix to map directly to DataFrame column
 
 | Parameter key | Used by expectation(s) |
 |---|---|
+| `column` | not_null (single), reference_exists, reference_active, value_in_list |
+| `columns` | not_null, not_null_when, combination_unique |
 | `when_column` | not_null_when, value_when |
-| `checked_columns` | not_null_when |
 | `left_column` | comparison |
 | `right_column` | comparison |
 | `right_value` | comparison (scalar mode) |
+| `operator` | comparison, value_when, row_count |
 | `allowed_values` | value_in_list |
 | `event_column` | sequence_ordered, pairs_present, gate_complete |
 | `order_column` | sequence_ordered, gate_complete |
+| `expected_sequence` | sequence_ordered |
 | `required_pairs` | pairs_present |
 | `mode` | pairs_present (`both` or `stop_requires_start`) |
+| `value_to_check` | gate_complete |
+| `required_column` / `required_value` | value_when |
 | `open_state_column` | state_duration_within_limit |
 | `open_state_value` | state_duration_within_limit |
+| `start_column` | state_duration_within_limit |
+| `max_days` | state_duration_within_limit |
 | `reference_table` | reference_exists, reference_active |
-| `reference_column` | reference_exists, reference_active |
+| `reference_column` | reference_exists, reference_active, group_aggregate_matches |
 | `reference_active_column` | reference_active |
 | `reference_active_value` | reference_active |
 | `group_column` | sequence_ordered, pairs_present, gate_complete, group_aggregate_matches |
-| `source_column` | reference_active |
-| `column` | reference_exists, not_null, value_in_list |
-| `max_days` | state_duration_within_limit |
+| `aggregate_column` / `aggregate` / `tolerance` | group_aggregate_matches |
 | `threshold` | row_count |
-| `aggregate_column` | group_aggregate_matches |
-| `reference_column` | group_aggregate_matches |
+| `sql` | sql_violations |
+| `pk_column` | most expectations (defaults to the catalog `pk_column`) |
 
 ### Vocabulary
 
 - Use **column** (not "field") everywhere when referring to a DataFrame/table column.
-- List-typed parameters use **plural** (`checked_columns`, `columns`, `start_markers`, `stop_markers`, `allowed_values`). Scalar-typed parameters use **singular** (`when_column`, `left_column`, `event_column`, etc.).
+- List-typed parameters use **plural** (`columns`, `required_pairs`, `allowed_values`). Scalar-typed parameters use **singular** (`when_column`, `left_column`, `event_column`, etc.).
 - The `when_column` parameter is the column whose value is tested to decide whether the rule applies. The `_when` suffix in an expectation ID signals conditional application (`not_null_when`, `value_when`).
 
 ### Notes
 
 - **Engine** (`engine/expectations.py`): Canonical IDs and parameter keys enforced in `CUSTOM_EXPECTATION_REGISTRY` and all expectation classes.
 - **Preflight** (`nb_dq_01_preflight.py`): Detects legacy nested `reference:` blocks; validates required canonical keys per expectation.
-- **YAML catalogs**: All five active rule files use canonical IDs and keys.
-- **IC notebook** (`nb_ic_01_manage_exceptions.py`): Task Flow parameter is `primary_key_value` (matches the column it filters on in `ic_exceptions`).
+- **YAML catalogs**: All three active rule files use canonical IDs and keys.
 
 ## Delta Tables
 
@@ -151,3 +151,4 @@ All parameter names use the `_column` suffix to map directly to DataFrame column
 | `dq_violations` | `validation_runner.py` (via resolution.py) | Current-state violation log (`Active`/`Resolved`); includes `routing_team` |
 | `dq_violations_enriched` | `nb_dq_04_routing.py` | Unified violation table with owner, routing_team, and catalog-specific context columns; used by Power BI handler/manager report |
 | `dq_execution_metrics` | `validation_runner.py` | Run-level observability |
+| `dq_notification_log` | `nb_dq_06_notify.py` | One row per Teams DM attempt (handler/manager), with status |

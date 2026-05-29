@@ -1,6 +1,6 @@
 # PBE Quality Catalog
 
-Data quality and internal control (IC) validation engine for the PBE case management platform,
+Data quality validation engine for the PBE case management platform,
 built on Apache Spark and Delta Lake, designed to run as Fabric Lakehouse notebooks.
 
 This README is for IT operations and maintainers.
@@ -16,8 +16,7 @@ The Quality Catalog runs data quality checks across Process, Milestone, and Invo
 Core capabilities:
 
 - Single validation pipeline across domains
-- Rules loaded directly from YAML catalogs in `rules/` (the `rule_catalog` Delta
-  table is a legacy migration artifact — see ARCHITECTURE.md)
+- Rules loaded directly from YAML catalogs in `rules/`
 - Run metrics for observability and support
 - Current-state issue tracking (Active and Resolved)
 - Clear IT/business ownership split
@@ -54,24 +53,21 @@ PBE-QualityCatalog/
 │   ├── runtime.py
 │   └── validation_runner.py
 ├── rules/                          (YAML rule files — loaded directly by validation engine)
-│   ├── invoice_rules.yaml
-│   ├── milestone_rules.yaml
-│   └── process_rules.yaml
-├── tests/
-│   ├── __init__.py
-│   ├── test_expectations.py
-│   └── test_yaml_rules.py
+│   ├── faser.yaml
+│   ├── faktura.yaml
+│   └── milepeler.yaml
+├── powerautomate/                  (Power Automate flow packages for Teams DMs)
 ├── nb_dq_00_setup.py
 ├── nb_dq_01_preflight.py
-├── nb_dq_02_migrate_rules.py
+├── nb_dq_03_run_validation.py
+├── nb_dq_04_routing.py
+├── nb_dq_06_notify.py
 ├── ARCHITECTURE.md
+├── DAX_POWERBI.md
 ├── DEPLOY.md
-├── IC_RULES_GUIDE.md
-├── KG.md
 ├── OPERATIONS_QUICK_REF.md
 ├── README.md
-├── RULES_GUIDE.md
-└── dq_powerbi_measures.md
+└── RULES_GUIDE.md
 ```
 
 ---
@@ -102,7 +98,7 @@ The engine will raise a clear error if either file is missing.
   fail if no rules are found in the YAML catalogs.
 - FAIL_ON_EMPTY_SOURCE:
   fail if a configured source table is empty.
-- MAX_RETRIES and RETRYABLE_ERROR_MARKERS:
+- MAX_RULE_RETRIES and RETRYABLE_ERROR_MARKERS:
   classify retryability in execution metrics.
 
 ---
@@ -208,23 +204,20 @@ For a one-page checklist, see OPERATIONS_QUICK_REF.md.
   rerun nb_dq_00_setup.py and verify Delta support.
 - Unexpected expectation errors:
   validate expectation names, parameters, and source columns in the YAML rule files.
-- `validate_active_reference` errors:
-  confirm reference table name, column names, and that `active_value` matches the exact value used in the reference table (including capitalisation).
-- `validate_time_in_state` errors:
-  confirm `start_column` is a date or timestamp column, and that `open_when_column` exists in the source table.
+- `reference_active` errors:
+  confirm reference table name, column names, and that `reference_active_value` matches the exact value used in the reference table (including capitalisation).
+- `state_duration_within_limit` errors:
+  confirm `start_column` is a date or timestamp column, and that `open_state_column` exists in the source table.
 
 ---
 
 ## Testing
 
-Recommended local validation:
-
-```bash
-pip install pytest pyspark
-pytest tests/ -v
-```
-
-Tests cover core custom expectations, YAML rule parsing, and resolution helper behavior in local Spark mode.
+There is currently no automated test suite in the repository. Validate changes
+by running `nb_dq_01_preflight.py` (which checks rule/engine parity, required
+parameters, and source columns) and then a `DRY_RUN` execution of
+`nb_dq_03_run_validation.py` against the `_tmp` output tables before promoting
+to production.
 
 ---
 
@@ -232,6 +225,6 @@ Tests cover core custom expectations, YAML rule parsing, and resolution helper b
 
 - ARCHITECTURE.md: architecture decisions and file map
 - DEPLOY.md: deployment and environment guidance
-- dq_powerbi_measures.md: reporting measures reference
+- DAX_POWERBI.md: Power BI DAX measures and report design
 - RULES_GUIDE.md: business rule authoring guide
 - OPERATIONS_QUICK_REF.md: one-page operations checklist

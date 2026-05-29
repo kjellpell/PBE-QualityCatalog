@@ -17,7 +17,7 @@ Copy these files to Lakehouse Files:
 Notes:
 
 - Both config files must exist at `/lakehouse/default/Files/Configs/`.
-- Rule catalogs are required for `nb_dq_01_preflight.py` and `nb_dq_02_migrate_rules.py`.
+- Rule catalogs are required for `nb_dq_01_preflight.py` and the validation runner.
 - Keep `RULES_DIR = "rules"` unless you intentionally move rule files elsewhere.
 
 ### Optional, only if running the engine module directly
@@ -53,8 +53,11 @@ Current fields:
 - `DRY_RUN`
 - `FAIL_ON_EMPTY_RULES`
 - `FAIL_ON_EMPTY_SOURCE`
-- `MAX_RETRIES`
+- `MAX_RULE_RETRIES`
+- `RULE_TIMEOUT_SECONDS`
 - `RETRYABLE_ERROR_MARKERS`
+- `CATALOG_FILTER_OVERRIDES`
+- `DRY_RUN_NOTIFY`, `POWER_AUTOMATE_HANDLER_WEBHOOK`, `POWER_AUTOMATE_MANAGER_WEBHOOK`, `NOTIFY_TEST_EMAIL` (used by `nb_dq_06_notify.py`)
 
 When `DRY_RUN = True`:
 

@@ -219,6 +219,9 @@ Source table: `dq_violations_enriched` (not `dq_violations` — see Section 7).
 - **Slicers**: `rule_group`, `routing_team`, `batch_date`, `issue_status`, `owner_name`
 - **Main table**: `saksnummer`, `rule_name`, `violated_column`, `user_message`,
   `first_seen_at`, `batch_date`, `issue_status`, `owner_name`
+  - `saksnummer` (and `indikator` below) are catalog-specific `context_columns`
+    declared in the rule YAML — they are present only for catalogs that declare
+    them, not guaranteed base columns of `dq_violations_enriched`.
   - Conditional format: highlight rows red where `Escalation Needed` flag is 1
 - **Trend line**: Active violation count by `batch_date`
 
@@ -362,7 +365,11 @@ CALCULATE( MAX( dq_violations_enriched[batch_date] ), ALL( dq_violations_enriche
 
 ## 6. Alert Measures
 
-Connect the following measure to a notification flow (e.g. Power Automate) when alert functionality is added:
+Automated Teams DM notifications are already implemented in `nb_dq_06_notify.py`
+(handler DMs for violations first seen today; manager DMs once a violation is
+open longer than the catalog's `escalation_days`), with each attempt logged to
+`dq_notification_log`. The measure below mirrors that logic for an in-report
+alert tile or for an additional Power Automate flow driven directly from Power BI:
 
 ```dax
 Has Active Violations Today =
