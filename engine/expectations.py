@@ -183,15 +183,18 @@ class ExpectColumnValuesToNotBeNullExpectation:
         if total == 0:
             return _passed_result(0), _empty_violations(spark)
 
+        # Count NULLs in every column in a single aggregation pass rather than
+        # one .count() action per column.
+        null_counts_row = df.agg(
+            *[F.count(F.when(F.col(col).isNull(), F.lit(1))).alias(col) for col in columns]
+        ).collect()[0]
+        col_fail_counts = {col: int(null_counts_row[col] or 0) for col in columns}
+
         per_col_viol_dfs = []
-        col_fail_counts  = {}
         for col in columns:
-            viol_df = df.filter(F.col(col).isNull())
-            n_fail  = viol_df.count()
-            col_fail_counts[col] = n_fail
-            if n_fail > 0:
+            if col_fail_counts[col] > 0:
                 per_col_viol_dfs.append(
-                    viol_df.select(
+                    df.filter(F.col(col).isNull()).select(
                         pk_expr.alias("primary_key_value"),
                         F.lit(col).alias("violated_column"),
                         F.lit(None).cast("string").alias("actual_value"),
@@ -843,15 +846,18 @@ class ValidateNotNullWhenExpectation:
             f"When {cond_label}, all of [{check_cols_str}] must be NOT NULL"
         )
 
+        # Count NULLs across all checked columns in a single aggregation pass
+        # rather than one .count() action per column.
+        null_counts_row = conditional_rows.agg(
+            *[F.count(F.when(F.col(col).isNull(), F.lit(1))).alias(col) for col in check_cols]
+        ).collect()[0]
+        col_fail_counts = {col: int(null_counts_row[col] or 0) for col in check_cols}
+
         per_col_viol_dfs = []
-        col_fail_counts  = {}
         for col in check_cols:
-            viol_df = conditional_rows.filter(F.col(col).isNull())
-            n_fail  = viol_df.count()
-            col_fail_counts[col] = n_fail
-            if n_fail > 0:
+            if col_fail_counts[col] > 0:
                 per_col_viol_dfs.append(
-                    viol_df.select(
+                    conditional_rows.filter(F.col(col).isNull()).select(
                         F.col(pk_col).cast("string").alias("primary_key_value"),
                         F.lit(col).alias("violated_column"),
                         F.lit(None).cast("string").alias("actual_value"),

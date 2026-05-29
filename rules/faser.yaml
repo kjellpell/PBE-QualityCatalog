@@ -179,4 +179,4 @@ rules:
     left_column: decisiondate
     right_column: seneste_stoppmilepael_dato
     operator: '>='
-    routing: Teknologi
+  routing: Teknologi

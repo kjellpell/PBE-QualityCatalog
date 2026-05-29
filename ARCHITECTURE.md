@@ -28,8 +28,9 @@ New expectations are added to `engine/expectations.py` and registered in
 
 ```
 nb_dq_00_setup.py           → Create Delta tables (run once)
-nb_dq_01_preflight.py       → Pre-run checks (source tables exist, column refs valid)
-engine/validation_runner.py → Main engine:
+nb_dq_01_preflight.py       → Pre-run checks (source tables exist, column refs valid,
+                              preflight/engine expectation parity)
+nb_dq_03_run_validation.py  → Fabric wrapper that executes engine/validation_runner.py:
   1. Load rules from rules/*.yaml
   2. For each rule: load source table, apply joins declared in YAML
   3. Dispatch each rule to CUSTOM_EXPECTATION_REGISTRY
@@ -41,6 +42,11 @@ nb_dq_04_routing.py         → Post-validation enrichment:
   2. Join routing_team from rules index
   3. For each catalog: load source table, apply YAML joins, look up owner via ansatte
   4. Write dq_violations_enriched (union across all catalogs, context columns, owner)
+nb_dq_06_notify.py          → Teams DM notifications via Power Automate webhooks:
+  1. Read Active violations from dq_violations_enriched
+  2. Handler DMs for violations first seen today; manager DMs for escalations
+     (open longer than the catalog's escalation_days)
+  3. Log attempts to dq_notification_log
 ```
 
 ## File Map
@@ -54,8 +60,10 @@ nb_dq_04_routing.py         → Post-validation enrichment:
 | `config/QualityCatalogConfig.py` | Table names, paths, ansatte lookup settings |
 | `config/QualityCatalogRuntime.py` | Behavior flags (dry-run, retry, fail-on-empty) |
 | `nb_dq_00_setup.py` | Delta table DDL (CREATE TABLE IF NOT EXISTS) |
-| `nb_dq_01_preflight.py` | Pre-run checks (source tables, column refs) |
+| `nb_dq_01_preflight.py` | Pre-run checks (source tables, column refs, registry parity) |
+| `nb_dq_03_run_validation.py` | Fabric wrapper that executes `engine/validation_runner.py` |
 | `nb_dq_04_routing.py` | Post-validation enrichment → dq_violations_enriched |
+| `nb_dq_06_notify.py` | Teams DM notifications via Power Automate → dq_notification_log |
 | `rules/*.yaml` | Rule catalogs — one file per rule group, loaded at runtime |
 | `tests/test_expectations.py` | Unit tests for expectation classes |
 | `tests/test_yaml_rules.py` | Unit tests for YAML rule parsing |

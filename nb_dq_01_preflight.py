@@ -123,28 +123,77 @@ _RULE_COLUMN_KEYS = {
 
 # Per-expectation required canonical parameter keys.
 # Preflight rejects any rule missing a required key for its expectation.
+#
+# IMPORTANT: the keys of this dict must stay in lock-step with the engine's
+# CUSTOM_EXPECTATION_REGISTRY (engine/expectations.py).  _assert_registry_parity()
+# enforces this at preflight time so drift fails here rather than at runtime.
 _REQUIRED_PARAMETER_KEYS: dict[str, list[str]] = {
     "not_null":                   ["columns"],
     "not_null_when":              ["when_column", "columns"],
     "comparison":                 ["left_column", "operator"],
     "value_when":                 ["when_column", "required_column", "required_value"],
     "reference_exists":           ["column", "reference_table", "reference_column"],
-    "reference_active":           ["source_column", "reference_table", "reference_column",
+    "reference_active":           ["column", "reference_table", "reference_column",
                                    "reference_active_column", "reference_active_value"],
-    "aggregate_threshold":        ["threshold"],
-    "row_count_in_range":         ["min_value", "max_value"],
+    "row_count":                  ["threshold"],
     "combination_unique":         ["columns"],
     "state_duration_within_limit": ["start_column", "open_state_column", "pk_column", "max_days"],
     "sequence_ordered":           ["event_column", "group_column", "order_column", "expected_sequence"],
     "pairs_present":              ["event_column", "group_column", "required_pairs"],
-    "stops_paired_with_starts":   ["event_column", "group_column", "pairs"],
     "gate_complete":              ["event_column", "group_column", "value_to_check"],
-    "columns_excluded":           ["condition"],
     "group_aggregate_matches":    ["group_column", "aggregate_column", "reference_column"],
     "sql_violations":             [],  # sql may be top-level or in parameters
     "value_in_list":              ["column", "allowed_values"],
-    "greater_than":               ["column", "threshold"],
 }
+
+
+def _engine_registry_keys() -> set[str] | None:
+    """Return the engine's registered expectation names, or None if the engine
+    module cannot be imported in this environment (e.g. no Spark on the path).
+
+    Mirrors the Fabric file-based import fallback used in validation_runner.py:
+    first try the package import, then load engine/expectations.py directly.
+    """
+    try:
+        from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
+        return set(CUSTOM_EXPECTATION_REGISTRY)
+    except Exception:
+        pass
+    try:
+        import importlib.util
+
+        exp_path = REPO_ROOT / "engine" / "expectations.py"
+        if not exp_path.exists():
+            return None
+        spec = importlib.util.spec_from_file_location("qc_expectations_preflight", str(exp_path))
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return set(module.CUSTOM_EXPECTATION_REGISTRY)
+    except Exception:
+        return None
+
+
+def _assert_registry_parity() -> None:
+    """Fail fast if the preflight expectation list has drifted from the engine
+    registry, so rules the engine cannot run are caught before execution rather
+    than producing ERROR results at runtime (and valid rules are not rejected)."""
+    engine_keys = _engine_registry_keys()
+    if engine_keys is None:
+        print("  Note: engine registry not importable here — skipping parity check.")
+        return
+    preflight_keys = set(_REQUIRED_PARAMETER_KEYS)
+    only_preflight = preflight_keys - engine_keys
+    only_engine = engine_keys - preflight_keys
+    if only_preflight or only_engine:
+        raise RuntimeError(
+            "Preflight expectation list has drifted from the engine registry.\n"
+            f"  In preflight but not engine (would ERROR at runtime): {sorted(only_preflight)}\n"
+            f"  In engine but not preflight (valid rules wrongly rejected): {sorted(only_engine)}\n"
+            "Update _REQUIRED_PARAMETER_KEYS in nb_dq_01_preflight.py to match "
+            "CUSTOM_EXPECTATION_REGISTRY in engine/expectations.py."
+        )
 
 
 def _extract_rule_columns(rule: dict) -> list[str]:
@@ -333,6 +382,9 @@ def main() -> None:
         ],
         "QualityCatalogRuntime",
     )
+    # Catch preflight/engine expectation drift before doing any rule work.
+    _assert_registry_parity()
+
     targets = resolve_targets(config_module, runtime_module)
     rules_dir = resolve_rules_dir(config_module, REPO_ROOT)
 
