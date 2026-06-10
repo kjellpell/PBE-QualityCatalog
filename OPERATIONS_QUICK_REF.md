@@ -14,10 +14,13 @@ Use this checklist to run, verify, and triage the Quality Catalog quickly.
 
 1. Confirm source data refresh is complete.
 2. Run preflight: nb_dq_01_preflight.py.
-3. Run validation: engine/validation_runner.py.
-4. Check execution evidence in default.dq_execution_metrics.
+3. Run validation: nb_dq_03_run_validation.py (executes engine/validation_runner.py).
+4. Check execution evidence in dq_execution_metrics.
 5. Check latest summary rows in dq_run_results.
 6. Check issue lifecycle behavior in dq_violations.
+7. Run enrichment: nb_dq_04_routing.py (writes dq_violations_enriched for Power BI).
+8. Optionally run notifications: nb_dq_06_notify.py (Teams DMs via Power Automate;
+   attempts logged to dq_notification_log).
 
 ---
 
@@ -38,10 +41,14 @@ Set in config/QualityCatalogRuntime.py.
   fail if no YAML catalogs are found.
 - FAIL_ON_EMPTY_SOURCE:
   fail if a source table is empty.
-- MAX_RETRIES:
-  retry budget for orchestration logic.
+- MAX_RULE_RETRIES:
+  per-rule retry budget for retryable errors.
+- RULE_TIMEOUT_SECONDS:
+  per-rule timeout; timed-out rules are recorded as ERROR and the run continues.
 - RETRYABLE_ERROR_MARKERS:
   strings used to classify retryable failures.
+- DRY_RUN_NOTIFY / NOTIFY_TEST_EMAIL / NOTIFY_TIMEOUT_SECONDS:
+  notification testing and webhook timeout (nb_dq_06_notify.py).
 
 ---
 
@@ -62,8 +69,12 @@ The engine raises a clear error if either file is missing.
   one row per rule per run.
 - dq_violations:
   current-state issue table with Active and Resolved status.
-- default.dq_execution_metrics:
+- dq_violations_enriched:
+  violations with owner, context columns, and escalation_days (Power BI source).
+- dq_execution_metrics:
   one row per runner execution with status and timing.
+- dq_notification_log:
+  one row per notification attempt (handler/manager DMs).
 
 ---
 
@@ -74,7 +85,7 @@ After each run, confirm:
 - A new execution metrics row exists with expected status.
 - dq_run_results has rows for the current run_id.
 - dq_violations shows expected new/updated issues.
-- Rule groups (Process, Milestone, Invoice) appear in the run summary.
+- Rule groups (Faser, Milepæler, Faktura) appear in the run summary.
 
 ---
 
@@ -97,11 +108,11 @@ After each run, confirm:
 - Verify Lakehouse config path: `/lakehouse/default/Files/Configs/`.
 - Confirm both `QualityCatalogConfig.py` and `QualityCatalogRuntime.py` are uploaded.
 
-### MERGE failure on dq_violations
+### Resolution-tracking failure on dq_violations
 
-- Re-run nb_dq_00_setup.py.
-- Confirm Delta support and table availability.
-- Review warning and fallback behavior (append mode).
+- The run fails with "Violations not written" — no partial data is committed.
+- Re-run nb_dq_00_setup.py to ensure the table and columns exist.
+- Confirm Delta support and table availability, then re-run validation.
 
 ### Expectation execution errors
 
@@ -126,6 +137,6 @@ Escalate to engineering when:
 
 - Repeated retryable failures exceed retry policy.
 - Non-retryable failures recur across runs.
-- MERGE fallback persists after setup rerun.
+- Resolution-tracking failures persist after setup rerun.
 - Output schema drift blocks writes.
 - Rule execution errors affect multiple domains.

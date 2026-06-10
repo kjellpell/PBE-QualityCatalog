@@ -74,6 +74,7 @@ DRY_RUN_NOTIFY   = getattr(runtime, "DRY_RUN_NOTIFY", True)
 HANDLER_WEBHOOK  = getattr(runtime, "POWER_AUTOMATE_HANDLER_WEBHOOK", "")
 MANAGER_WEBHOOK  = getattr(runtime, "POWER_AUTOMATE_MANAGER_WEBHOOK", "")
 TEST_EMAIL       = getattr(runtime, "NOTIFY_TEST_EMAIL", "")
+NOTIFY_TIMEOUT_SECONDS = int(getattr(runtime, "NOTIFY_TIMEOUT_SECONDS", 30))
 
 if TEST_EMAIL:
     print(f"  *** TEST MODE: all DMs will be sent to {TEST_EMAIL} ***")
@@ -88,7 +89,7 @@ def _post_webhook(webhook_url: str, payload: dict) -> tuple[str, str | None]:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return "dry_run", None
     try:
-        resp = requests.post(webhook_url, json=payload, timeout=30)
+        resp = requests.post(webhook_url, json=payload, timeout=NOTIFY_TIMEOUT_SECONDS)
         resp.raise_for_status()
         return "sent", None
     except Exception as exc:
@@ -100,10 +101,35 @@ def _post_webhook(webhook_url: str, payload: dict) -> tuple[str, str | None]:
 # -----------------------------------------------------------------------------
 from datetime import datetime, timezone
 RUN_TIMESTAMP = datetime.now(timezone.utc)
-TODAY         = date.today()
+# first_seen_at is written in UTC by the validation runner, so "today" must be
+# the UTC date as well — date.today() is cluster-local and can disagree.
+TODAY         = RUN_TIMESTAMP.date()
 _log_rows: list[tuple] = []
 
-enriched_df = spark.table(ENRICHED_TABLE).filter(F.col("issue_status") == "Active")
+# (notification_type, recipient_email) pairs already sent for real today.
+# Consulted so rerunning notify on the same day does not re-send DMs.
+_already_sent: set[tuple[str, str]] = set()
+if not DRY_RUN_NOTIFY and spark.catalog.tableExists(NOTIFICATION_LOG_TABLE):
+    _already_sent = {
+        (r["notification_type"], r["recipient_email"])
+        for r in (
+            spark.table(NOTIFICATION_LOG_TABLE)
+            .filter(
+                (F.col("batch_date") == F.lit(str(TODAY)).cast("date"))
+                & (F.col("status") == "sent")
+                & (F.col("dry_run") == F.lit(False))
+            )
+            .select("notification_type", "recipient_email")
+            .distinct()
+            .collect()
+        )
+        if r["recipient_email"]
+    }
+    if _already_sent:
+        print(f"  Already notified today (will be skipped): {len(_already_sent)} recipient(s)")
+
+# Cache: scanned by both count()s, the handler toPandas() and the manager query.
+enriched_df = spark.table(ENRICHED_TABLE).filter(F.col("issue_status") == "Active").cache()
 
 # New violations: first detected today
 new_df = enriched_df.filter(
@@ -128,9 +154,23 @@ else:
     # --- Handler DMs ---
     if new_count > 0 and HANDLER_WEBHOOK:
         handler_rows = new_df.toPandas()
+
+        # Violations without an owner cannot be DM'd (e.g. catalogs with
+        # ownership_col unset) — surface them instead of dropping silently.
+        _no_owner = handler_rows["owner_email"].isna() | (handler_rows["owner_email"] == "")
+        no_owner_count = int(_no_owner.sum())
+        if no_owner_count:
+            print(f"  Warning: {no_owner_count} new violation(s) have no owner_email — no handler DM possible.")
+            _log_rows.append((RUN_TIMESTAMP, TODAY, "handler_skipped_no_owner", None,
+                              no_owner_count, "skipped", DRY_RUN_NOTIFY, None))
+
         dm_count = 0
+        skipped_dup = 0
         for email, group in handler_rows.groupby("owner_email"):
             if not email:
+                continue
+            if ("handler", TEST_EMAIL or email) in _already_sent:
+                skipped_dup += 1
                 continue
             violations = [
                 {
@@ -151,11 +191,20 @@ else:
             _log_rows.append((RUN_TIMESTAMP, TODAY, "handler", recipient, len(violations), status, DRY_RUN_NOTIFY, err))
             dm_count += 1
         print(f"  Handler DMs sent: {dm_count}")
+        if skipped_dup:
+            print(f"  Handler DMs skipped (already notified today): {skipped_dup}")
     elif new_count > 0 and not HANDLER_WEBHOOK:
         print("  Warning: new violations found but POWER_AUTOMATE_HANDLER_WEBHOOK is not set — skipped.")
 
     # --- Manager DM ---
-    if escalated_count > 0 and MANAGER_WEBHOOK and (MANAGER_EMAIL or TEST_EMAIL):
+    if (
+        escalated_count > 0
+        and MANAGER_WEBHOOK
+        and (MANAGER_EMAIL or TEST_EMAIL)
+        and ("manager", TEST_EMAIL or MANAGER_EMAIL) in _already_sent
+    ):
+        print("  Manager DM skipped (already notified today).")
+    elif escalated_count > 0 and MANAGER_WEBHOOK and (MANAGER_EMAIL or TEST_EMAIL):
         esc_rows = (
             escalated_df
             .withColumn("days_open", F.datediff(F.current_date(), F.col("first_seen_at").cast("date")))
@@ -175,6 +224,8 @@ else:
         print(f"  Manager DM sent to {manager_recipient}")
     elif escalated_count > 0 and not MANAGER_WEBHOOK:
         print("  Warning: escalated violations found but POWER_AUTOMATE_MANAGER_WEBHOOK is not set — skipped.")
+
+enriched_df.unpersist()
 
 if _log_rows:
     log_df = spark.createDataFrame(_log_rows, schema=_LOG_SCHEMA)

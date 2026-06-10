@@ -13,7 +13,7 @@ Use [ARCHITECTURE.md](ARCHITECTURE.md) for engine internals.
 
 All operations are expected to run in Microsoft Fabric notebooks.
 
-1. Update rule definitions in your managed source (typically `rule_catalog`; YAML may be used only as migration seed where applicable).
+1. Update rule definitions in the YAML catalogs in `rules/` and deploy them to the Lakehouse (`/lakehouse/default/Files/rules/`). Rules are loaded directly from YAML at runtime — there is no Delta-based rule store.
 2. Run [nb_dq_01_preflight.py](nb_dq_01_preflight.py).
 3. Run one validation cycle with `DRY_RUN = True`.
 4. Review outputs in temporary tables.

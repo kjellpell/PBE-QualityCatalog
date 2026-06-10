@@ -106,42 +106,60 @@ All parameter names use the `_column` suffix to map directly to DataFrame column
 
 | Parameter key | Used by expectation(s) |
 |---|---|
+| `columns` | not_null, not_null_when, combination_unique |
+| `column` | not_null (single), value_in_list, reference_exists, reference_active |
 | `when_column` | not_null_when, value_when |
-| `checked_columns` | not_null_when |
-| `left_column` | comparison |
-| `right_column` | comparison |
-| `right_value` | comparison (scalar mode) |
+| `operator` | comparison, row_count, value_when; not_null_when (`IS NULL`, `IS NOT NULL`, `==`) |
+| `value` | not_null_when / value_when trigger value (with `operator: ==`) |
+| `required_column`, `required_value` | value_when |
+| `left_column`, `right_column`, `right_value` | comparison (`right_column` and `right_value` are mutually exclusive) |
+| `filter_column`, `filter_values` | comparison (optional row filter applied before evaluation) |
 | `allowed_values` | value_in_list |
 | `event_column` | sequence_ordered, pairs_present, gate_complete |
-| `order_column` | sequence_ordered, gate_complete |
+| `order_column` | sequence_ordered; gate_complete (optional) |
+| `expected_sequence` | sequence_ordered |
 | `required_pairs` | pairs_present |
 | `mode` | pairs_present (`both` or `stop_requires_start`) |
-| `open_state_column` | state_duration_within_limit |
-| `open_state_value` | state_duration_within_limit |
-| `reference_table` | reference_exists, reference_active |
-| `reference_column` | reference_exists, reference_active |
-| `reference_active_column` | reference_active |
-| `reference_active_value` | reference_active |
+| `completion_gate` | sequence_ordered, pairs_present, gate_complete (optional nested block: `event_column`, `value`, `order_column`) |
+| `value_to_check` | gate_complete |
 | `group_column` | sequence_ordered, pairs_present, gate_complete, group_aggregate_matches |
-| `source_column` | reference_active |
-| `column` | reference_exists, not_null, value_in_list |
-| `max_days` | state_duration_within_limit |
+| `aggregate_column`, `aggregate`, `tolerance` | group_aggregate_matches |
+| `reference_table`, `reference_column` | reference_exists, reference_active; `reference_column` also names the comparison column in group_aggregate_matches |
+| `reference_active_column`, `reference_active_value` | reference_active |
+| `start_column`, `open_state_column`, `open_state_value`, `max_days` | state_duration_within_limit |
 | `threshold` | row_count |
-| `aggregate_column` | group_aggregate_matches |
-| `reference_column` | group_aggregate_matches |
+| `sql` | sql_violations (also accepted at rule top level) |
+| `pk_column` | optional per-rule override of the catalog `pk_column` (row-level expectations) |
+
+### Violation keys
+
+`dq_violations.primary_key_value` is keyed per rule type:
+
+- **Row-level expectations** (not_null, comparison, value_in_list, …) write the
+  value of the catalog `pk_column` (or the rule's `pk_column` override).
+- **Group-keyed expectations** (`sequence_ordered`, `pairs_present`,
+  `gate_complete`, `group_aggregate_matches`) write the rule's `group_column`
+  value — one violation per group, not per row. `nb_dq_04_routing.py` joins
+  enrichment lookups on the matching key column per rule.
+
+### NULL semantics
+
+Comparison-style expectations evaluate only rows where the compared columns are
+non-NULL (Spark three-valued logic would otherwise make `5 > NULL` neither pass
+nor fail). Rows skipped this way count as neither passed nor failed; use
+`not_null` / `not_null_when` to enforce presence.
 
 ### Vocabulary
 
 - Use **column** (not "field") everywhere when referring to a DataFrame/table column.
-- List-typed parameters use **plural** (`checked_columns`, `columns`, `start_markers`, `stop_markers`, `allowed_values`). Scalar-typed parameters use **singular** (`when_column`, `left_column`, `event_column`, etc.).
+- List-typed parameters use **plural** (`columns`, `allowed_values`, `filter_values`, `required_pairs`). Scalar-typed parameters use **singular** (`when_column`, `left_column`, `event_column`, etc.).
 - The `when_column` parameter is the column whose value is tested to decide whether the rule applies. The `_when` suffix in an expectation ID signals conditional application (`not_null_when`, `value_when`).
 
 ### Notes
 
 - **Engine** (`engine/expectations.py`): Canonical IDs and parameter keys enforced in `CUSTOM_EXPECTATION_REGISTRY` and all expectation classes.
-- **Preflight** (`nb_dq_01_preflight.py`): Detects legacy nested `reference:` blocks; validates required canonical keys per expectation.
-- **YAML catalogs**: All five active rule files use canonical IDs and keys.
-- **IC notebook** (`nb_ic_01_manage_exceptions.py`): Task Flow parameter is `primary_key_value` (matches the column it filters on in `ic_exceptions`).
+- **Preflight** (`nb_dq_01_preflight.py`): Detects legacy nested `reference:` blocks; validates required canonical keys per expectation; checks column references (including `filter_column`, `completion_gate` columns, `ownership_col`, `context_columns`) and `user_message` placeholders against the source schema.
+- **YAML catalogs**: All active rule files (`rules/faser.yaml`, `rules/milepeler.yaml`, `rules/faktura.yaml`) use canonical IDs and keys.
 
 ## Delta Tables
 
@@ -151,3 +169,4 @@ All parameter names use the `_column` suffix to map directly to DataFrame column
 | `dq_violations` | `validation_runner.py` (via resolution.py) | Current-state violation log (`Active`/`Resolved`); includes `routing_team` |
 | `dq_violations_enriched` | `nb_dq_04_routing.py` | Unified violation table with owner, routing_team, and catalog-specific context columns; used by Power BI handler/manager report |
 | `dq_execution_metrics` | `validation_runner.py` | Run-level observability |
+| `dq_notification_log` | `nb_dq_06_notify.py` | One row per notification attempt; consulted to avoid re-sending DMs on same-day reruns |
