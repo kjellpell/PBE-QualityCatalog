@@ -88,6 +88,16 @@ def _apply_catalog_filter(src_df, catalog_filter, rule_group: str):
     return src_df
 
 
+# Expectations whose violations use the rule's group_column value (not the
+# catalog pk_column) as primary_key_value — see engine/expectations.py.
+_GROUP_KEYED_EXPECTATIONS = {
+    "pairs_present",
+    "gate_complete",
+    "sequence_ordered",
+    "group_aggregate_matches",
+}
+
+
 def _build_routing_index(rules_dir: Path):
     rules_index = {}  # rule_id → {routing, rule_group}
     catalogs = []     # one entry per YAML file
@@ -105,6 +115,7 @@ def _build_routing_index(rules_dir: Path):
         context_columns = doc.get("context_columns", [])
         joins_cfg       = doc.get("joins", [])
         catalog_filter  = doc.get("catalog_filter")
+        rule_key_columns = {}  # rule_id → source column holding primary_key_value
 
         for rule in doc.get("rules", []):
             routing = rule.get("routing", "none")
@@ -114,6 +125,12 @@ def _build_routing_index(rules_dir: Path):
                 "user_message":     rule.get("user_message", "").strip(),
                 "rule_description": rule.get("description", "").strip(),
             }
+            params = rule.get("parameters") or {}
+            if rule.get("expectation") in _GROUP_KEYED_EXPECTATIONS:
+                key_column = params.get("group_column") or pk_column
+            else:
+                key_column = params.get("pk_column") or pk_column
+            rule_key_columns[rule["rule_id"]] = key_column
 
         catalogs.append({
             "catalog_name":    catalog_name,
@@ -125,6 +142,7 @@ def _build_routing_index(rules_dir: Path):
             "context_columns": context_columns,
             "joins_cfg":       joins_cfg,
             "catalog_filter":  catalog_filter,
+            "rule_key_columns": rule_key_columns,
             # Optional: number of days an Active violation may remain open before
             # management follow-up is flagged. NULL means no escalation threshold.
             "escalation_days": doc.get("escalation_days"),
@@ -208,6 +226,14 @@ def _build_user_message_expr(rules_idx: dict):
     return expr.otherwise(fallback) if expr is not None else fallback
 
 
+def _null_owner_columns(df):
+    return (
+        df
+        .withColumn("owner_email", F.lit(None).cast("string"))
+        .withColumn("owner_name", F.lit(None).cast("string"))
+    )
+
+
 def _enrich_catalog(cat: dict):
     rule_group      = cat["rule_group"]
     ownership_col   = cat["ownership_col"]
@@ -215,88 +241,106 @@ def _enrich_catalog(cat: dict):
     table           = cat["table"]
     pk_column       = cat["pk_column"]
     context_columns = [c for c in cat.get("context_columns", []) if c]
+    escalation_days = cat.get("escalation_days")
 
     cat_df = violations_df.filter(F.col("rule_group") == rule_group)
 
     do_owner_join = ownership_col and _ansatte_ready
     need_src = database and table and pk_column and (do_owner_join or context_columns)
 
-    if need_src:
-        src = spark.table(f"{database}.{table}")
+    # Row-level expectations write the catalog pk_column value as
+    # primary_key_value, but group-keyed expectations (pairs_present etc.)
+    # write the rule's group_column value. Group rules by their key column so
+    # each violation joins the source on the column its key actually came from.
+    key_to_rules: dict[str, list[str]] = {}
+    for rid, key_col in (cat.get("rule_key_columns") or {}).items():
+        key_to_rules.setdefault(key_col or pk_column, []).append(rid)
 
-        for jc in cat.get("joins_cfg", []):
-            j_table  = jc.get("table")
-            j_how    = jc.get("how", "left")
-            j_select = jc.get("select")
-            j_left   = jc.get("left_on")
-            j_right  = jc.get("right_on")
-            j_on     = jc.get("on")
-            if not j_table:
-                continue
-            j_df = spark.table(j_table)
-            if j_select:
-                sel = list(j_select)
-                if j_right and j_right not in sel:
-                    sel.append(j_right)
-                j_df = j_df.select(*sel)
-            if j_on:
-                src = src.join(j_df, on=j_on, how=j_how)
-            elif j_left and j_right:
-                src = src.join(j_df, src[j_left] == j_df[j_right], how=j_how)
+    if not need_src or not key_to_rules:
+        if ownership_col and not _ansatte_ready:
+            print(f"  Info: {cat['catalog_name']} has ownership_col='{ownership_col}' but ansatte keys not configured — owner columns NULL")
+        return _null_owner_columns(cat_df).withColumn(
+            "escalation_days", F.lit(escalation_days).cast("integer")
+        )
 
-        src = _apply_catalog_filter(src, cat.get("catalog_filter"), rule_group)
+    src = spark.table(f"{database}.{table}")
 
-        select_exprs = [src[pk_column].cast("string").alias("_pk_str")]
+    for jc in cat.get("joins_cfg", []):
+        j_table  = jc.get("table")
+        j_how    = jc.get("how", "left")
+        j_select = jc.get("select")
+        j_left   = jc.get("left_on")
+        j_right  = jc.get("right_on")
+        j_on     = jc.get("on")
+        if not j_table:
+            continue
+        j_df = spark.table(j_table)
+        if j_select:
+            sel = list(j_select)
+            if j_right and j_right not in sel:
+                sel.append(j_right)
+            j_df = j_df.select(*sel)
+        if j_on:
+            src = src.join(j_df, on=j_on, how=j_how)
+        elif j_left and j_right:
+            src = src.join(j_df, src[j_left] == j_df[j_right], how=j_how)
+
+    src = _apply_catalog_filter(src, cat.get("catalog_filter"), rule_group)
+
+    ans = None
+    if do_owner_join:
+        ans = spark.table(ANSATTE_TABLE).select(
+            F.col(ANSATTE_KEY_COL).cast("string").alias("_ansatte_key"),
+            F.col(ANSATTE_EMAIL_COL).alias("owner_email"),
+            F.col(ANSATTE_NAME_COL).alias("owner_name"),
+        )
+
+    parts = []
+    for key_col, rule_ids in key_to_rules.items():
+        select_exprs = [src[key_col].cast("string").alias("_pk_str")]
         if do_owner_join:
             select_exprs.append(src[ownership_col].cast("string").alias("_owner_ref"))
         for col in context_columns:
             select_exprs.append(src[col])
 
-        src = src.select(*select_exprs)
+        src_k = src.select(*select_exprs)
 
         if do_owner_join:
-            ans = spark.table(ANSATTE_TABLE).select(
-                F.col(ANSATTE_KEY_COL).cast("string").alias("_ansatte_key"),
-                F.col(ANSATTE_EMAIL_COL).alias("owner_email"),
-                F.col(ANSATTE_NAME_COL).alias("owner_name"),
-            )
-            lookup = (
-                src.join(ans, src["_owner_ref"] == ans["_ansatte_key"], "left")
-                .select(["_pk_str", "owner_email", "owner_name"] + context_columns)
-                .dropDuplicates(["_pk_str"])
-            )
+            lookup = src_k.join(ans, src_k["_owner_ref"] == ans["_ansatte_key"], "left")
         else:
-            lookup = (
-                src
-                .withColumn("owner_email", F.lit(None).cast("string"))
-                .withColumn("owner_name", F.lit(None).cast("string"))
-                .select(["_pk_str", "owner_email", "owner_name"] + context_columns)
-                .dropDuplicates(["_pk_str"])
-            )
+            lookup = _null_owner_columns(src_k)
+        # One row per key value. For group key columns this keeps an arbitrary
+        # member of the group, so context/owner columns reflect a single row.
+        lookup = (
+            lookup
+            .select(["_pk_str", "owner_email", "owner_name"] + context_columns)
+            .dropDuplicates(["_pk_str"])
+        )
 
-        escalation_days = cat.get("escalation_days")
-        return (
+        parts.append(
             cat_df
+            .filter(F.col("rule_id").isin(rule_ids))
             .join(lookup, cat_df["primary_key_value"] == lookup["_pk_str"], "left")
             .drop("_pk_str")
-            .withColumn("escalation_days", F.lit(escalation_days).cast("integer"))
         )
-    else:
-        if ownership_col and not _ansatte_ready:
-            print(f"  Info: {cat['catalog_name']} has ownership_col='{ownership_col}' but ansatte keys not configured — owner columns NULL")
-        escalation_days = cat.get("escalation_days")
-        return (
-            cat_df
-            .withColumn("owner_email", F.lit(None).cast("string"))
-            .withColumn("owner_name", F.lit(None).cast("string"))
-            .withColumn("escalation_days", F.lit(escalation_days).cast("integer"))
-        )
+
+    # Violations whose rule_id is no longer in the YAML catalog (e.g. a rule
+    # was removed after the run) keep NULL owner/context instead of vanishing.
+    indexed_rule_ids = [rid for rids in key_to_rules.values() for rid in rids]
+    parts.append(
+        _null_owner_columns(cat_df.filter(~F.col("rule_id").isin(indexed_rule_ids)))
+    )
+
+    enriched = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), parts)
+    return enriched.withColumn("escalation_days", F.lit(escalation_days).cast("integer"))
 
 
 _frames = [_enrich_catalog(cat) for cat in catalogs]
 owners_df = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), _frames)
 owners_df = owners_df.withColumn("user_message", _build_user_message_expr(rules_index))
 owners_df.write.mode("overwrite").format("delta").saveAsTable(ENRICHED_TABLE)
-print(f"  {ENRICHED_TABLE}: {owners_df.count()} rows written")
+# Count the written table instead of owners_df to avoid recomputing the
+# whole enrichment DAG just for this print.
+print(f"  {ENRICHED_TABLE}: {spark.table(ENRICHED_TABLE).count()} rows written")
 
 print("\nRouting complete.")

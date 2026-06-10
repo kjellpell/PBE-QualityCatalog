@@ -46,32 +46,29 @@ Core capabilities:
 ```
 PBE-QualityCatalog/
 ├── config/
-│   ├── QualityCatalogConfig.py
-│   └── QualityCatalogRuntime.py
+│   ├── QualityCatalogConfig.py     (table names, paths, ansatte lookup)
+│   └── QualityCatalogRuntime.py    (behavior flags, retry/timeout, notify settings)
 ├── engine/
-│   ├── expectations.py
-│   ├── resolution.py
-│   ├── runtime.py
-│   └── validation_runner.py
-├── rules/                          (YAML rule files — loaded directly by validation engine)
-│   ├── invoice_rules.yaml
-│   ├── milestone_rules.yaml
-│   └── process_rules.yaml
-├── tests/
-│   ├── __init__.py
-│   ├── test_expectations.py
-│   └── test_yaml_rules.py
-├── nb_dq_00_setup.py
-├── nb_dq_01_preflight.py
-├── nb_dq_02_migrate_rules.py
+│   ├── expectations.py             (expectation classes + registry)
+│   ├── resolution.py               (Active/Resolved violation tracking)
+│   ├── runtime.py                  (config loading, target resolution, metrics)
+│   └── validation_runner.py        (main orchestration)
+├── rules/                          (YAML rule catalogs — loaded directly by the engine)
+│   ├── faktura.yaml
+│   ├── faser.yaml
+│   └── milepeler.yaml
+├── powerautomate/                  (Power Automate flow packages for Teams DMs)
+├── nb_dq_00_setup.py               (Delta table DDL)
+├── nb_dq_01_preflight.py           (pre-run checks)
+├── nb_dq_03_run_validation.py      (Fabric wrapper for the engine)
+├── nb_dq_04_routing.py             (owner/context enrichment)
+├── nb_dq_06_notify.py              (Teams notifications)
 ├── ARCHITECTURE.md
+├── DAX_POWERBI.md
 ├── DEPLOY.md
-├── IC_RULES_GUIDE.md
-├── KG.md
 ├── OPERATIONS_QUICK_REF.md
 ├── README.md
-├── RULES_GUIDE.md
-└── dq_powerbi_measures.md
+└── RULES_GUIDE.md
 ```
 
 ---
@@ -164,8 +161,9 @@ Resolution tracking is MERGE-based:
 2. Still-active issues are refreshed with latest run metadata.
 3. New issues are inserted as Active.
 
-If MERGE is unavailable, the system falls back to append and logs a warning.
-Rerun nb_dq_00_setup.py to ensure required tables and columns exist.
+If resolution tracking fails, the run fails with "Violations not written" — no
+partial data is committed. Rerun nb_dq_00_setup.py to ensure required tables
+and columns exist, then re-run validation.
 
 ---
 
@@ -217,14 +215,16 @@ For a one-page checklist, see OPERATIONS_QUICK_REF.md.
 
 ## Testing
 
-Recommended local validation:
+The repository currently has no automated test suite. Recommended validation
+before promoting changes:
 
-```bash
-pip install pytest pyspark
-pytest tests/ -v
-```
-
-Tests cover core custom expectations, YAML rule parsing, and resolution helper behavior in local Spark mode.
+1. `python -m py_compile engine/*.py nb_dq_*.py` — catch syntax errors.
+2. Run `nb_dq_01_preflight.py` — catches missing tables/columns, parameter
+   contract errors, and unresolvable user_message placeholders.
+3. Run `nb_dq_03_run_validation.py` with `DRY_RUN = True` — full run against
+   `_tmp` output tables without touching production data.
+4. Run `nb_dq_06_notify.py` with `DRY_RUN_NOTIFY = True` (and optionally
+   `NOTIFY_TEST_EMAIL`) — prints webhook payloads without posting.
 
 ---
 
@@ -232,6 +232,6 @@ Tests cover core custom expectations, YAML rule parsing, and resolution helper b
 
 - ARCHITECTURE.md: architecture decisions and file map
 - DEPLOY.md: deployment and environment guidance
-- dq_powerbi_measures.md: reporting measures reference
+- DAX_POWERBI.md: Power BI measures reference
 - RULES_GUIDE.md: business rule authoring guide
 - OPERATIONS_QUICK_REF.md: one-page operations checklist

@@ -574,7 +574,8 @@ def _run_validator(
     When a timeout does *not* occur the thread is already finished by the time
     we call ``shutdown(wait=True)``, so there is no extra blocking cost.
     """
-    if ref_cache is not None and exp_name == "validate_foreign_key":
+    # Registry IDs whose validators accept a shared reference-table cache.
+    if ref_cache is not None and exp_name in ("reference_exists", "reference_active"):
         call = lambda: validator.validate(source_df, rule, spark_session, ref_cache=ref_cache)
     else:
         call = lambda: validator.validate(source_df, rule, spark_session)
@@ -599,9 +600,10 @@ def main() -> tuple[int, int]:
     result_dfs    = []
     violation_dfs = []
 
-    # Shared cache for reference tables used by ForeignKeyExpectation.
-    # Keyed by (table_name, column_name) so repeated FK rules against the
-    # same reference table read it only once across all catalogs.
+    # Shared cache for reference tables used by the reference_exists and
+    # reference_active expectations.  Keyed per reference table/column so
+    # repeated rules against the same reference read it only once across
+    # all catalogs.
     ref_cache: dict = {}
 
     for catalog in all_catalogs:

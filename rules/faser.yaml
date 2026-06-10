@@ -20,6 +20,7 @@ joins:
   how: left
   select:
   - case_recno
+  - saksnummer
   - saksansvarlig_kode
 
 # Context_columns er kolonner som brukes for å gi mer kontekst i rapporteringen av regelbrudd,

@@ -360,7 +360,16 @@ class ColumnComparisonExpectation:
         # Note: the filter_col / filter_vals restriction is already applied to
         # df above (before deriving `evaluated`), so it is not repeated here.
 
-        total = evaluated.count()
+        violation_filter = self._VIOLATION_FILTERS[operator](col_a, right_expr)
+
+        # Single scan for both counts: F.count(F.when(...)) counts only rows
+        # where the filter is TRUE, matching .filter(...).count() semantics.
+        _counts = evaluated.agg(
+            F.count(F.lit(1)).alias("_total"),
+            F.count(F.when(violation_filter, F.lit(1))).alias("_failed"),
+        ).collect()[0]
+        total  = _counts["_total"]
+        failed = _counts["_failed"]
 
         if total == 0:
             filter_note = (
@@ -385,10 +394,8 @@ class ColumnComparisonExpectation:
                 _empty_violations(spark),
             )
 
-        violation_filter = self._VIOLATION_FILTERS[operator](col_a, right_expr)
-        violations_df    = evaluated.filter(violation_filter)
-        failed           = violations_df.count()
-        passed           = total - failed
+        violations_df = evaluated.filter(violation_filter)
+        passed        = total - failed
 
         if scalar_mode:
             actual_val_expr = F.col(col_a).cast("string")
@@ -487,8 +494,13 @@ class SqlValidationExpectation:
         if pk_col and pk_col in col_names:
             pk_expr = F.col(pk_col).cast("string")
         else:
+            # monotonically_increasing_id() alone is only unique within a
+            # partition; row_number() over it gives a globally unique row index.
             result_df = result_df.withColumn(
-                "_row_num", F.monotonically_increasing_id()
+                "_row_num",
+                F.row_number().over(
+                    Window.orderBy(F.monotonically_increasing_id())
+                ),
             )
             pk_expr = F.col("_row_num").cast("string")
 

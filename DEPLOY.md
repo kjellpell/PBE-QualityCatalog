@@ -13,22 +13,17 @@ Copy these files to Lakehouse Files:
 | `config/QualityCatalogConfig.py` | `/lakehouse/default/Files/Configs/QualityCatalogConfig.py` |
 | `config/QualityCatalogRuntime.py` | `/lakehouse/default/Files/Configs/QualityCatalogRuntime.py` |
 | `rules/*.yaml` | `/lakehouse/default/Files/rules/*.yaml` |
+| `engine/` (all files, incl. `__init__.py`) | `/lakehouse/default/Files/engine/` |
 
 Notes:
 
 - Both config files must exist at `/lakehouse/default/Files/Configs/`.
-- Rule catalogs are required for `nb_dq_01_preflight.py` and `nb_dq_02_migrate_rules.py`.
+- `engine/` is **required**: `nb_dq_03_run_validation.py` loads
+  `/lakehouse/default/Files/engine/validation_runner.py` and fails its
+  pre-check if any engine file is missing.
+- Rule catalogs are required for `nb_dq_01_preflight.py`,
+  `nb_dq_03_run_validation.py`, and `nb_dq_04_routing.py`.
 - Keep `RULES_DIR = "rules"` unless you intentionally move rule files elsewhere.
-
-### Optional, only if running the engine module directly
-
-If you execute `engine/validation_runner.py` as a module/script in Fabric, also copy:
-
-| Repo folder | Lakehouse target |
-|---|---|
-| `engine/` | `/lakehouse/default/Files/engine/` |
-
-If you run notebook-native entrypoints only, `engine/` does not need to be present in Lakehouse Files.
 
 ## Run order
 
@@ -53,8 +48,13 @@ Current fields:
 - `DRY_RUN`
 - `FAIL_ON_EMPTY_RULES`
 - `FAIL_ON_EMPTY_SOURCE`
-- `MAX_RETRIES`
+- `MAX_RULE_RETRIES`
+- `RULE_TIMEOUT_SECONDS`
 - `RETRYABLE_ERROR_MARKERS`
+- `CATALOG_FILTER_OVERRIDES`
+- `DRY_RUN_NOTIFY`, `POWER_AUTOMATE_HANDLER_WEBHOOK`,
+  `POWER_AUTOMATE_MANAGER_WEBHOOK`, `NOTIFY_TIMEOUT_SECONDS`,
+  `NOTIFY_TEST_EMAIL` (used by `nb_dq_06_notify.py`)
 
 When `DRY_RUN = True`:
 

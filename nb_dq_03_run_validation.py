@@ -101,23 +101,31 @@ try:
     )
 except Exception as exc:
     finished = datetime.now(timezone.utc)
-    _vr_mod.write_execution_metric(
-        spark,
-        _vr_mod.TARGETS["execution_metrics_table"],
-        {
-            "script_name": "nb_dq_03_run_validation",
-            "status": "Failed",
-            "dry_run": _vr_mod.RUNTIME.DRY_RUN,
-            "output_target": _vr_mod.TARGETS["results_table"],
-            "artifact_target": _vr_mod.TARGETS["violations_table"],
-            "row_count": 0,
-            "started_at_utc": started,
-            "finished_at_utc": finished,
-            "duration_seconds": float((finished - started).total_seconds()),
-            "is_retryable": _vr_mod.classify_retryable_error(str(exc), _vr_mod.RUNTIME),
-            "error_message": str(exc)[:4000],
-        },
-    )
+    # Best-effort failure metric: guard attribute access and the write itself
+    # so a partially initialised engine module cannot mask the original error.
+    try:
+        _targets = getattr(_vr_mod, "TARGETS", {}) or {}
+        _runtime = getattr(_vr_mod, "RUNTIME", None)
+        _classify = getattr(_vr_mod, "classify_retryable_error", None)
+        _vr_mod.write_execution_metric(
+            spark,
+            _targets.get("execution_metrics_table", "dq_execution_metrics"),
+            {
+                "script_name": "nb_dq_03_run_validation",
+                "status": "Failed",
+                "dry_run": bool(getattr(_runtime, "DRY_RUN", False)),
+                "output_target": _targets.get("results_table"),
+                "artifact_target": _targets.get("violations_table"),
+                "row_count": 0,
+                "started_at_utc": started,
+                "finished_at_utc": finished,
+                "duration_seconds": float((finished - started).total_seconds()),
+                "is_retryable": bool(_classify(str(exc), _runtime)) if (_classify and _runtime) else False,
+                "error_message": str(exc)[:4000],
+            },
+        )
+    except Exception as metric_exc:
+        print(f"Warning: could not write failure execution metric: {metric_exc}")
     raise
 
 print(f"Validation runner finished at {finished.isoformat()}")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -106,6 +107,7 @@ _RULE_COLUMN_KEYS = {
     "columns",
     "left_column",
     "right_column",
+    "filter_column",
     "pk_column",
     "group_column",
     "event_column",
@@ -216,6 +218,15 @@ def _extract_rule_columns(rule: dict) -> list[str]:
         elif isinstance(val, list):
             cols.extend(v for v in val if isinstance(v, str) and v)
 
+    # Nested completion_gate block (sequence_ordered / pairs_present /
+    # gate_complete) references its own event/order columns.
+    gate = params.get("completion_gate")
+    if isinstance(gate, dict):
+        for key in ("event_column", "order_column"):
+            val = gate.get(key)
+            if isinstance(val, str) and val:
+                cols.append(val)
+
     return cols
 
 
@@ -240,6 +251,85 @@ def _check_columns_for_catalog(
                     f"[{yaml_name} / {rule_id} / {exp_name}] "
                     f"Column '{col}' not found in source table."
                 )
+    return warnings
+
+
+# Columns every row of dq_violations_enriched carries, regardless of catalog.
+# user_message templates may reference these in addition to context_columns.
+_ENRICHED_BASE_COLUMNS = {
+    "run_id", "run_timestamp", "batch_date",
+    "rule_id", "rule_name", "rule_group",
+    "primary_key_value", "violated_column", "actual_value",
+    "expected_condition", "violation_detail", "issue_status",
+    "first_seen_at", "routing_team", "rule_description",
+    "owner_email", "owner_name", "escalation_days",
+}
+
+
+def _check_catalog_structure(
+    catalog: dict,
+    raw_source_columns: set[str],
+    source_columns: set[str],
+    yaml_name: str,
+) -> list[str]:
+    """Validate catalog-level fields used by nb_dq_04_routing / nb_dq_06_notify:
+    ownership_col, context_columns, join keys, escalation_days, and
+    user_message placeholders. Returns human-readable warning strings."""
+    warnings: list[str] = []
+    rule_group = catalog.get("rule_group", "?")
+
+    ownership_col = catalog.get("ownership_col") or ""
+    if ownership_col and ownership_col not in source_columns:
+        warnings.append(
+            f"[{yaml_name} / {rule_group}] ownership_col '{ownership_col}' "
+            f"not found in source table or join selects."
+        )
+
+    for col in catalog.get("context_columns") or []:
+        if col and col not in source_columns:
+            warnings.append(
+                f"[{yaml_name} / {rule_group}] context_column '{col}' "
+                f"not found in source table or join selects."
+            )
+
+    for join_cfg in catalog.get("joins") or []:
+        if not isinstance(join_cfg, dict):
+            continue
+        left_on = join_cfg.get("left_on")
+        if left_on and left_on not in raw_source_columns:
+            warnings.append(
+                f"[{yaml_name} / {rule_group}] join left_on '{left_on}' "
+                f"not found in source table."
+            )
+
+    escalation_days = catalog.get("escalation_days")
+    if escalation_days is not None:
+        try:
+            if int(escalation_days) < 0:
+                warnings.append(
+                    f"[{yaml_name} / {rule_group}] escalation_days must be >= 0."
+                )
+        except (TypeError, ValueError):
+            warnings.append(
+                f"[{yaml_name} / {rule_group}] escalation_days must be an integer, "
+                f"got {escalation_days!r}."
+            )
+
+    # user_message placeholders are rendered with F.col() in nb_dq_04_routing;
+    # an unresolvable name breaks the whole enrichment write.
+    allowed = _ENRICHED_BASE_COLUMNS | {
+        c for c in (catalog.get("context_columns") or []) if isinstance(c, str)
+    }
+    for rule in catalog.get("rules", []):
+        template = rule.get("user_message") or ""
+        for placeholder in re.findall(r"\{(\w+)\}", template):
+            if placeholder not in allowed:
+                warnings.append(
+                    f"[{yaml_name} / {rule.get('rule_id', '?')}] user_message "
+                    f"placeholder '{{{placeholder}}}' is not a violation column "
+                    f"or context_column — enrichment would fail."
+                )
+
     return warnings
 
 
@@ -414,15 +504,19 @@ def main() -> None:
         # Column existence pre-check: compare rule column references against
         # the actual source table schema so typos are caught before execution.
         try:
-            source_cols = set(spark.read.table(full_table).columns)
+            raw_source_cols = set(spark.read.table(full_table).columns)
             # Extend with columns introduced by catalog-level joins so rules
             # that reference joined columns are not falsely flagged as missing.
+            source_cols = set(raw_source_cols)
             for _join in catalog.get("joins") or []:
                 for _col in _join.get("select") or []:
                     if isinstance(_col, str):
                         source_cols.add(_col)
             column_warnings.extend(
                 _check_columns_for_catalog(catalog, source_cols, yaml_path.name)
+            )
+            column_warnings.extend(
+                _check_catalog_structure(catalog, raw_source_cols, source_cols, yaml_path.name)
             )
             contract_errors.extend(
                 _check_parameter_contract_for_catalog(catalog, yaml_path.name)
@@ -432,6 +526,18 @@ def main() -> None:
             )
         except Exception as exc:
             print(f"  Warning: could not read schema for {full_table}: {exc}")
+
+        # Owner enrichment degrades to NULL owners when the ansatte lookup keys
+        # are not configured — warn so this is a choice, not a surprise.
+        if (catalog.get("ownership_col") or "") and not all(
+            getattr(config_module, k, "")
+            for k in ("ANSATTE_KEY_COL", "ANSATTE_EMAIL_COL", "ANSATTE_NAME_COL")
+        ):
+            column_warnings.append(
+                f"[{yaml_path.name} / {catalog.get('rule_group', '?')}] ownership_col is set "
+                f"but ANSATTE_KEY_COL / ANSATTE_EMAIL_COL / ANSATTE_NAME_COL are not all "
+                f"configured — nb_dq_04_routing will write NULL owner columns."
+            )
 
     if missing_sources:
         raise RuntimeError(f"Missing source tables: {sorted(set(missing_sources))}")
