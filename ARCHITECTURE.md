@@ -38,7 +38,7 @@ nb_dq_03_run_validation.py  → Fabric wrapper that executes engine/validation_r
   2. For each rule: load source table, apply joins declared in YAML
   3. Dispatch each rule to CUSTOM_EXPECTATION_REGISTRY
   4. Write results    → dq_run_results
-  5. Write violations → dq_violations    (MERGE-based Active/Resolved tracking)
+  5. Write violations → dq_violations    (DataFrame-based Active/Resolved tracking)
   6. Write metrics    → dq_execution_metrics
 ```
 
@@ -47,7 +47,7 @@ nb_dq_03_run_validation.py  → Fabric wrapper that executes engine/validation_r
 | File | Purpose |
 |------|---------|
 | `engine/expectations.py` | All custom expectation classes + registry |
-| `engine/resolution.py` | MERGE-based violation and IC exception persistence |
+| `engine/resolution.py` | DataFrame-based violation persistence and Active/Resolved tracking |
 | `engine/runtime.py` | Config loading (Lakehouse only), target resolution, metrics writing |
 | `engine/validation_runner.py` | Main orchestration engine |
 | `config/QualityCatalogConfig.py` | Table names and paths |
@@ -56,18 +56,15 @@ nb_dq_03_run_validation.py  → Fabric wrapper that executes engine/validation_r
 | `nb_dq_01_preflight.py` | Pre-run checks (source tables, column refs, registry parity) |
 | `nb_dq_03_run_validation.py` | Fabric wrapper that executes `engine/validation_runner.py` |
 | `rules/*.yaml` | Rule catalogs — one file per rule group, loaded at runtime |
-| `tests/test_expectations.py` | Unit tests for expectation classes |
-| `tests/test_yaml_rules.py` | Unit tests for YAML rule parsing |
 
 ## Status Constants
 
 The following string values are used as status/state values across the codebase.
-Use these exact strings — typos will silently break MERGE logic.
+Use these exact strings — typos will silently break resolution-tracking logic.
 
 - **Rule status** (rule_catalog): `"Active"`
 - **Run result status** (dq_run_results): `"PASSED"`, `"FAILED"`, `"ERROR"`
 - **Violation status** (dq_violations): `"Active"`, `"Resolved"`
-- **IC exception status** (ic_exceptions): `"Open"`, `"Remediated"`, `"Verified"`, `"Waived"`
 - **Execution metric status** (dq_execution_metrics): `"Succeeded"`, `"Failed"`
 
 

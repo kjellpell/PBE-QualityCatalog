@@ -53,7 +53,7 @@ VIOLATION_SCHEMA = StructType([
 
 
 # ---------------------------------------------------------------------------
-# Delta MERGE persistence
+# Delta DataFrame persistence
 # ---------------------------------------------------------------------------
 
 def _apply_resolution_tracking(
@@ -87,7 +87,10 @@ def _apply_resolution_tracking(
     run_timestamp         : timestamp to record for resolutions
                             (defaults to datetime.now(timezone.utc))
     """
-    _REQUIRED_COLUMNS = {"rule_id", "primary_key_value", "violated_column", "issue_status"}
+    _REQUIRED_COLUMNS = {
+        "rule_id", "primary_key_value", "violated_column",
+        "expected_condition", "issue_status",
+    }
     missing = _REQUIRED_COLUMNS - set(current_violations_df.columns)
     if missing:
         raise ValueError(
@@ -97,21 +100,37 @@ def _apply_resolution_tracking(
 
     ts = (run_timestamp or datetime.now(timezone.utc)).isoformat()
 
-    # violated_column is nullable; replace NULL with a sentinel for joining so
-    # that two NULL violated_columns are treated as the same key.
+    # violated_column and expected_condition are nullable; replace NULL with a
+    # sentinel for joining so two NULL values are treated as the same key.
+    #
+    # expected_condition is part of the key because group-style expectations
+    # (e.g. pairs_present) emit several distinct violations for the same
+    # (rule_id, primary_key_value, violated_column) — one per required pair —
+    # differing only in expected_condition.  Without it those rows would collapse
+    # to one under dropDuplicates/left-anti and the extra violations would be
+    # lost.  expected_condition is a deterministic rule/pair-level string (it
+    # never contains per-row data), so keying on it keeps resolution stable.
     _SENTINEL = "__NULL__"
-    _jk = ["rule_id", "primary_key_value", "_vk"]
+    _jk = ["rule_id", "primary_key_value", "_vk", "_ek"]
 
     def _with_join_key(df: DataFrame) -> DataFrame:
-        return df.withColumn("_vk", F.coalesce(F.col("violated_column"), F.lit(_SENTINEL)))
+        return (
+            df.withColumn("_vk", F.coalesce(F.col("violated_column"), F.lit(_SENTINEL)))
+            .withColumn("_ek", F.coalesce(F.col("expected_condition"), F.lit(_SENTINEL)))
+        )
 
     try:
-        merge_key = ["rule_id", "primary_key_value", "violated_column"]
+        merge_key = ["rule_id", "primary_key_value", "violated_column", "expected_condition"]
         current_violations_df = current_violations_df.dropDuplicates(merge_key)
 
         existing_df     = spark_session.table(violations_table)
         existing_active = existing_df.filter(F.col("issue_status") == "Active")
-        existing_other  = existing_df.filter(F.col("issue_status") != "Active")
+        # Everything that is not Active is carried through unchanged.  Use a
+        # NULL-safe negation so legacy rows with a NULL issue_status (e.g. rows
+        # predating the column) are preserved rather than dropped on rewrite.
+        existing_other  = existing_df.filter(
+            ~(F.col("issue_status") == "Active") | F.col("issue_status").isNull()
+        )
 
         curr_jk = _with_join_key(current_violations_df)
         act_jk  = _with_join_key(existing_active)
@@ -120,7 +139,7 @@ def _apply_resolution_tracking(
         brand_new = (
             curr_jk
             .join(act_jk.select(_jk), on=_jk, how="left_anti")
-            .drop("_vk")
+            .drop("_vk", "_ek")
         )
 
         # Still-active violations → refresh run metadata but preserve first_seen_at
@@ -132,14 +151,14 @@ def _apply_resolution_tracking(
             curr_jk
             .join(_orig_first_seen, on=_jk, how="inner")
             .withColumn("first_seen_at", F.col("_orig_first_seen_at"))
-            .drop("_orig_first_seen_at", "_vk")
+            .drop("_orig_first_seen_at", "_vk", "_ek")
         )
 
         # Previously active, absent from current run → mark Resolved
         stale_active = (
             act_jk
             .join(curr_jk.select(_jk), on=_jk, how="left_anti")
-            .drop("_vk")
+            .drop("_vk", "_ek")
             .withColumn("issue_status", F.lit("Resolved"))
             .withColumn("resolution_timestamp", F.lit(ts))
         )

@@ -67,23 +67,17 @@ except ModuleNotFoundError:
         results = _qualify(config_module.DQ_RESULTS_TABLE, schema)
         violations = _qualify(config_module.DQ_VIOLATIONS_TABLE, schema)
         metrics = _qualify(config_module.DQ_EXECUTION_METRICS_TABLE, schema)
-        ic_results = _qualify(getattr(config_module, "IC_RUN_RESULTS_TABLE", "ic_run_results"), schema)
-        ic_exceptions = _qualify(getattr(config_module, "IC_EXCEPTIONS_TABLE", "ic_exceptions"), schema)
 
         if runtime_module.DRY_RUN:
             return {
                 "results_table": f"{results}_tmp",
                 "violations_table": f"{violations}_tmp",
                 "execution_metrics_table": f"{metrics}_tmp",
-                "ic_results_table": f"{ic_results}_tmp",
-                "ic_exceptions_table": f"{ic_exceptions}_tmp",
             }
         return {
             "results_table": results,
             "violations_table": violations,
             "execution_metrics_table": metrics,
-            "ic_results_table": ic_results,
-            "ic_exceptions_table": ic_exceptions,
         }
 
     def resolve_rules_dir(config_module, repo_root: Path, must_exist: bool = False) -> Path:
@@ -101,6 +95,14 @@ except ModuleNotFoundError:
 # Column-name keys that can be referenced in a rule's top-level fields or
 # parameters.  Checked against the actual source table columns in preflight.
 # All keys use canonical names per ARCHITECTURE.md "Expectation Naming Contract".
+#
+# Only keys that name a column in the SOURCE table belong here.  Reference-side
+# keys (reference_table, reference_column for reference_exists/reference_active,
+# reference_active_column) are deliberately excluded because they point at a
+# separate reference table that may not be visible at preflight time — checking
+# them against the source schema would raise false "column not found" warnings.
+# (reference_column is retained because for group_aggregate_matches it names a
+# source-side column.)
 _RULE_COLUMN_KEYS = {
     "column",
     "columns",
@@ -115,11 +117,8 @@ _RULE_COLUMN_KEYS = {
     "required_column",
     "aggregate_column",
     "reference_column",
-    "checked_columns",
-    "source_column",
+    "start_column",
     "open_state_column",
-    "reference_table",
-    "reference_active_column",
 }
 
 # Per-expectation required canonical parameter keys.
@@ -281,9 +280,8 @@ def _check_required_parameter_keys(rule: dict, yaml_name: str, rule_id: str) -> 
         return errors  # unknown expectation — handled elsewhere
 
     params = rule.get("parameters") or {}
-    # Some rules (e.g. not_null, sql_violations) declare their key at top level
-    top_level = {k: rule.get(k) for k in ("column", "sql")}
-
+    # Some rules (e.g. not_null, sql_violations) may declare 'column' at the top
+    # level; that fallback is handled per-key below.
     for key in required:
         val = params.get(key) if isinstance(params, dict) else None
         # Allow top-level fallback for 'column'

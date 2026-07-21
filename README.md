@@ -1,6 +1,6 @@
 # PBE Quality Catalog
 
-Data quality and internal control (IC) validation engine for the PBE case management platform,
+Data quality validation engine for the PBE case management platform,
 built on Apache Spark and Delta Lake, designed to run as Fabric Lakehouse notebooks.
 
 This README is for IT operations and maintainers.

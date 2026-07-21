@@ -11,7 +11,7 @@
 #        b. Collect per-rule results (counts, success %, status).
 #        c. Collect per-row violation details.
 #   4. Write summary rows to dq_run_results (Delta table).
-#   5. Write violation rows to dq_violations via MERGE-based resolution tracking.
+#   5. Write violation rows to dq_violations via DataFrame-based resolution tracking.
 #   6. Write execution metrics to dq_execution_metrics.
 #
 # Schedule: nightly (after source tables are refreshed).
