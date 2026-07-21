@@ -17,7 +17,27 @@ from pyspark.sql.types import (
 )
 
 
-LAKEHOUSE_CONFIG_DIR = Path("/lakehouse/default/Files/Configs")
+LAKEHOUSE_CONFIG_DIR_CANDIDATES = (
+    Path("/lakehouse/default/Files/Configs"),
+    Path("/lakehouse/default/Files/configs"),
+)
+
+
+def _resolve_config_module_path(module_name: str) -> Path:
+    """Resolve config module path across known Lakehouse config directories."""
+    searched: list[str] = []
+    for config_dir in LAKEHOUSE_CONFIG_DIR_CANDIDATES:
+        module_path = config_dir / f"{module_name}.py"
+        searched.append(str(module_path))
+        if module_path.exists():
+            return module_path
+
+    raise FileNotFoundError(
+        "Config file not found for module "
+        f"'{module_name}'. Searched:\n - "
+        + "\n - ".join(searched)
+        + "\nEnsure the config file is uploaded to one of these Lakehouse paths."
+    )
 
 
 def _safe_table_name(name: str) -> str:
@@ -55,13 +75,7 @@ def resolve_repo_root() -> Path:
 
 
 def load_config_module(module_name: str):
-    module_path = LAKEHOUSE_CONFIG_DIR / f"{module_name}.py"
-    if not module_path.exists():
-        raise FileNotFoundError(
-            f"Config file not found: {module_path}\n"
-            f"Ensure {module_name}.py is uploaded to the Lakehouse at "
-            f"/lakehouse/default/Files/Configs/"
-        )
+    module_path = _resolve_config_module_path(module_name)
 
     spec = importlib.util.spec_from_file_location(module_name, str(module_path))
     if spec is None or spec.loader is None:
