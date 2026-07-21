@@ -15,9 +15,12 @@ Do not add GX imports, GX dependencies, or GX-based code paths.
 ### Rules live in YAML
 At runtime, the validation engine loads rules directly from YAML files in `rules/`.
 Each YAML file is a rule catalog for one rule group (Process, Milestone, Invoice).
-The `nb_dq_02_migrate_rules.py` script and `rule_catalog` Delta table are legacy
-migration artifacts — rules are maintained in YAML and do not go through Delta.
-Do not add Delta-based rule loading to the validation engine.
+A Delta-table-based rule store (`rule_catalog`, loaded via the retired
+`nb_dq_02_migrate_rules.py`) was built and tested alongside YAML early on — both
+approaches worked. YAML was chosen because it gave the cleanest IT-owns-engine /
+business-owns-rules split at the time, not because Delta-based loading failed.
+This is a standing decision, not a technical limitation — re-evaluate it if the
+tradeoffs change, rather than treating Delta-based rule loading as ruled out.
 
 ### Custom expectations only
 Every expectation is a Python class with a `validate(df, rule, spark)` method.
