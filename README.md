@@ -1,6 +1,9 @@
 # PBE Quality Catalog
 
 Data quality and internal control (IC) validation engine for the PBE case management platform,
+# PBE Quality Catalog
+
+Data quality and internal control (IC) validation engine for the PBE case management platform,
 built on Apache Spark and Delta Lake, designed to run as Fabric Lakehouse notebooks.
 
 This README is for IT operations and maintainers.
@@ -46,7 +49,7 @@ Core capabilities:
 ```
 PBE-QualityCatalog/
 ├── config/
-│   ├── QualityCatalogConfig.py     (table names, paths, ansatte lookup)
+│   ├── QualityCatalogConfig.py     (table names, paths)
 │   └── QualityCatalogRuntime.py    (behavior flags, retry/timeout)
 ├── engine/
 │   ├── expectations.py             (expectation classes + registry)
@@ -60,7 +63,6 @@ PBE-QualityCatalog/
 ├── nb_dq_00_setup.py               (Delta table DDL)
 ├── nb_dq_01_preflight.py           (pre-run checks)
 ├── nb_dq_03_run_validation.py      (Fabric wrapper for the engine)
-├── nb_dq_04_routing.py             (owner/context enrichment)
 ├── ARCHITECTURE.md
 ├── DAX_POWERBI.md
 ├── DEPLOY.md
@@ -108,9 +110,9 @@ The engine will raise a clear error if either file is missing.
 2. Resolve output targets (production or dry-run).
 3. Load rules directly from the YAML catalogs in `rules/`.
 4. For each rule group:
-   - Read source table from Spark metastore.
-   - Apply optional pre-joins.
-   - Dispatch each rule to its validator in CUSTOM_EXPECTATION_REGISTRY.
+  - Read source table from Spark metastore.
+  - Apply optional pre-joins.
+  - Dispatch each rule to its validator in CUSTOM_EXPECTATION_REGISTRY.
 5. Append summary rows to dq_run_results.
 6. Apply MERGE-based issue lifecycle to dq_violations.
 7. Write execution evidence to dq_execution_metrics.
@@ -185,7 +187,6 @@ and columns exist, then re-run validation.
    engine/validation_runner.py) after source refresh.
 2. Verify summary output and row counts.
 3. Confirm evidence in dq_execution_metrics.
-4. Optionally run nb_dq_04_routing.py (enrichment for owner/context reporting).
 
 For a one-page checklist, see OPERATIONS_QUICK_REF.md.
 

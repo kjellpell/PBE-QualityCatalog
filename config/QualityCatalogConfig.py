@@ -9,14 +9,4 @@ RULES_DIR = "rules"
 
 DQ_RESULTS_TABLE = "dq_run_results"
 DQ_VIOLATIONS_TABLE = "dq_violations"
-DQ_ENRICHED_TABLE = "dq_violations_enriched"
 DQ_EXECUTION_METRICS_TABLE = "dq_execution_metrics"
-
-# Employee lookup — used by nb_dq_04_routing to resolve record owners for Power BI handler report
-ANSATTE_TABLE = "saksbehandling.ansatte"
-ANSATTE_KEY_COL = ""          # column in ansatte matching ownership_col values
-ANSATTE_EMAIL_COL = ""        # email column in ansatte (used for Power BI RLS)
-ANSATTE_NAME_COL = ""         # display name column in ansatte
-
-# Optional reporting metadata (Power BI link)
-REPORT_URL = ""              # https://app.powerbi.com/groups/.../reports/...

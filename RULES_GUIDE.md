@@ -747,11 +747,7 @@ Key behaviours:
 - `select` is optional. If provided, only those columns are brought in from the joined table (the join key is automatically included if missing from the list).
 - Use `on` when both tables share the same column name. Use `left_on` + `right_on` when they differ.
 - A join config with no key (`on`, `left_on`, or `right_on`) is skipped with a warning during the run.
-- Joins apply both during validation (so rules can reference joined columns) and during routing (so `context_columns` and `ownership_col` can reference joined columns).
-
-### `context_columns` — human-readable context for handlers
-
-Lists columns that are written alongside each violation in `dq_violations_enriched`. The purpose is to give handlers enough information to find and fix the offending record without having to look up external tables.
+- Joins apply during validation so rules can reference joined columns.
 
 ```yaml
 context_columns:
@@ -762,32 +758,12 @@ context_columns:
 
 Any column available after `joins` are applied can be listed here — including columns from joined tables. This is the primary reason to chain joins: to surface a case number or title that lives two hops away from the primary table.
 
-`dq_violations_enriched` is a single unified table covering all catalogs. Columns that are unique to one catalog (e.g. `indikator` for faser, `milestone_title` for milepeler) are NULL for rows from other catalogs. Power BI hides NULL columns automatically, so each handler sees only the context relevant to their violations.
-
 ---
 
 ## Routing and Ownership
 
-### `routing` — responsible team label
-
-`routing` is a free-form team label that identifies who is responsible for fixing violations from a rule. It is stored as `routing_team` in `dq_violations_enriched` and used as a slicer in Power BI.
-
-```yaml
-- rule_id: FAS-001
-  name: Verdier kan ikke være null
-  expectation: not_null
-  parameters:
-    columns:
-      - to_case_recno
-  routing: Teknologi
-```
-
-Convention:
-- Use a team name that matches how your organisation is structured (`Teknologi`, `Saksteam`, `Finansteam`, etc.)
-- Use `none` for rules that are tracked but have no directly responsible team
-- Any string is valid — the engine does not validate the value
-
-`routing` is an ownership label for Power BI filtering and operational slicing.
+The routing/ownership layer is intentionally not part of the core engine at this stage.
+Rules are validated only against the source data and any configured joins.
 
 ### `escalation_days` (catalog header)
 
@@ -806,47 +782,7 @@ Recommended defaults:
 - Financial data (Faktura): 7 days
 - Case phases (Faser) and milestones (Milepæler): 14 days
 
-### `ownership_col` (catalog header)
-
-Catalog-level field specifying which column in the source table holds the employee reference that links to `saksbehandling.ansatte`.
-
-```yaml
-ownership_col: saksansvarlig_kode   # or leave "" until confirmed
-```
-
-Leave as `""` until the team confirms the correct column. Owner columns will be written as NULL until this and the ansatte config keys are set.
-
-Required config keys in `QualityCatalogConfig.py` for owner resolution:
-
-| Key | Purpose |
-|---|---|
-| `ANSATTE_TABLE` | Fully-qualified ansatte table (default: `saksbehandling.ansatte`) |
-| `ANSATTE_KEY_COL` | Column in ansatte matching `ownership_col` values |
-| `ANSATTE_EMAIL_COL` | Email column — written to `owner_email` in `dq_violations_enriched` |
-| `ANSATTE_NAME_COL` | Display name column — written to `owner_name` |
-
-### Owner resolution join
-
-For catalogs with `ownership_col` configured, the routing notebook resolves each violating record's owner:
-
-```
-dq_violations.primary_key_value
-  → {source_table}.{pk_column}      (match on pk, after applying catalog joins)
-  → {source_table}.{ownership_col}  (get employee reference)
-  → saksbehandling.ansatte          (get name + email)
-```
-
-`owner_email` and `owner_name` are written to `dq_violations_enriched` and used for Power BI RLS.
-
-### Power BI semantic model
-
-The routing notebook writes a single unified table `qualitycatalog.dq_violations_enriched` after each run. It contains one row per violation across all catalogs, enriched with:
-
-- `owner_email` / `owner_name` — resolved via `ownership_col` → ansatte lookup
-- all `context_columns` declared in each catalog YAML (catalog-specific columns are NULL for other catalogs' rows)
-- `rule_group` — use as a slicer to separate faser / faktura / milepeler violations in one report
-
-Apply Row Level Security on `owner_email = USERPRINCIPALNAME()` to give each handler a filtered view of only their own violations. No bridge tables or per-catalog report pages needed — context columns carry the human-readable identifiers (case number, title, phase type) directly alongside each violation row.
+The core engine does not resolve owners or emit enriched violation tables.
 
 ---
 

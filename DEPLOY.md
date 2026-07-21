@@ -21,8 +21,8 @@ Notes:
 - `engine/` is **required**: `nb_dq_03_run_validation.py` loads
   `/lakehouse/default/Files/engine/validation_runner.py` and fails its
   pre-check if any engine file is missing.
-- Rule catalogs are required for `nb_dq_01_preflight.py`,
-  `nb_dq_03_run_validation.py`, and `nb_dq_04_routing.py`.
+- Rule catalogs are required for `nb_dq_01_preflight.py` and
+   `nb_dq_03_run_validation.py`.
 - Keep `RULES_DIR = "rules"` unless you intentionally move rule files elsewhere.
 
 ## Run order
@@ -33,8 +33,6 @@ Notes:
    This notebook runner executes `/lakehouse/default/Files/engine/validation_runner.py`
    and prints a post-run summary.
 4. Validate `dq_run_results`, `dq_violations`, and `default.dq_execution_metrics`.
-5. Run `nb_dq_04_routing.py` to enrich violations with owner/context columns
-   into `dq_violations_enriched` (consumed by Power BI).
 
 ## Runtime controls
 

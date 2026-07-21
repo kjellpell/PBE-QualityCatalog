@@ -18,7 +18,6 @@ Use this checklist to run, verify, and triage the Quality Catalog quickly.
 4. Check execution evidence in dq_execution_metrics.
 5. Check latest summary rows in dq_run_results.
 6. Check issue lifecycle behavior in dq_violations.
-7. Run enrichment: nb_dq_04_routing.py (writes dq_violations_enriched for Power BI).
 
 ---
 
@@ -65,8 +64,6 @@ The engine raises a clear error if either file is missing.
   one row per rule per run.
 - dq_violations:
   current-state issue table with Active and Resolved status.
-- dq_violations_enriched:
-  violations with owner, context columns, and escalation_days (Power BI source).
 - dq_execution_metrics:
   one row per runner execution with status and timing.
 
