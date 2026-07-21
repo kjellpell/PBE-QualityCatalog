@@ -47,7 +47,7 @@ Core capabilities:
 PBE-QualityCatalog/
 ├── config/
 │   ├── QualityCatalogConfig.py     (table names, paths, ansatte lookup)
-│   └── QualityCatalogRuntime.py    (behavior flags, retry/timeout, notify settings)
+│   └── QualityCatalogRuntime.py    (behavior flags, retry/timeout)
 ├── engine/
 │   ├── expectations.py             (expectation classes + registry)
 │   ├── resolution.py               (Active/Resolved violation tracking)
@@ -57,12 +57,10 @@ PBE-QualityCatalog/
 │   ├── faktura.yaml
 │   ├── faser.yaml
 │   └── milepeler.yaml
-├── powerautomate/                  (Power Automate flow packages for Teams DMs)
 ├── nb_dq_00_setup.py               (Delta table DDL)
 ├── nb_dq_01_preflight.py           (pre-run checks)
 ├── nb_dq_03_run_validation.py      (Fabric wrapper for the engine)
 ├── nb_dq_04_routing.py             (owner/context enrichment)
-├── nb_dq_06_notify.py              (Teams notifications)
 ├── ARCHITECTURE.md
 ├── DAX_POWERBI.md
 ├── DEPLOY.md
@@ -187,8 +185,7 @@ and columns exist, then re-run validation.
    engine/validation_runner.py) after source refresh.
 2. Verify summary output and row counts.
 3. Confirm evidence in dq_execution_metrics.
-4. Optionally run nb_dq_04_routing.py (enrichment) and nb_dq_06_notify.py
-   (Teams notifications).
+4. Optionally run nb_dq_04_routing.py (enrichment for owner/context reporting).
 
 For a one-page checklist, see OPERATIONS_QUICK_REF.md.
 
@@ -220,11 +217,10 @@ before promoting changes:
 
 1. `python -m py_compile engine/*.py nb_dq_*.py` — catch syntax errors.
 2. Run `nb_dq_01_preflight.py` — catches missing tables/columns, parameter
-   contract errors, and unresolvable user_message placeholders.
+  contract errors, and catalog/routing configuration issues.
 3. Run `nb_dq_03_run_validation.py` with `DRY_RUN = True` — full run against
    `_tmp` output tables without touching production data.
-4. Run `nb_dq_06_notify.py` with `DRY_RUN_NOTIFY = True` (and optionally
-   `NOTIFY_TEST_EMAIL`) — prints webhook payloads without posting.
+4. Run `nb_dq_04_routing.py` to verify enriched output shape and owner/context joins.
 
 ---
 

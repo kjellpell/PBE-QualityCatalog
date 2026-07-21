@@ -787,32 +787,7 @@ Convention:
 - Use `none` for rules that are tracked but have no directly responsible team
 - Any string is valid — the engine does not validate the value
 
-`routing` does not trigger any notification. It is purely an ownership label for Power BI filtering.
-
-### `user_message` (rule-level, required for `routing: Avdeling`)
-
-A human-readable instruction shown to the case worker in the Power BI handler report
-(`dq_violations_enriched.user_message`). For rules where `routing: Avdeling`, this message
-is what the user sees — write it as a clear, actionable instruction, not a technical description.
-
-```yaml
-- rule_id: PROC-021
-  name: Open cases must have a handler
-  user_message: 'Saken er åpen, men mangler saksbehandler. Tildel saksbehandler for sak {saksnummer} i fagsystemet.'
-  expectation: not_null_when
-  ...
-  routing: Avdeling
-```
-
-Template variables in curly braces are substituted with column values at enrichment time.
-You can reference any column from the source table or its configured `joins` — including
-violation columns (`actual_value`, `violated_column`, `primary_key_value`) and
-`context_columns` (e.g. `saksnummer`, `stage_title`).
-
-**Authoring convention:**
-- **Required** when `routing: Avdeling` — users will see this instead of a technical detail
-- Optional when `routing: Teknologi` — IT ops reads the raw `details` field
-- If absent, the fallback is `rule_description`, then `rule_name`
+`routing` is an ownership label for Power BI filtering and operational slicing.
 
 ### `escalation_days` (catalog header)
 
@@ -831,9 +806,6 @@ Recommended defaults:
 - Financial data (Faktura): 7 days
 - Case phases (Faser) and milestones (Milepæler): 14 days
 
-Actual manager notification requires a Power Automate flow triggered by the
-`Escalation Needed > 0` measure — see `DAX_POWERBI.md` Section 9.
-
 ### `ownership_col` (catalog header)
 
 Catalog-level field specifying which column in the source table holds the employee reference that links to `saksbehandling.ansatte`.
@@ -842,7 +814,7 @@ Catalog-level field specifying which column in the source table holds the employ
 ownership_col: saksansvarlig_kode   # or leave "" until confirmed
 ```
 
-Leave as `""` until the team confirms the correct column. Individual notifications will be skipped and owner columns written as NULL until this and the ansatte config keys are set.
+Leave as `""` until the team confirms the correct column. Owner columns will be written as NULL until this and the ansatte config keys are set.
 
 Required config keys in `QualityCatalogConfig.py` for owner resolution:
 
@@ -886,7 +858,6 @@ Apply Row Level Security on `owner_email = USERPRINCIPALNAME()` to give each han
 - Operator matches operator family
 - `pk_column` is correct
 - Description explains business risk, not just technical check
-- `user_message` is present if `routing: Avdeling`
 - Rule passes preflight and dry-run
 
 ## Common Mistakes
@@ -897,5 +868,4 @@ Apply Row Level Security on `owner_email = USERPRINCIPALNAME()` to give each han
 | Wrong operator family | False positives or runtime errors | Use trigger operators only for conditional-required patterns |
 | Missing `pk_column` where needed | Hard to trace violations | Set at catalog level or per rule |
 | SQL returns non-violating rows | False failures | Ensure SQL returns violations only |
-| Missing `user_message` on `routing: Avdeling` rules | Case workers see technical detail instead of instruction | Add `user_message` to the rule |
 | Running production mode first | Polluted production outputs | Run preflight and dry-run first |

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
@@ -10,7 +9,7 @@ import yaml
 from pyspark.sql import SparkSession
 
 
-LAKEHOUSE_CONFIG_DIR = Path("/lakehouse/default/Files/Configs")
+LAKEHOUSE_CONFIG_DIR = Path("/lakehouse/default/Files/configs")
 
 
 def _resolve_repo_root() -> Path:
@@ -44,7 +43,7 @@ except ModuleNotFoundError:
             raise FileNotFoundError(
                 f"Config file not found: {module_path}\n"
                 f"Ensure {module_name}.py is uploaded to the Lakehouse at "
-                f"/lakehouse/default/Files/Configs/"
+                f"/lakehouse/default/Files/configs/"
             )
 
         spec = importlib.util.spec_from_file_location(module_name, str(module_path))
@@ -254,27 +253,15 @@ def _check_columns_for_catalog(
     return warnings
 
 
-# Columns every row of dq_violations_enriched carries, regardless of catalog.
-# user_message templates may reference these in addition to context_columns.
-_ENRICHED_BASE_COLUMNS = {
-    "run_id", "run_timestamp", "batch_date",
-    "rule_id", "rule_name", "rule_group",
-    "primary_key_value", "violated_column", "actual_value",
-    "expected_condition", "violation_detail", "issue_status",
-    "first_seen_at", "routing_team", "rule_description",
-    "owner_email", "owner_name", "escalation_days",
-}
-
-
 def _check_catalog_structure(
     catalog: dict,
     raw_source_columns: set[str],
     source_columns: set[str],
     yaml_name: str,
 ) -> list[str]:
-    """Validate catalog-level fields used by nb_dq_04_routing / nb_dq_06_notify:
-    ownership_col, context_columns, join keys, escalation_days, and
-    user_message placeholders. Returns human-readable warning strings."""
+    """Validate catalog-level fields used by nb_dq_04_routing:
+    ownership_col, context_columns, join keys, escalation_days.
+    Returns human-readable warning strings."""
     warnings: list[str] = []
     rule_group = catalog.get("rule_group", "?")
 
@@ -314,21 +301,6 @@ def _check_catalog_structure(
                 f"[{yaml_name} / {rule_group}] escalation_days must be an integer, "
                 f"got {escalation_days!r}."
             )
-
-    # user_message placeholders are rendered with F.col() in nb_dq_04_routing;
-    # an unresolvable name breaks the whole enrichment write.
-    allowed = _ENRICHED_BASE_COLUMNS | {
-        c for c in (catalog.get("context_columns") or []) if isinstance(c, str)
-    }
-    for rule in catalog.get("rules", []):
-        template = rule.get("user_message") or ""
-        for placeholder in re.findall(r"\{(\w+)\}", template):
-            if placeholder not in allowed:
-                warnings.append(
-                    f"[{yaml_name} / {rule.get('rule_id', '?')}] user_message "
-                    f"placeholder '{{{placeholder}}}' is not a violation column "
-                    f"or context_column — enrichment would fail."
-                )
 
     return warnings
 

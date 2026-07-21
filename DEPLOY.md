@@ -35,9 +35,6 @@ Notes:
 4. Validate `dq_run_results`, `dq_violations`, and `default.dq_execution_metrics`.
 5. Run `nb_dq_04_routing.py` to enrich violations with owner/context columns
    into `dq_violations_enriched` (consumed by Power BI).
-6. Optionally run `nb_dq_06_notify.py` to send Teams DM notifications via Power
-   Automate (handler new-violation DMs and manager escalation DMs); attempts are
-   logged to `dq_notification_log`.
 
 ## Runtime controls
 
@@ -52,9 +49,6 @@ Current fields:
 - `RULE_TIMEOUT_SECONDS`
 - `RETRYABLE_ERROR_MARKERS`
 - `CATALOG_FILTER_OVERRIDES`
-- `DRY_RUN_NOTIFY`, `POWER_AUTOMATE_HANDLER_WEBHOOK`,
-  `POWER_AUTOMATE_MANAGER_WEBHOOK`, `NOTIFY_TIMEOUT_SECONDS`,
-  `NOTIFY_TEST_EMAIL` (used by `nb_dq_06_notify.py`)
 
 When `DRY_RUN = True`:
 

@@ -217,7 +217,7 @@ Source table: `dq_violations_enriched` (not `dq_violations` — see Section 7).
 
 - **KPI cards**: `Active Violations`, `Rules With Active Violations`, `Latest Batch Date`, `Escalation Needed`
 - **Slicers**: `rule_group`, `routing_team`, `batch_date`, `issue_status`, `owner_name`
-- **Main table**: `saksnummer`, `rule_name`, `violated_column`, `user_message`,
+- **Main table**: `saksnummer`, `rule_name`, `violated_column`, `violation_detail`,
   `first_seen_at`, `batch_date`, `issue_status`, `owner_name`
   - Conditional format: highlight rows red where `Escalation Needed` flag is 1
 - **Trend line**: Active violation count by `batch_date`
@@ -362,7 +362,7 @@ CALCULATE( MAX( dq_violations_enriched[batch_date] ), ALL( dq_violations_enriche
 
 ## 6. Alert Measures
 
-Connect the following measure to a notification flow (e.g. Power Automate) when alert functionality is added:
+Use the following measure as a report-level alert signal when needed:
 
 ```dax
 Has Active Violations Today =
@@ -378,7 +378,7 @@ IF(
 )
 ```
 
-> A value of `1` can trigger a Power Automate alert to the responsible rule owner or team.
+> A value of `1` indicates active violations exist for today.
 
 ---
 
@@ -443,7 +443,6 @@ CALCULATE(
 )
 ```
 
-> A value > 0 can trigger a Power Automate manager notification.
 > Use this on Page 6 as a KPI card and as a conditional formatting rule
 > (highlight rows red where violation age exceeds `escalation_days`).
 

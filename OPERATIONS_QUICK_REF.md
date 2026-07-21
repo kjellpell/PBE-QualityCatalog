@@ -19,8 +19,6 @@ Use this checklist to run, verify, and triage the Quality Catalog quickly.
 5. Check latest summary rows in dq_run_results.
 6. Check issue lifecycle behavior in dq_violations.
 7. Run enrichment: nb_dq_04_routing.py (writes dq_violations_enriched for Power BI).
-8. Optionally run notifications: nb_dq_06_notify.py (Teams DMs via Power Automate;
-   attempts logged to dq_notification_log).
 
 ---
 
@@ -47,8 +45,6 @@ Set in config/QualityCatalogRuntime.py.
   per-rule timeout; timed-out rules are recorded as ERROR and the run continues.
 - RETRYABLE_ERROR_MARKERS:
   strings used to classify retryable failures.
-- DRY_RUN_NOTIFY / NOTIFY_TEST_EMAIL / NOTIFY_TIMEOUT_SECONDS:
-  notification testing and webhook timeout (nb_dq_06_notify.py).
 
 ---
 
@@ -73,8 +69,6 @@ The engine raises a clear error if either file is missing.
   violations with owner, context columns, and escalation_days (Power BI source).
 - dq_execution_metrics:
   one row per runner execution with status and timing.
-- dq_notification_log:
-  one row per notification attempt (handler/manager DMs).
 
 ---
 

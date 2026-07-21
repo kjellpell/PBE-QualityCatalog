@@ -60,17 +60,3 @@ RETRYABLE_ERROR_MARKERS = [
 # Set a rule_group override to None to disable its YAML catalog_filter.
 # ---------------------------------------------------------------------------
 CATALOG_FILTER_OVERRIDES = {}
-
-# ---------------------------------------------------------------------------
-# Teams notifications (nb_dq_06_notify).
-# Both values are HTTP trigger URLs from Power Automate flows.
-# Set DRY_RUN_NOTIFY = True to print payloads to console without posting.
-# ---------------------------------------------------------------------------
-DRY_RUN_NOTIFY = True
-POWER_AUTOMATE_HANDLER_WEBHOOK = ""   # flow: handler new-violation DM
-POWER_AUTOMATE_MANAGER_WEBHOOK = ""   # flow: manager escalation DM
-NOTIFY_TIMEOUT_SECONDS = 30           # HTTP timeout per webhook POST
-
-# When set, all DMs are sent to this address instead of real owners/manager.
-# Use for end-to-end testing before going to production. Leave "" in production.
-NOTIFY_TEST_EMAIL = ""

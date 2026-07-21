@@ -18,6 +18,5 @@ ANSATTE_KEY_COL = ""          # column in ansatte matching ownership_col values
 ANSATTE_EMAIL_COL = ""        # email column in ansatte (used for Power BI RLS)
 ANSATTE_NAME_COL = ""         # display name column in ansatte
 
-# Notifications — used by nb_dq_06_notify
-REPORT_URL     = ""           # https://app.powerbi.com/groups/.../reports/...
-MANAGER_EMAIL  = ""           # manager@org.com
+# Optional reporting metadata (Power BI link)
+REPORT_URL = ""              # https://app.powerbi.com/groups/.../reports/...

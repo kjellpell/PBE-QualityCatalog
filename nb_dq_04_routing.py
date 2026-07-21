@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 import importlib.util
-import re
 from functools import reduce
 from pathlib import Path
 
@@ -122,7 +121,6 @@ def _build_routing_index(rules_dir: Path):
             rules_index[rule["rule_id"]] = {
                 "routing":          routing,
                 "rule_group":       rule_group,
-                "user_message":     rule.get("user_message", "").strip(),
                 "rule_description": rule.get("description", "").strip(),
             }
             params = rule.get("parameters") or {}
@@ -197,33 +195,6 @@ violations_df = violations_df.join(_meta_df, on="rule_id", how="left")
 # Power BI applies RLS on owner_email for the handler/manager report.
 # -----------------------------------------------------------------------------
 _ansatte_ready = all([ANSATTE_KEY_COL, ANSATTE_EMAIL_COL, ANSATTE_NAME_COL])
-
-
-def _template_to_spark_expr(template: str):
-    parts = re.split(r'\{(\w+)\}', template)
-    spark_parts = []
-    for i, part in enumerate(parts):
-        if i % 2 == 0:
-            if part:
-                spark_parts.append(F.lit(part))
-        else:
-            spark_parts.append(F.coalesce(F.col(part).cast("string"), F.lit("")))
-    if not spark_parts:
-        return F.lit(template)
-    return F.concat(*spark_parts) if len(spark_parts) > 1 else spark_parts[0]
-
-
-def _build_user_message_expr(rules_idx: dict):
-    fallback = F.coalesce(F.col("rule_description"), F.col("rule_name"))
-    expr = None
-    for rid, meta in rules_idx.items():
-        template = meta.get("user_message", "")
-        if not template:
-            continue
-        rendered = _template_to_spark_expr(template)
-        cond = F.col("rule_id") == rid
-        expr = F.when(cond, rendered) if expr is None else expr.when(cond, rendered)
-    return expr.otherwise(fallback) if expr is not None else fallback
 
 
 def _null_owner_columns(df):
@@ -337,7 +308,6 @@ def _enrich_catalog(cat: dict):
 
 _frames = [_enrich_catalog(cat) for cat in catalogs]
 owners_df = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), _frames)
-owners_df = owners_df.withColumn("user_message", _build_user_message_expr(rules_index))
 owners_df.write.mode("overwrite").format("delta").saveAsTable(ENRICHED_TABLE)
 # Count the written table instead of owners_df to avoid recomputing the
 # whole enrichment DAG just for this print.

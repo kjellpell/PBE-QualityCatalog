@@ -34,7 +34,6 @@ rules:
 - rule_id: MIL-002
   name: Milepælen kan ikke være nådd uten sluttdato
   description: 'Milepæler som er nådd må ha en sluttdato.'
-  user_message: 'Milepælen «{milestone_title}» er registrert som Nådd, men mangler dato. Registrer dato i fagsystemet.'
   expectation: not_null_when
   parameters:
     when_column: statusdescription
@@ -49,7 +48,6 @@ rules:
 - rule_id: MIL-003
   name: Begge milepæler i et par for til politisk behandling må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
-  user_message: 'Fasen mangler én av to påkrevde milepæler for politisk behandling. Kontroller at begge milepælene i paret er registrert i fagsystemet.'
   expectation: pairs_present
   parameters:
     event_column: milestone_title
@@ -67,7 +65,6 @@ rules:
 - rule_id: MIL-004
   name: Begge milepæler i et par for offentlig ettersyn må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
-  user_message: 'Fasen mangler én av to påkrevde milepæler for offentlig ettersyn. Kontroller at begge milepælene i paret er registrert i fagsystemet.'
   expectation: pairs_present
   parameters:
     event_column: milestone_title
@@ -84,7 +81,6 @@ rules:
 - rule_id: MIL-005
   name: Begge milepæler i et par for oppstartsmøte må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
-  user_message: 'Fasen mangler én av to påkrevde milepæler for oppstartsmøte. Kontroller at begge milepælene i paret er registrert i fagsystemet.'
   expectation: pairs_present
   parameters:
     event_column: milestone_title

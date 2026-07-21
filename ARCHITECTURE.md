@@ -42,11 +42,6 @@ nb_dq_04_routing.py         → Post-validation enrichment:
   2. Join routing_team from rules index
   3. For each catalog: load source table, apply YAML joins, look up owner via ansatte
   4. Write dq_violations_enriched (union across all catalogs, context columns, owner)
-nb_dq_06_notify.py          → Teams DM notifications via Power Automate webhooks:
-  1. Read Active violations from dq_violations_enriched
-  2. Handler DMs for violations first seen today; manager DMs for escalations
-     (open longer than the catalog's escalation_days)
-  3. Log attempts to dq_notification_log
 ```
 
 ## File Map
@@ -63,7 +58,6 @@ nb_dq_06_notify.py          → Teams DM notifications via Power Automate webhoo
 | `nb_dq_01_preflight.py` | Pre-run checks (source tables, column refs, registry parity) |
 | `nb_dq_03_run_validation.py` | Fabric wrapper that executes `engine/validation_runner.py` |
 | `nb_dq_04_routing.py` | Post-validation enrichment → dq_violations_enriched |
-| `nb_dq_06_notify.py` | Teams DM notifications via Power Automate → dq_notification_log |
 | `rules/*.yaml` | Rule catalogs — one file per rule group, loaded at runtime |
 | `tests/test_expectations.py` | Unit tests for expectation classes |
 | `tests/test_yaml_rules.py` | Unit tests for YAML rule parsing |
@@ -158,7 +152,7 @@ nor fail). Rows skipped this way count as neither passed nor failed; use
 ### Notes
 
 - **Engine** (`engine/expectations.py`): Canonical IDs and parameter keys enforced in `CUSTOM_EXPECTATION_REGISTRY` and all expectation classes.
-- **Preflight** (`nb_dq_01_preflight.py`): Detects legacy nested `reference:` blocks; validates required canonical keys per expectation; checks column references (including `filter_column`, `completion_gate` columns, `ownership_col`, `context_columns`) and `user_message` placeholders against the source schema.
+- **Preflight** (`nb_dq_01_preflight.py`): Detects legacy nested `reference:` blocks; validates required canonical keys per expectation; checks column references (including `filter_column`, `completion_gate` columns, `ownership_col`, `context_columns`) against the source schema.
 - **YAML catalogs**: All active rule files (`rules/faser.yaml`, `rules/milepeler.yaml`, `rules/faktura.yaml`) use canonical IDs and keys.
 
 ## Delta Tables
@@ -169,4 +163,3 @@ nor fail). Rows skipped this way count as neither passed nor failed; use
 | `dq_violations` | `validation_runner.py` (via resolution.py) | Current-state violation log (`Active`/`Resolved`); includes `routing_team` |
 | `dq_violations_enriched` | `nb_dq_04_routing.py` | Unified violation table with owner, routing_team, and catalog-specific context columns; used by Power BI handler/manager report |
 | `dq_execution_metrics` | `validation_runner.py` | Run-level observability |
-| `dq_notification_log` | `nb_dq_06_notify.py` | One row per notification attempt; consulted to avoid re-sending DMs on same-day reruns |
