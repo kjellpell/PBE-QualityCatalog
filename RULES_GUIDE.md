@@ -123,7 +123,6 @@ non-null in all rows. Columns that need different severities must use separate r
     columns:
       - StartDate
 
-  routing: Saksteam
 
 # Multiple columns:
 - rule_id: PROC-012
@@ -135,7 +134,6 @@ non-null in all rows. Columns that need different severities must use separate r
       - case_recno
       - prosess_id
 
-  routing: Teknologi
 ```
 
 ---
@@ -163,7 +161,6 @@ All listed `columns` must be non-null whenever `when_column` satisfies the trigg
     columns:
       - Saksbehandler_kode
 
-  routing: Saksteam
 ```
 
 ---
@@ -197,7 +194,6 @@ Use `filter_column` + `filter_values` to restrict evaluation to a subset of rows
     right_column: StartDate
     operator: ">="
 
-  routing: Saksteam
 
 # Column vs scalar:
 - rule_id: INV-020
@@ -209,7 +205,6 @@ Use `filter_column` + `filter_values` to restrict evaluation to a subset of rows
     right_value: 0
     operator: ">"
 
-  routing: Finansteam
 
 # Column vs column, restricted to a subset of rows:
 - rule_id: FAS-008
@@ -225,7 +220,6 @@ Use `filter_column` + `filter_values` to restrict evaluation to a subset of rows
     right_column: frist_dager
     operator: "=="
 
-  routing: Teknologi
 ```
 
 ---
@@ -251,7 +245,6 @@ All non-null values in the column must belong to an approved list.
       - Standard
       - Kreditnota
 
-  routing: Finansteam
 ```
 
 ---
@@ -282,7 +275,6 @@ When `when_column <operator> value`, `required_column` must equal `required_valu
     required_value: Kreditnota
     pk_column: Fakturanr
 
-  routing: Finansteam
 ```
 
 ---
@@ -309,7 +301,6 @@ Every non-null value in `column` must exist in `reference_table.reference_column
     reference_column: TypeCode
     pk_column: Saksnummer
 
-  routing: Saksteam
 ```
 
 ---
@@ -340,7 +331,6 @@ Every non-null value in `column` must exist in the reference table **and** match
     reference_active_value: true
     pk_column: Saksnummer
 
-  routing: Saksteam
 ```
 
 ---
@@ -365,7 +355,6 @@ The combination of `columns` must be unique across all rows.
       - LinjeNr
     pk_column: Fakturanr
 
-  routing: Finansteam
 ```
 
 ---
@@ -391,7 +380,6 @@ Use this to detect failed data loads (table unexpectedly empty) or runaway loads
     operator: ">="
     threshold: 1
 
-  routing: Saksteam
 
 # Row count ceiling:
 - rule_id: PROC-007b
@@ -402,7 +390,6 @@ Use this to detect failed data loads (table unexpectedly empty) or runaway loads
     operator: "<="
     threshold: 10000000
 
-  routing: Saksteam
 ```
 
 > **`row_count` vs `comparison`:** `comparison` checks each row individually. `row_count` checks the total number of rows in the table. Use `comparison` when the rule is about values on individual rows; use `row_count` when the rule is about dataset health.
@@ -434,7 +421,6 @@ Rows still in the open state must not have been open longer than `max_days`.
     pk_column: Saksnummer
     max_days: 90
 
-  routing: Saksteam
 ```
 
 ---
@@ -470,7 +456,6 @@ Within each group, values in `event_column` must appear in the order defined by 
       event_column: MilestoneType
       value: Closed
 
-  routing: Saksteam
 ```
 
 ---
@@ -499,7 +484,6 @@ Within each group, checks that required pairs of events are both present. `mode`
     required_pairs:
       - [Received, Closed]
 
-  routing: Saksteam
 
 # Stop implies start (one-way):
 - rule_id: PROC-052
@@ -513,7 +497,6 @@ Within each group, checks that required pairs of events are both present. `mode`
       - [Received, Closed]
     mode: stop_requires_start
 
-  routing: Saksteam
 ```
 
 ---
@@ -541,7 +524,6 @@ Every group must contain at least one row where `event_column` equals `value_to_
     value_to_check: Approved
     trigger: Case approval
 
-  routing: Saksteam
 ```
 
 ---
@@ -570,7 +552,6 @@ The aggregate of `aggregate_column` within each group must equal the value in `r
     aggregate: sum
     tolerance: 0.01
 
-  routing: Finansteam
 ```
 
 ---
@@ -598,7 +579,6 @@ Runs a custom SQL query. Every row returned is treated as a violation — write 
       GROUP BY Fakturanr
       HAVING SUM(linje_belop) = 0
 
-  routing: Finansteam
 ```
 
 ---
@@ -620,7 +600,6 @@ rules:
     column: Saksnummer
   
     category: Completeness
-    routing: Saksteam
 ```
 
 ### `catalog_filter` — scope the source rows before rules run
@@ -748,41 +727,6 @@ Key behaviours:
 - Use `on` when both tables share the same column name. Use `left_on` + `right_on` when they differ.
 - A join config with no key (`on`, `left_on`, or `right_on`) is skipped with a warning during the run.
 - Joins apply during validation so rules can reference joined columns.
-
-```yaml
-context_columns:
-  - saksnummer      # human-readable case number
-  - sakstittel      # case title
-  - indikator       # phase type
-```
-
-Any column available after `joins` are applied can be listed here — including columns from joined tables. This is the primary reason to chain joins: to surface a case number or title that lives two hops away from the primary table.
-
----
-
-## Routing and Ownership
-
-The routing/ownership layer is intentionally not part of the core engine at this stage.
-Rules are validated only against the source data and any configured joins.
-
-### `escalation_days` (catalog header)
-
-Optional catalog-level threshold: if an Active violation has been open for more than this
-many days without resolution, it is flagged for management follow-up in Power BI.
-The flag is surfaced via the `Escalation Needed` DAX measure on the handler/manager page.
-
-```yaml
-escalation_days: 14   # violations open > 14 days are highlighted for manager review
-```
-
-Set at the catalog header level — all rules within the catalog inherit the same threshold.
-Omit (or leave unset) for catalogs where no escalation is desired.
-
-Recommended defaults:
-- Financial data (Faktura): 7 days
-- Case phases (Faser) and milestones (Milepæler): 14 days
-
-The core engine does not resolve owners or emit enriched violation tables.
 
 ---
 

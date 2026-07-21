@@ -1,9 +1,6 @@
 # PBE Quality Catalog
 
 Data quality and internal control (IC) validation engine for the PBE case management platform,
-# PBE Quality Catalog
-
-Data quality and internal control (IC) validation engine for the PBE case management platform,
 built on Apache Spark and Delta Lake, designed to run as Fabric Lakehouse notebooks.
 
 This README is for IT operations and maintainers.
@@ -218,10 +215,9 @@ before promoting changes:
 
 1. `python -m py_compile engine/*.py nb_dq_*.py` — catch syntax errors.
 2. Run `nb_dq_01_preflight.py` — catches missing tables/columns, parameter
-  contract errors, and catalog/routing configuration issues.
+  contract errors.
 3. Run `nb_dq_03_run_validation.py` with `DRY_RUN = True` — full run against
    `_tmp` output tables without touching production data.
-4. Run `nb_dq_04_routing.py` to verify enriched output shape and owner/context joins.
 
 ---
 

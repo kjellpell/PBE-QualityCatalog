@@ -3,11 +3,6 @@ table: fakturalinjer
 database: saksbehandling
 description: Datakvalitet på fakturalinjer som kommer fra PB360
 pk_column: fakturanr
-ownership_col: ""
-escalation_days: 7
-
-# Sjekk denne
-context_columns: []
 
 rules:
 
@@ -20,7 +15,6 @@ rules:
     columns:
       - fakturanr
       - linje_belop
-  routing: Teknologi
 
 # De neste gjør tekniske sjekker på fakturalinjene
 - rule_id: FAK-002
@@ -36,4 +30,3 @@ rules:
     reference_column: fakturasum
     aggregate: sum
     tolerance: 0.01
-  routing: Teknologi

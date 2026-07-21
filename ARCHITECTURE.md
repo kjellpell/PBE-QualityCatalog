@@ -50,7 +50,7 @@ nb_dq_03_run_validation.py  → Fabric wrapper that executes engine/validation_r
 | `engine/resolution.py` | MERGE-based violation and IC exception persistence |
 | `engine/runtime.py` | Config loading (Lakehouse only), target resolution, metrics writing |
 | `engine/validation_runner.py` | Main orchestration engine |
-| `config/QualityCatalogConfig.py` | Table names, paths, ansatte lookup settings |
+| `config/QualityCatalogConfig.py` | Table names and paths |
 | `config/QualityCatalogRuntime.py` | Behavior flags (dry-run, retry, fail-on-empty) |
 | `nb_dq_00_setup.py` | Delta table DDL (CREATE TABLE IF NOT EXISTS) |
 | `nb_dq_01_preflight.py` | Pre-run checks (source tables, column refs, registry parity) |
@@ -130,8 +130,7 @@ All parameter names use the `_column` suffix to map directly to DataFrame column
   value of the catalog `pk_column` (or the rule's `pk_column` override).
 - **Group-keyed expectations** (`sequence_ordered`, `pairs_present`,
   `gate_complete`, `group_aggregate_matches`) write the rule's `group_column`
-  value — one violation per group, not per row. `nb_dq_04_routing.py` joins
-  enrichment lookups on the matching key column per rule.
+  value — one violation per group, not per row.
 
 ### NULL semantics
 

@@ -253,58 +253,6 @@ def _check_columns_for_catalog(
     return warnings
 
 
-def _check_catalog_structure(
-    catalog: dict,
-    raw_source_columns: set[str],
-    source_columns: set[str],
-    yaml_name: str,
-) -> list[str]:
-    """Validate catalog-level fields used by nb_dq_04_routing:
-    ownership_col, context_columns, join keys, escalation_days.
-    Returns human-readable warning strings."""
-    warnings: list[str] = []
-    rule_group = catalog.get("rule_group", "?")
-
-    ownership_col = catalog.get("ownership_col") or ""
-    if ownership_col and ownership_col not in source_columns:
-        warnings.append(
-            f"[{yaml_name} / {rule_group}] ownership_col '{ownership_col}' "
-            f"not found in source table or join selects."
-        )
-
-    for col in catalog.get("context_columns") or []:
-        if col and col not in source_columns:
-            warnings.append(
-                f"[{yaml_name} / {rule_group}] context_column '{col}' "
-                f"not found in source table or join selects."
-            )
-
-    for join_cfg in catalog.get("joins") or []:
-        if not isinstance(join_cfg, dict):
-            continue
-        left_on = join_cfg.get("left_on")
-        if left_on and left_on not in raw_source_columns:
-            warnings.append(
-                f"[{yaml_name} / {rule_group}] join left_on '{left_on}' "
-                f"not found in source table."
-            )
-
-    escalation_days = catalog.get("escalation_days")
-    if escalation_days is not None:
-        try:
-            if int(escalation_days) < 0:
-                warnings.append(
-                    f"[{yaml_name} / {rule_group}] escalation_days must be >= 0."
-                )
-        except (TypeError, ValueError):
-            warnings.append(
-                f"[{yaml_name} / {rule_group}] escalation_days must be an integer, "
-                f"got {escalation_days!r}."
-            )
-
-    return warnings
-
-
 def _check_nested_reference(rule: dict, yaml_name: str, rule_id: str) -> list[str]:
     """Detect legacy nested 'reference:' block that the engine no longer reads.
     Authors must flatten it to reference_table / reference_column etc."""
@@ -487,9 +435,6 @@ def main() -> None:
             column_warnings.extend(
                 _check_columns_for_catalog(catalog, source_cols, yaml_path.name)
             )
-            column_warnings.extend(
-                _check_catalog_structure(catalog, raw_source_cols, source_cols, yaml_path.name)
-            )
             contract_errors.extend(
                 _check_parameter_contract_for_catalog(catalog, yaml_path.name)
             )
@@ -498,18 +443,6 @@ def main() -> None:
             )
         except Exception as exc:
             print(f"  Warning: could not read schema for {full_table}: {exc}")
-
-        # Owner enrichment degrades to NULL owners when the ansatte lookup keys
-        # are not configured — warn so this is a choice, not a surprise.
-        if (catalog.get("ownership_col") or "") and not all(
-            getattr(config_module, k, "")
-            for k in ("ANSATTE_KEY_COL", "ANSATTE_EMAIL_COL", "ANSATTE_NAME_COL")
-        ):
-            column_warnings.append(
-                f"[{yaml_path.name} / {catalog.get('rule_group', '?')}] ownership_col is set "
-                f"but ANSATTE_KEY_COL / ANSATTE_EMAIL_COL / ANSATTE_NAME_COL are not all "
-                f"configured — nb_dq_04_routing will write NULL owner columns."
-            )
 
     if missing_sources:
         raise RuntimeError(f"Missing source tables: {sorted(set(missing_sources))}")

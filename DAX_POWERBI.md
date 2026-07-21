@@ -1,19 +1,17 @@
-# Power BI — DQ Catalog: DAX Measures and Report Guide
+# Power BI - DQ Catalog (Core Engine)
 
-All measures operate on the two Delta tables written by the validation engine:
+This guide contains DAX examples for the core engine outputs only.
+
+## Source Tables
 
 | Table | Description |
 |---|---|
-| `dq_run_results` | One row per rule per validation run (summary) |
-| `dq_violations`  | One row per violating record per rule; `issue_status` = `Active` or `Resolved` |
+| `dq_run_results` | One row per rule per validation run |
+| `dq_violations` | One row per violation key with lifecycle state (`Active` / `Resolved`) |
 
-**Note:** All violation measures filter to `issue_status = "Active"` to exclude previously resolved issues.
+## Core Measures
 
----
-
-## 1. Core Quality Measures
-
-### 1.1 Total DQ Score (%)
+### DQ Score %
 
 ```dax
 DQ Score % =
@@ -26,38 +24,14 @@ DIVIDE(
 ) * 100
 ```
 
-> Use as a KPI card with green/red conditional formatting.
-
----
-
-### 1.2 DQ Score by Rule Group
-
-```dax
-DQ Score % by Group =
-DIVIDE(
-    CALCULATE(
-        COUNTROWS( dq_run_results ),
-        dq_run_results[status] = "PASSED"
-    ),
-    COUNTROWS( dq_run_results )
-) * 100
-```
-
-> Use in a bar or donut chart sliced by `dq_run_results[rule_group]`
-> to compare quality across Process, Milestone, and Invoice side by side.
-
----
-
-### 1.3 Total Rules Evaluated
+### Total Rules
 
 ```dax
 Total Rules =
 COUNTROWS( dq_run_results )
 ```
 
----
-
-### 1.4 Rules Passed
+### Rules Passed
 
 ```dax
 Rules Passed =
@@ -67,9 +41,7 @@ CALCULATE(
 )
 ```
 
----
-
-### 1.5 Rules Failed
+### Rules Failed
 
 ```dax
 Rules Failed =
@@ -79,23 +51,17 @@ CALCULATE(
 )
 ```
 
----
-
-### 1.6 Rules in Error
+### Rules In Error
 
 ```dax
-Rules in Error =
+Rules In Error =
 CALCULATE(
     COUNTROWS( dq_run_results ),
     dq_run_results[status] = "ERROR"
 )
 ```
 
----
-
-## 2. Violation Measures
-
-### 2.1 Active Violations
+### Active Violations
 
 ```dax
 Active Violations =
@@ -105,354 +71,35 @@ CALCULATE(
 )
 ```
 
----
-
-### 2.2 Violation Rate (per 1 000 rows)
+### Resolved Violations
 
 ```dax
-Violation Rate per 1000 =
-DIVIDE(
-    CALCULATE(
-        COUNTROWS( dq_violations ),
-        dq_violations[issue_status] = "Active"
-    ),
-    SUMX( DISTINCT( dq_run_results[run_id] ), CALCULATE( SUM( dq_run_results[total_rows] ) ) )
-) * 1000
-```
-
----
-
-## 3. Trend Measures
-
-### 3.1 Quality Score — Latest Run
-
-```dax
-DQ Score % Latest Run =
-VAR LatestRun =
-    CALCULATE(
-        MAX( dq_run_results[run_timestamp] ),
-        ALL( dq_run_results )
-    )
-RETURN
-DIVIDE(
-    CALCULATE(
-        COUNTROWS( dq_run_results ),
-        dq_run_results[status]        = "PASSED",
-        dq_run_results[run_timestamp] = LatestRun
-    ),
-    CALCULATE(
-        COUNTROWS( dq_run_results ),
-        dq_run_results[run_timestamp] = LatestRun
-    )
-) * 100
-```
-
----
-
-### 3.2 Quality Score — Previous Run
-
-```dax
-DQ Score % Previous Run =
-VAR RunDates =
-    CALCULATETABLE(
-        DISTINCT( dq_run_results[run_timestamp] ),
-        ALL( dq_run_results )
-    )
-VAR LatestRun = MAXX( RunDates, [run_timestamp] )
-VAR PrevRun   = MAXX( FILTER( RunDates, [run_timestamp] < LatestRun ), [run_timestamp] )
-RETURN
-DIVIDE(
-    CALCULATE(
-        COUNTROWS( dq_run_results ),
-        dq_run_results[status]        = "PASSED",
-        dq_run_results[run_timestamp] = PrevRun
-    ),
-    CALCULATE(
-        COUNTROWS( dq_run_results ),
-        dq_run_results[run_timestamp] = PrevRun
-    )
-) * 100
-```
-
----
-
-### 3.3 Quality Score Change (vs. Previous Run)
-
-```dax
-DQ Score Change % =
-[DQ Score % Latest Run] - [DQ Score % Previous Run]
-```
-
-> Display as a KPI card with green / red conditional formatting.
-
----
-
-## 4. Recommended Report Pages
-
-### Page 1 — Management Summary
-- **KPI cards**: `DQ Score % Latest Run`, `Active Violations`, `Rules Failed`, `DQ Score Change %`
-- **Donut chart**: `DQ Score % by Group` sliced by `rule_group` (Process / Milestone / Invoice)
-- **Stacked bar**: Rule count by status (Passed / Failed / Error) per `rule_group`
-- **Line chart**: `DQ Score % Latest Run` over `batch_date` (trend)
-
-### Page 2 — Process Rule Detail
-- **Slicer**: `batch_date`, `rule_id`
-- **Table**: `rule_id`, `rule_name`, `total_rows`, `failed_rows`,
-  `success_pct`, `status`, `details` filtered to `rule_group = "Process"`
-- **Bar chart**: `failed_rows` by `rule_id`
-
-### Page 3 — Milestone Rule Detail
-- Same layout as Page 2, filtered to `rule_group = "Milestone"`
-
-### Page 4 — Invoice Rule Detail
-- Same layout as Page 2, filtered to `rule_group = "Invoice"`
-
-### Page 5 — Violation Drill-down
-- **Table**: `violation_detail`, `primary_key_value`, `rule_name`,
-  `batch_date` filtered to `issue_status = "Active"`
-- **Enable drill-through** from Pages 2–4 on `rule_id`
-
-### Page 6 — My Violations (handler/manager view)
-Source table: `dq_violations_enriched` (not `dq_violations` — see Section 7).
-
-- **KPI cards**: `Active Violations`, `Rules With Active Violations`, `Latest Batch Date`, `Escalation Needed`
-- **Slicers**: `rule_group`, `routing_team`, `batch_date`, `issue_status`, `owner_name`
-- **Main table**: `saksnummer`, `rule_name`, `violated_column`, `violation_detail`,
-  `first_seen_at`, `batch_date`, `issue_status`, `owner_name`
-  - Conditional format: highlight rows red where `Escalation Needed` flag is 1
-- **Trend line**: Active violation count by `batch_date`
-
-Handlers see only their own rows (RLS). Managers see all rows and slice by
-`owner_name` to inspect a specific handler's work. No bridge tables needed —
-context columns carry human-readable identifiers directly.
-
-### Page 7 — IT Ops Errors
-
-Source table: `dq_run_results` (filtered to status = "ERROR") + `dq_execution_metrics`.
-
-- **KPI cards**: `Technical Errors`, `Infrastructure Errors`, `Configuration Errors`, `Source Data Errors`
-- **Slicer**: `error_category` (infrastructure / configuration / source_data), `batch_date`
-- **Error table**: `rule_id`, `rule_name`, `error_category`, `details`, `run_timestamp`
-  filtered to `status = "ERROR"`
-- **Script failures table**: `script_name`, `status`, `error_message`, `started_at_utc`,
-  `duration_seconds` from `dq_execution_metrics` filtered to `status = "Failed"`
-
----
-
-## 5. Relating Violations to Source Tables
-
-> **Handler/manager report (Page 6):** uses `dq_violations_enriched`, which already contains context columns (`saksnummer`, `indikator`, etc.) alongside each violation row. No bridge tables are needed for that report.
-
-The bridge table pattern below applies to the management summary report (Pages 1–5), which is built on `dq_run_results` and `dq_violations`. `dq_violations[primary_key_value]` is always stored as **text**. Source tables like `Prosess` use a typed key (integer, GUID, etc.). Power BI cannot create a direct relationship across mismatched types, so use a calculated table as a typed bridge per rule group.
-
-### Pattern — calculated bridge table
-
-```dax
-Prosess_Violation_Keys =
-SELECTCOLUMNS(
-    FILTER(
-        dq_violations,
-        dq_violations[rule_group]    = "Process"
-     && dq_violations[issue_status] = "Active"
-    ),
-    "prosess_id", INT( dq_violations[primary_key_value] )
-)
-```
-
-Then in the **Model view** create these two relationships:
-
-| From | To | Cardinality |
-|---|---|---|
-| `Prosess_Violation_Keys[prosess_id]` | `Prosess[prosess_id]` | Many-to-one |
-| `dq_violations[primary_key_value]` | `Prosess_Violation_Keys[prosess_id_text]` | Many-to-one |
-
-Because the bridge only needs to carry the join key back as text, add a second column so the text side can close the loop:
-
-```dax
-Prosess_Violation_Keys =
-SELECTCOLUMNS(
-    FILTER(
-        dq_violations,
-        dq_violations[rule_group]    = "Process"
-     && dq_violations[issue_status] = "Active"
-    ),
-    "prosess_id",      INT( dq_violations[primary_key_value] ),
-    "prosess_id_text", dq_violations[primary_key_value]
-)
-```
-
-Relationships after adding the text column:
-
-```
-dq_violations[primary_key_value]
-        ↓  (Many → One)
-Prosess_Violation_Keys[prosess_id_text]
-        ↓  (Many → One, via prosess_id)
-Prosess[prosess_id]
-```
-
-### Violation count measure on the source table
-
-Once the bridge is in place this measure resolves in the `Prosess` row context:
-
-```dax
-Active Violations for Prosess =
+Resolved Violations =
 CALCULATE(
     COUNTROWS( dq_violations ),
-    dq_violations[issue_status] = "Active",
-    TREATAS(
-        VALUES( Prosess[prosess_id] ),
-        Prosess_Violation_Keys[prosess_id]
-    )
+    dq_violations[issue_status] = "Resolved"
 )
 ```
 
-> If your source key is already text (e.g. `Saksnummer`), omit the `INT()` cast and use the text value directly — the bridge table reduces to a simple `DISTINCT` of `primary_key_value` filtered to the right rule group.
-
----
-
-## 7. Handler Report + RLS
-
-### Data source
-
-All measures and visuals on Page 6 use `dq_violations_enriched` — the unified
-table written by `nb_dq_04_routing.py` after each run.
-
-### Role-Level Security setup
-
-In **Power BI Desktop → Modeling → Manage Roles**, create two roles:
-
-| Role | Table | DAX filter | Who gets this role |
-|---|---|---|---|
-| `Handler` | `dq_violations_enriched` | `[owner_email] = USERPRINCIPALNAME()` | Individual saksbehandlere |
-| `Manager` | *(no filter)* | *(leave empty)* | Team leads, business teams, top of hierarchy |
-
-After publishing to Power BI Service, assign users to the correct role under
-**Workspace → Dataset settings → Row-level security**.
-
-With RLS active, all DAX measures on the page scope automatically to the
-logged-in user's visible rows — `COUNTROWS(dq_violations_enriched)` returns the
-handler's own count, and the manager's full count. No separate "My violations"
-measures are needed.
-
-### DAX measures
+### Latest Run Timestamp
 
 ```dax
-Active Violations =
-CALCULATE(
-    COUNTROWS( dq_violations_enriched ),
-    dq_violations_enriched[issue_status] = "Active"
-)
+Latest Run Timestamp =
+MAX( dq_run_results[run_ts] )
 ```
 
-```dax
-Rules With Active Violations =
-CALCULATE(
-    DISTINCTCOUNT( dq_violations_enriched[rule_id] ),
-    dq_violations_enriched[issue_status] = "Active"
-)
-```
+## Suggested Report Pages
 
-```dax
-Latest Batch Date =
-CALCULATE( MAX( dq_violations_enriched[batch_date] ), ALL( dq_violations_enriched ) )
-```
+1. Run Overview:
+   KPIs for DQ Score %, Total Rules, Rules Failed, Rules In Error.
+2. Rule Group Health:
+   Bar/column chart by `rule_group` and `status`.
+3. Active Violation Backlog:
+   Table filtered to `dq_violations[issue_status] = "Active"`.
+4. Resolution Trend:
+   Time series of `Active` vs `Resolved` by `first_seen_at` / `resolved_at`.
 
----
+## Notes
 
-## 6. Alert Measures
-
-Use the following measure as a report-level alert signal when needed:
-
-```dax
-Has Active Violations Today =
-VAR Today = TODAY()
-RETURN
-IF(
-    CALCULATE(
-        COUNTROWS( dq_violations ),
-        dq_violations[issue_status] = "Active",
-        dq_violations[batch_date]   = Today
-    ) > 0,
-    1, 0
-)
-```
-
-> A value of `1` indicates active violations exist for today.
-
----
-
-## 8. IT Ops Error Measures
-
-These measures operate on `dq_run_results` and `dq_execution_metrics`.
-
-```dax
-Technical Errors =
-CALCULATE(
-    COUNTROWS( dq_run_results ),
-    dq_run_results[status] = "ERROR"
-)
-```
-
-```dax
-Infrastructure Errors =
-CALCULATE(
-    COUNTROWS( dq_run_results ),
-    dq_run_results[status]         = "ERROR",
-    dq_run_results[error_category] = "infrastructure"
-)
-```
-
-```dax
-Configuration Errors =
-CALCULATE(
-    COUNTROWS( dq_run_results ),
-    dq_run_results[status]         = "ERROR",
-    dq_run_results[error_category] = "configuration"
-)
-```
-
-```dax
-Source Data Errors =
-CALCULATE(
-    COUNTROWS( dq_run_results ),
-    dq_run_results[status]         = "ERROR",
-    dq_run_results[error_category] = "source_data"
-)
-```
-
----
-
-## 9. Escalation Measures
-
-These measures operate on `dq_violations_enriched` and require the `first_seen_at`
-and `escalation_days` columns added in v1.1. The `escalation_days` threshold is set
-per catalog in the YAML header (e.g. `escalation_days: 14`).
-
-```dax
-Escalation Needed =
-CALCULATE(
-    COUNTROWS( dq_violations_enriched ),
-    dq_violations_enriched[issue_status] = "Active",
-    NOT ISBLANK( dq_violations_enriched[escalation_days] ),
-    DATEDIFF(
-        dq_violations_enriched[first_seen_at],
-        TODAY(),
-        DAY
-    ) > dq_violations_enriched[escalation_days]
-)
-```
-
-> Use this on Page 6 as a KPI card and as a conditional formatting rule
-> (highlight rows red where violation age exceeds `escalation_days`).
-
-```dax
-Violation Age Days =
-DATEDIFF(
-    MAX( dq_violations_enriched[first_seen_at] ),
-    TODAY(),
-    DAY
-)
-```
-
-> Use in the Page 6 table to show how long each violation has been open.
+- This core baseline does not use enriched violation output tables.
+- This core baseline does not use owner/routing/escalation fields.
