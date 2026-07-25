@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS {_violations_table} (
     violation_detail     STRING,
     issue_status         STRING,
     resolution_timestamp STRING,
-    first_seen_at        TIMESTAMP
+    first_seen_at        TIMESTAMP,
+    violation_scope      STRING
 )
 USING DELTA
 """)
@@ -201,7 +202,8 @@ CREATE TABLE IF NOT EXISTS {_violations_table}_tmp (
     violation_detail     STRING,
     issue_status         STRING,
     resolution_timestamp STRING,
-    first_seen_at        TIMESTAMP
+    first_seen_at        TIMESTAMP,
+    violation_scope      STRING
 )
 USING DELTA
 """)

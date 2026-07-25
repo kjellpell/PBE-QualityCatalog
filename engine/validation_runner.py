@@ -269,15 +269,15 @@ RESULT_SCHEMA = StructType([
     StructField("error_category",       StringType(),    True),
 ])
 
+# Expectation names whose primary_key_value is a group key rather than a row PK.
+_GROUP_SCOPED_EXPECTATIONS = {
+    "sequence_ordered", "pairs_present", "gate_complete", "group_aggregate_matches",
+}
+
 _INFRA_ERROR_MARKERS = ["timeout", "connection", "unavailable", "throttle"]
 _SOURCE_ERROR_MARKERS = [
     "source table is empty", "table not found", "table or view not found",
     "no such table", "path does not exist",
-]
-_CONFIG_ERROR_MARKERS = [
-    "unknown expectation", "column(s) not found", "column not found",
-    "missing required", "unsupported operator", "must be numeric",
-    "must be a mapping", "invalid parameter",
 ]
 
 
@@ -535,6 +535,9 @@ def run_validation(
                 # resolution.py preserves this value for still-active violations;
                 # brand-new violations use the current run timestamp as their origin.
                 F.lit(RUN_TIMESTAMP).alias("first_seen_at"),
+                F.lit(
+                    "group" if exp_name in _GROUP_SCOPED_EXPECTATIONS else "row"
+                ).alias("violation_scope"),
             )
             violation_dfs.append(viols_spark)
 
@@ -589,8 +592,6 @@ def _run_validator(
 def main() -> tuple[int, int]:
     print("\nLoading rule catalogs from YAML files…")
     all_catalogs = _load_all_rules()
-    if not all_catalogs and RUNTIME.FAIL_ON_EMPTY_RULES:
-        raise RuntimeError("No rule catalogs loaded from YAML files.")
     result_dfs    = []
     violation_dfs = []
 

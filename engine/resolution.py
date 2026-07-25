@@ -49,6 +49,9 @@ VIOLATION_SCHEMA = StructType([
     # Set once when the violation is first detected; preserved on every subsequent
     # run so violation age can be calculated as (now - first_seen_at).
     StructField("first_seen_at",       TimestampType(), True),
+    # "row" — primary_key_value is a PK in table_name; "group" — it's a group key
+    # (sequence_ordered, pairs_present, gate_complete, group_aggregate_matches).
+    StructField("violation_scope",     StringType(),    True),
 ])
 
 
@@ -123,7 +126,11 @@ def _apply_resolution_tracking(
         merge_key = ["rule_id", "primary_key_value", "violated_column", "expected_condition"]
         current_violations_df = current_violations_df.dropDuplicates(merge_key)
 
-        existing_df     = spark_session.table(violations_table)
+        # Break the read's lineage to violations_table before the final write
+        # targets the same table, otherwise Spark's analyzer rejects the write
+        # with UNSUPPORTED_OVERWRITE.TABLE ("can't overwrite the target that is
+        # also being read from") even though the write only happens afterwards.
+        existing_df     = spark_session.table(violations_table).localCheckpoint(eager=True)
         existing_active = existing_df.filter(F.col("issue_status") == "Active")
         # Everything that is not Active is carried through unchanged.  Use a
         # NULL-safe negation so legacy rows with a NULL issue_status (e.g. rows

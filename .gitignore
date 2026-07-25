@@ -12,6 +12,8 @@ __pycache__/
 
 # Local environment
 .env
+.venv/
+.venv-test/
 *.egg-info/
 dist/
 build/

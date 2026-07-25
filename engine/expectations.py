@@ -397,18 +397,14 @@ class ColumnComparisonExpectation:
         violations_df = evaluated.filter(violation_filter)
         passed        = total - failed
 
+        actual_val_expr = F.col(col_a).cast("string")
+
         if scalar_mode:
-            actual_val_expr = F.col(col_a).cast("string")
             detail_expr = F.concat(
                 F.col(col_a).cast("string"),
                 F.lit(f" does not satisfy {operator} {right_val_f}."),
             )
         else:
-            actual_val_expr = F.concat(
-                F.col(col_a).cast("string"),
-                F.lit(f" {operator} "),
-                F.col(col_b).cast("string"),
-            )
             detail_expr = F.concat(
                 F.col(col_a).cast("string"),
                 F.lit(f" is not {operator} "),
@@ -418,7 +414,7 @@ class ColumnComparisonExpectation:
 
         violations_out = violations_df.select(
             F.col(pk_col).cast("string").alias("primary_key_value"),
-            F.lit(condition).alias("violated_column"),
+            F.lit(col_a).alias("violated_column"),
             actual_val_expr.alias("actual_value"),
             F.lit(condition).alias("expected_condition"),
             detail_expr.alias("violation_detail"),
@@ -506,7 +502,7 @@ class SqlValidationExpectation:
 
         violations_out = result_df.select(
             pk_expr.alias("primary_key_value"),
-            F.lit("SQL_VALIDATION").alias("violated_column"),
+            F.lit(None).cast("string").alias("violated_column"),
             F.lit(None).cast("string").alias("actual_value"),
             F.lit("SQL query should return 0 rows").alias("expected_condition"),
             detail_expr.alias("violation_detail"),
@@ -577,7 +573,7 @@ class UniqueColumnCombinationExpectation:
 
         violations_out = violations_df.select(
             F.col(pk_col).cast("string").alias("primary_key_value"),
-            F.lit(col_combo).alias("violated_column"),
+            F.lit(columns[0]).alias("violated_column"),
             F.concat_ws("|", *[F.col(c).cast("string") for c in columns]).alias("actual_value"),
             F.lit(condition).alias("expected_condition"),
             F.lit("Duplicate combination found.").alias("violation_detail"),

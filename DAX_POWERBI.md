@@ -96,6 +96,13 @@ MAX( dq_run_results[run_ts] )
    Bar/column chart by `rule_group` and `status`.
 3. Active Violation Backlog:
    Table filtered to `dq_violations[issue_status] = "Active"`.
+   `violated_column` is always a real column name in `table_name` (or `NULL`
+   for `sql_violations`, which has no single offending column) — safe to
+   group/count by. `violation_scope` tells you how to read
+   `primary_key_value`: `"row"` means it's the PK of the offending row in
+   `table_name`; `"group"` (used by `sequence_ordered`, `pairs_present`,
+   `gate_complete`, `group_aggregate_matches`) means it's a group key, not a
+   row PK — don't join it back to `table_name` as if it were one.
 4. Resolution Trend:
    Time series of `Active` vs `Resolved` by `first_seen_at` / `resolved_at`.
 
