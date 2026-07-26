@@ -6,25 +6,25 @@ pk_column: fakturanr
 
 rules:
 
-# Sjekk for påkrevde kolonner
+# Én regel per kolonne, slik at rule_id peker på nøyaktig én feil.
 - rule_id: FAK-001
-  name: Verdier kan ikke være null
-  description: 'Verdier kan ikke være null.'
-  expectation: not_null
-  parameters:
-    columns:
-      - fakturanr
-      - linje_belop
+  name: fakturanr mangler
+  description: 'Alle fakturalinjer må ha et fakturanummer.'
+  check: fakturanr IS NOT NULL
+
+- rule_id: FAK-002
+  name: linje_belop mangler
+  description: 'Alle fakturalinjer må ha et beløp.'
+  check: linje_belop IS NOT NULL
 
 # De neste gjør tekniske sjekker på fakturalinjene
-- rule_id: FAK-002
+- rule_id: FAK-003
   name: Alle fakturalinjer må ha samme sum som total
   description: 'Summen av alle linje_belop-verdier for en gitt Fakturanr må være lik
-    Faktura_belop registrert på fakturahodet (innenfor en liten toleranse). En
+    Faktura_belop registrert på fakturahodet (innenfor en liten toleranse). Et
     avvik indikerer enten manglende linjer eller en oppdatering av hodet som ikke ble reflektert
     i detaljlinjene.'
-  expectation: group_aggregate_matches
-  parameters:
+  group_aggregate_matches:
     group_column: fakturanr
     aggregate_column: linje_belop
     reference_column: fakturasum

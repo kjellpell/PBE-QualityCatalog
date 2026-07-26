@@ -5,76 +5,68 @@ description: Datakvalitet på milepæler knyttet til saksfaser
 pk_column: milestone_recno
 
 # Jeg har valgt å kun se på PB360-saker per nå
-catalog_filter:
-  type: custom
-  where_clause: fagsystem = 'PB360'
+where: fagsystem = 'PB360'
 
 rules:
 
-# not_null fungerer slik at det er mulig å sjekke flere kolonner for blanke verdier i samme regel
+# Én regel per kolonne, slik at rule_id peker på nøyaktig én feil.
 - rule_id: MIL-001
-  name: Verdier kan ikke være null
-  description: 'Alle påkrevde felt må ha en verdi.'
-  expectation: not_null
-  parameters:
-    columns:
-      - milestone_title
-      - to_stage_recno
+  name: milestone_title mangler
+  description: 'Alle milepæler må ha et navn.'
+  check: milestone_title IS NOT NULL
 
-# Dette mer en teknisk sjekk
 - rule_id: MIL-002
+  name: to_stage_recno mangler
+  description: 'Alle milepæler må være knyttet til en fase.'
+  check: to_stage_recno IS NOT NULL
+
+# Dette er mer en teknisk sjekk
+- rule_id: MIL-003
   name: Milepælen kan ikke være nådd uten sluttdato
   description: 'Milepæler som er nådd må ha en sluttdato.'
-  expectation: not_null_when
-  parameters:
-    when_column: statusdescription
-    operator: ==
-    value: Nådd
-    columns:
-      - milestonedate
+  when: statusdescription = 'Nådd'
+  check: milestonedate IS NOT NULL
 
-# I PB360 er det en del par av milepæler som skal komme sammen, denne sjekker disse
-# Merk completion_gate, som gjør at regelen kun sjekker milepælene for faser hvor "Sendt til politisk behandling" er nådd 
-- rule_id: MIL-003
+# I PB360 er det en del par av milepæler som skal komme sammen, denne sjekker disse.
+# Merk completion_gate, som gjør at regelen kun sjekker milepælene for faser hvor
+# "Sendt til politisk behandling" er nådd.
+- rule_id: MIL-004
   name: Begge milepæler i et par for til politisk behandling må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
-  expectation: pairs_present
-  parameters:
+  pairs_present:
     event_column: milestone_title
     group_column: to_stage_recno
     required_pairs:
-      - [Merknader oversendt, Mottatt revidert planforslag]
-      - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
+    - [Merknader oversendt, Mottatt revidert planforslag]
+    - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
     completion_gate:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
 
 # Denne fungerer på samme måte som den over, men for offentlig ettersyn
-- rule_id: MIL-004
+- rule_id: MIL-005
   name: Begge milepæler i et par for offentlig ettersyn må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
-  expectation: pairs_present
-  parameters:
+  pairs_present:
     event_column: milestone_title
     group_column: to_stage_recno
     required_pairs:
-      - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
+    - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
     completion_gate:
       event_column: milestone_title
       value: Vedtak høring og offentlig ettersyn
       order_column: milestonedate
-  
-  # Denne fungerer på samme måte som den over, men for oppstartsmøte
-- rule_id: MIL-005
+
+# Denne fungerer på samme måte som den over, men for oppstartsmøte
+- rule_id: MIL-006
   name: Begge milepæler i et par for oppstartsmøte må være tilstede
   description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
-  expectation: pairs_present
-  parameters:
+  pairs_present:
     event_column: milestone_title
     group_column: to_stage_recno
     required_pairs:
-      - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
+    - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
     completion_gate:
       event_column: milestone_title
       value: Innkalling til oppstartsmøte

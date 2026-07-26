@@ -105,18 +105,20 @@ After each run, confirm:
 - Re-run nb_dq_00_setup.py to ensure the table and columns exist.
 - Confirm Delta support and table availability, then re-run validation.
 
-### Expectation execution errors
+### Rule execution errors
 
-- Verify expectation name spelling.
-- Verify required parameters are present.
-- Verify referenced columns exist in source data.
+- Run `nb_dq_01_preflight.py` first — it resolves every `where:`, `when:` and
+  `check:` predicate against the real schema and names the offending rule.
+- Verify each rule declares exactly one rule type.
+- Verify referenced columns exist in source data (including joined-in columns).
 
 ---
 
 ## Ownership
 
 - IT owns runtime, deployment, scheduling, support, and engine changes.
-- Business owns YAML rule intent, category/owner, and follow-up decisions.
+- Rule authors own the YAML catalogs — rule intent and follow-up decisions.
+  Authoring assumes SQL fluency; see RULES_GUIDE.md.
 
 Business authoring reference: RULES_GUIDE.md.
 
