@@ -142,14 +142,88 @@ def test_real_catalogs_pass_preflight(preflight, spark):
     for path in sorted((REPO_ROOT / "rules").glob("*.yaml")):
         catalog = yaml.safe_load(path.read_text(encoding="utf-8"))
         full_table = f"{catalog['database']}.{catalog['table']}"
-        source_df = spark.read.table(full_table)
-        cols = preflight._source_columns(spark, catalog, full_table)
-
-        from pyspark.sql import functions as F
-        probe = source_df
-        for column in sorted(cols - set(source_df.columns)):
-            probe = probe.withColumn(column, F.lit(None).cast("string"))
-
-        all_errors.extend(preflight.check_catalog(catalog, probe, cols, path.name))
+        probe, join_errors = preflight.build_probe(spark, catalog, full_table)
+        all_errors.extend(join_errors)
+        all_errors.extend(
+            preflight.check_catalog(catalog, probe, set(probe.columns), path.name)
+        )
 
     assert all_errors == [], "\n".join(all_errors)
+
+
+# --------------------------------------------------------------------------
+# join probe
+# --------------------------------------------------------------------------
+
+def _faser_catalog():
+    import yaml
+    return yaml.safe_load((REPO_ROOT / "rules" / "faser.yaml").read_text(encoding="utf-8"))
+
+
+def test_probe_carries_joined_columns_with_real_types(preflight, spark):
+    """
+    Joined columns must keep their real types. Synthesising them as strings
+    would let a type-sensitive predicate pass preflight and fail at run time.
+    """
+    from tests import fixtures
+    fixtures.create_source_tables(spark)
+
+    probe, errors = preflight.build_probe(spark, _faser_catalog(), "saksbehandling.faser")
+    assert errors == []
+    types = dict(probe.dtypes)
+
+    # case_recno is an int in saksbehandling.saker. The previous probe
+    # synthesised every joined column as a string, so this is the assertion
+    # that actually discriminates between the two approaches.
+    assert types["case_recno"] == "int"
+    assert types["saksansvarlig_kode"] == "string"
+    assert types["tidligste_startmilepael_dato"] == "date"
+
+
+def test_probe_type_checks_predicates(preflight, spark):
+    """Predicates are resolved against real types, so a type misuse is caught."""
+    from tests import fixtures
+    fixtures.create_source_tables(spark)
+
+    probe, _ = preflight.build_probe(spark, _faser_catalog(), "saksbehandling.faser")
+    # size() requires an array or map; saksansvarlig_kode is a string.
+    errors = preflight.check_predicate(
+        probe, "size(saksansvarlig_kode) > 0", "[t.yaml / T-1] 'check'"
+    )
+    assert errors and "does not resolve" in errors[0]
+
+
+def test_probe_reports_a_missing_join_table(preflight, spark):
+    from tests import fixtures
+    fixtures.create_source_tables(spark)
+
+    catalog = {"joins": [{"table": "saksbehandling.nope", "left_on": "a", "right_on": "b"}]}
+    _, errors = preflight.build_probe(spark, catalog, "saksbehandling.faser")
+    assert any("table 'saksbehandling.nope' not found" in e for e in errors)
+
+
+def test_probe_reports_bad_join_keys_and_select(preflight, spark):
+    from tests import fixtures
+    fixtures.create_source_tables(spark)
+
+    catalog = {"joins": [{
+        "table": "saksbehandling.saker", "left_on": "nosuch", "right_on": "case_recno",
+    }]}
+    _, errors = preflight.build_probe(spark, catalog, "saksbehandling.faser")
+    assert any("left_on 'nosuch' not found in source" in e for e in errors)
+
+    catalog = {"joins": [{
+        "table": "saksbehandling.saker", "left_on": "to_case_recno",
+        "right_on": "case_recno", "select": ["nosuch"],
+    }]}
+    _, errors = preflight.build_probe(spark, catalog, "saksbehandling.faser")
+    assert any("select column(s) not in" in e for e in errors)
+
+
+def test_probe_reports_a_join_without_keys(preflight, spark):
+    from tests import fixtures
+    fixtures.create_source_tables(spark)
+
+    catalog = {"joins": [{"table": "saksbehandling.saker"}]}
+    _, errors = preflight.build_probe(spark, catalog, "saksbehandling.faser")
+    assert any("needs 'on', or both 'left_on' and 'right_on'" in e for e in errors)

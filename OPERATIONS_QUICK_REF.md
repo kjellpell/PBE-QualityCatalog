@@ -34,8 +34,6 @@ Set in config/QualityCatalogRuntime.py.
 
 - DRY_RUN:
   write to temporary output tables with _tmp suffix.
-- FAIL_ON_EMPTY_RULES:
-  fail if no YAML catalogs are found.
 - FAIL_ON_EMPTY_SOURCE:
   fail if a source table is empty.
 - MAX_RULE_RETRIES:
@@ -86,7 +84,6 @@ After each run, confirm:
 
 - Verify RULES_DIR value.
 - Verify rules folder is present and contains *.yaml files.
-- Check FAIL_ON_EMPTY_RULES behavior.
 
 ### Missing source tables
 

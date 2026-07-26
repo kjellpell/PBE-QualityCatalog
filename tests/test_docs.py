@@ -6,7 +6,6 @@ test regenerates it and compares, so the docs cannot quietly fall behind the
 engine. On failure it prints the block to paste in.
 """
 
-import re
 from pathlib import Path
 
 from engine.expectations import RULE_TYPES

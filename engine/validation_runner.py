@@ -146,7 +146,6 @@ require_config_keys(
     RUNTIME,
     [
         "DRY_RUN",
-        "FAIL_ON_EMPTY_RULES",
         "FAIL_ON_EMPTY_SOURCE",
         "RETRYABLE_ERROR_MARKERS",
         "MAX_RULE_RETRIES",

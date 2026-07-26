@@ -303,6 +303,69 @@ def test_rule_level_pk_overrides_catalog(spark):
 
 
 # --------------------------------------------------------------------------
+# NULL group keys
+# --------------------------------------------------------------------------
+
+def _null_group_case(name):
+    """(rule, rows, schema) per group-scoped type: two real groups, one failing,
+    plus rows carrying a NULL group key."""
+    if name == "gate_complete":
+        return (
+            {"gate_complete": {"event_column": "ev", "group_column": "grp", "value": "ok"}},
+            [("g1", "ok"), ("g2", "x"), (None, "x"), (None, "ok")],
+            "grp string, ev string",
+        )
+    if name == "pairs_present":
+        return (
+            {"pairs_present": {
+                "event_column": "ev", "group_column": "grp",
+                "required_pairs": [["start", "stop"]],
+            }},
+            [("g1", "start"), ("g1", "stop"), ("g2", "start"), (None, "start")],
+            "grp string, ev string",
+        )
+    if name == "sequence_ordered":
+        return (
+            {"sequence_ordered": {
+                "event_column": "ev", "group_column": "grp",
+                "order_column": "seq", "sequence": ["a", "b"],
+            }},
+            [("g1", "a", 1), ("g1", "b", 2), ("g2", "b", 1), ("g2", "a", 2),
+             (None, "b", 1), (None, "a", 2)],
+            "grp string, ev string, seq int",
+        )
+    return (
+        {"group_aggregate_matches": {
+            "group_column": "grp", "aggregate_column": "amount", "reference_column": "total",
+        }},
+        [("g1", 60.0, 100.0), ("g1", 40.0, 100.0),
+         ("g2", 60.0, 100.0), ("g2", 30.0, 100.0),
+         (None, 5.0, 999.0)],
+        "grp string, amount double, total double",
+    )
+
+
+@pytest.mark.parametrize("type_name", sorted(GROUP_SCOPED))
+def test_null_group_key_is_neither_counted_nor_reported(spark, type_name):
+    """
+    A NULL group key is not a group. Counting it inflates the denominator, and
+    reporting it emits a violation whose primary_key_value cannot be joined back
+    to anything. gate_complete used to do the latter and sequence_ordered the
+    former, while the other two already excluded NULLs.
+    """
+    rule, rows, schema = _null_group_case(type_name)
+    df = spark.createDataFrame(rows, schema)
+    result, violations = run_rule(rule, df, spark)
+
+    assert result["total_rows"] == 2, "NULL group key counted as a group"
+    assert result["failed_rows"] == 1
+    assert result["passed_rows"] == 1
+    keys = [r.primary_key_value for r in violations.collect()]
+    assert None not in keys, "violation emitted for a NULL group key"
+    assert keys == ["g2"]
+
+
+# --------------------------------------------------------------------------
 # registry invariants
 # --------------------------------------------------------------------------
 
