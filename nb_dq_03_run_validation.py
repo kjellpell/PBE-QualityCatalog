@@ -47,7 +47,8 @@ def _table_exists(table_name: str) -> bool:
 # STEP 1: Pre-check required files and rule catalogs
 # -----------------------------------------------------------------------------
 missing = [str(path) for path in REQUIRED_FILES if not path.exists()]
-yaml_files = sorted(RULES_DIR.glob("*.yaml"))
+# Match the runner's glob, or a .yml catalog would look like "no rules found".
+yaml_files = sorted(RULES_DIR.glob("*.yaml")) + sorted(RULES_DIR.glob("*.yml"))
 if not yaml_files:
     missing.append(f"{RULES_DIR}/*.yaml (no YAML files found)")
 

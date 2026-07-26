@@ -652,6 +652,15 @@ class RuleType:
     scope: str                # "row" | "group" | "table"
     build: Callable[[Context], Evaluation]
     unit: str                 # what one unit is called, for the details text
+    # Config keys that must be present. Preflight reads these, so the contract
+    # is declared once here rather than restated in a parallel table.
+    required: tuple[str, ...] = ()
+    # Config keys naming a column in the *source*. Reference-side keys are
+    # deliberately absent: they point at another table and cannot be checked
+    # against the source schema.
+    column_keys: tuple[str, ...] = ()
+    # Whether this type accepts a completion_gate block.
+    gated: bool = False
 
 
 RULE_TYPES: dict[str, RuleType] = {
@@ -659,17 +668,41 @@ RULE_TYPES: dict[str, RuleType] = {
     for rule_type in (
         RuleType("check", "row", _build_check, "rows"),
         RuleType("unique", "row", _build_unique, "rows"),
-        RuleType("exists_in", "row", _build_exists_in, "rows"),
-        RuleType("sql", "row", _build_sql, "rows"),
-        RuleType("row_count", "table", _build_row_count, "rows"),
-        RuleType("sequence_ordered", "group", _build_sequence_ordered, "groups"),
-        RuleType("pairs_present", "group", _build_pairs_present, "groups"),
-        RuleType("gate_complete", "group", _build_gate_complete, "groups"),
         RuleType(
-            "group_aggregate_matches", "group", _build_group_aggregate_matches, "groups"
+            "exists_in", "row", _build_exists_in, "rows",
+            required=("column", "table", "reference_column"),
+            column_keys=("column",),
+        ),
+        RuleType("sql", "row", _build_sql, "rows"),
+        RuleType("row_count", "table", _build_row_count, "rows", required=("threshold",)),
+        RuleType(
+            "sequence_ordered", "group", _build_sequence_ordered, "groups",
+            required=("event_column", "group_column", "order_column", "sequence"),
+            column_keys=("event_column", "group_column", "order_column"),
+            gated=True,
+        ),
+        RuleType(
+            "pairs_present", "group", _build_pairs_present, "groups",
+            required=("event_column", "group_column", "required_pairs"),
+            column_keys=("event_column", "group_column"),
+            gated=True,
+        ),
+        RuleType(
+            "gate_complete", "group", _build_gate_complete, "groups",
+            required=("event_column", "group_column", "value"),
+            column_keys=("event_column", "group_column", "order_column"),
+        ),
+        RuleType(
+            "group_aggregate_matches", "group", _build_group_aggregate_matches, "groups",
+            required=("group_column", "aggregate_column", "reference_column"),
+            column_keys=("group_column", "aggregate_column", "reference_column"),
         ),
     )
 }
+
+# Rule-level keys holding a SQL predicate, validated against the real schema
+# by preflight. `check` is only a predicate for the `check` rule type.
+PREDICATE_KEYS = ("when", "check")
 
 # Rule types whose primary_key_value is a group key rather than a row key.
 GROUP_SCOPED = frozenset(t.name for t in RULE_TYPES.values() if t.scope == "group")

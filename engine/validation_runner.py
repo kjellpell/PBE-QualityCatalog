@@ -7,7 +7,7 @@
 #   2. For each rule group, load the source table from the Spark metastore
 #      and apply any configured pre-joins.
 #   3. For each rule:
-#        a. Dispatch to the matching validator in CUSTOM_EXPECTATION_REGISTRY.
+#        a. Dispatch to the matching rule type in engine/expectations.py.
 #        b. Collect per-rule results (counts, success %, status).
 #        c. Collect per-row violation details.
 #   4. Write summary rows to dq_run_results (Delta table).
@@ -29,10 +29,6 @@ from datetime import datetime, date, timezone
 from pathlib import Path
 
 from pyspark.sql import SparkSession, functions as F
-from pyspark.sql.types import (
-    StructType, StructField,
-    StringType, LongType, DoubleType, TimestampType, DateType,
-)
 
 spark = SparkSession.builder.getOrCreate()
 spark.sql("SET spark.sql.ansi.enabled = false")
@@ -80,6 +76,7 @@ try:
         run_rule,
     )
     from engine.resolution import (
+        RESULT_SCHEMA,
         VIOLATION_SCHEMA,
         _apply_resolution_tracking,
     )
@@ -120,6 +117,7 @@ except ModuleNotFoundError:
     RuleConfigError = expectations_module.RuleConfigError
     detect_rule_type = expectations_module.detect_rule_type
     run_rule = expectations_module.run_rule
+    RESULT_SCHEMA = resolution_module.RESULT_SCHEMA
     VIOLATION_SCHEMA = resolution_module.VIOLATION_SCHEMA
     _apply_resolution_tracking = resolution_module._apply_resolution_tracking
 
@@ -255,29 +253,6 @@ def _resolve_rules_dir() -> Path:
     from engine.runtime import resolve_rules_dir
     return resolve_rules_dir(CONFIG, Path(_repo_root), must_exist=True)
 
-
-# CELL 5 — Schema for result accumulation
-# -----------------------------------------------------------------------------
-RESULT_SCHEMA = StructType([
-    StructField("run_id",               StringType(),    False),
-    StructField("run_timestamp",        TimestampType(), False),
-    StructField("batch_date",           DateType(),      False),
-    StructField("rule_group",           StringType(),    False),
-    StructField("rule_id",              StringType(),    False),
-    StructField("rule_name",            StringType(),    False),
-    StructField("table_name",           StringType(),    False),
-    StructField("expectation",          StringType(),    False),
-    StructField("total_rows",           LongType(),      True),
-    StructField("passed_rows",          LongType(),      True),
-    StructField("failed_rows",          LongType(),      True),
-    StructField("success_pct",          DoubleType(),    True),
-    StructField("status",               StringType(),    False),
-    StructField("details",              StringType(),    True),
-    StructField("rule_duration_seconds", DoubleType(),   True),
-    # Populated only when status = 'ERROR'; NULL for PASSED/FAILED rules.
-    # Values: 'infrastructure' | 'configuration' | 'source_data'
-    StructField("error_category",       StringType(),    True),
-])
 
 _INFRA_ERROR_MARKERS = ["timeout", "connection", "unavailable", "throttle"]
 _SOURCE_ERROR_MARKERS = [

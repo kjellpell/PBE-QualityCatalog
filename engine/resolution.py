@@ -1,13 +1,16 @@
 # =============================================================================
 # engine/resolution.py
-# Resolution-tracking helpers for the violation log.
+# Canonical output schemas, and resolution tracking for the violation log.
 #
-# This module is kept separate from validation_runner.py so that its logic
-# can be imported and tested without triggering the runner's module-level
-# Spark bootstrap code.
+# This module is kept separate from validation_runner.py so that it can be
+# imported without triggering the runner's module-level Spark bootstrap.  The
+# table schemas live here for the same reason: nb_dq_00_setup.py generates its
+# DDL from them, so the column lists are defined once rather than restated in
+# the setup script.
 #
 # Public API
 # ----------
+# RESULT_SCHEMA                – canonical Spark schema for dq_run_results rows
 # VIOLATION_SCHEMA             – canonical Spark schema for dq_violations rows
 # _apply_resolution_tracking() – DataFrame-based persistence
 # =============================================================================
@@ -18,11 +21,39 @@ from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
     DateType,
+    DoubleType,
+    LongType,
     StringType,
     StructField,
     StructType,
     TimestampType,
 )
+
+
+# ---------------------------------------------------------------------------
+# Canonical schema for dq_run_results
+# ---------------------------------------------------------------------------
+
+RESULT_SCHEMA = StructType([
+    StructField("run_id",               StringType(),    False),
+    StructField("run_timestamp",        TimestampType(), False),
+    StructField("batch_date",           DateType(),      False),
+    StructField("rule_group",           StringType(),    False),
+    StructField("rule_id",              StringType(),    False),
+    StructField("rule_name",            StringType(),    False),
+    StructField("table_name",           StringType(),    False),
+    StructField("expectation",          StringType(),    False),
+    StructField("total_rows",           LongType(),      True),
+    StructField("passed_rows",          LongType(),      True),
+    StructField("failed_rows",          LongType(),      True),
+    StructField("success_pct",          DoubleType(),    True),
+    StructField("status",               StringType(),    False),
+    StructField("details",              StringType(),    True),
+    StructField("rule_duration_seconds", DoubleType(),   True),
+    # Populated only when status = 'ERROR'; NULL for PASSED/FAILED rules.
+    # Values: 'infrastructure' | 'configuration' | 'source_data'
+    StructField("error_category",       StringType(),    True),
+])
 
 
 # ---------------------------------------------------------------------------
