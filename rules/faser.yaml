@@ -5,9 +5,7 @@ description: Validering av datakvalitet for faser
 pk_column: stage_recno
 
 # Jeg har valgt å kun se på PB360-saker per nå
-catalog_filter:
-  type: custom
-  where_clause: fagsystem = 'PB360'
+where: fagsystem = 'PB360'
 
 # I de fleste tilfeller trenger vi å koble oss til saksbehandling.saker.
 joins:
@@ -20,137 +18,88 @@ joins:
   - saksnummer
   - saksansvarlig_kode
 
-# not_null fungerer slik at det er mulig å sjekke flere kolonner for blanke verdier i samme regel
-# her ligger tidligste_startmilepael_dato dobbelt med FAS-003, men tenker den hører mer hjemme i FAS-003 når ting er bøgfritt
 rules:
-- rule_id: FAS-001
-  name: Verdier kan ikke være null
-  description: 'Alle påkrevde rader må ha en verdi.'
-  expectation: not_null
-  parameters:
-    columns:
-      - to_case_recno
-      - stage_recno
 
-# Denne anser jeg for å være midlertidig?
-- rule_id: FAS-001a
-  name: tidligste_startmilepael_dato kan ikke være null
-  description: 'Alle påkrevde rader må ha en verdi.'
-  expectation: not_null
-  parameters:
-    columns:
-      - tidligste_startmilepael_dato
+# Én regel per kolonne, slik at rule_id peker på nøyaktig én feil.
+- rule_id: FAS-001
+  name: to_case_recno mangler
+  description: 'Alle rader må være knyttet til en sak.'
+  check: to_case_recno IS NOT NULL
+
+- rule_id: FAS-002
+  name: stage_recno mangler
+  description: 'Alle rader må ha en fase-id.'
+  check: stage_recno IS NOT NULL
 
 # Dette er muligens en sjekk som allerede gjøres ved ingestion
-- rule_id: FAS-002
-  name: Stage_recno må være unik på tvers av alle faser
-  description: 'Dupliserte stage_recnoer indikerer et problem med dataregistrering.'
-  expectation: combination_unique
-  parameters:
-    columns:
-    - stage_recno
-
-# Forskjellen mellom not_null og not_null_when er at den første sjekker at kolonnen 
-# ikke er null for alle rader, mens den andre sjekker at kolonnen ikke er null under visse betingelser. 
-# I dette tilfellet sjekker den om fase_lukket_dato er null når seneste_stoppmilepael_dato ikke er null. 
-# Dette betyr at for alle rader hvor seneste_stoppmilepael_dato har en verdi, må fase_lukket_dato også ha en verdi.
 - rule_id: FAS-003
-  name: Når siste milepæl er satt, må også andre kolonner ha verdi
-  description: 'Alle faser må være lukket.'
-  expectation: not_null_when
-  parameters:
-    when_column: seneste_stoppmilepael_dato
-    operator: IS NOT NULL
-    columns:
-    - fase_lukket_dato
-    - tidligste_startmilepael_dato
+  name: stage_recno må være unik på tvers av alle faser
+  description: 'Dupliserte stage_recnoer indikerer et problem med dataregistrering.'
+  unique:
+  - stage_recno
 
-# Formålet med denne regelen er å unngå at det finnes åpne faser i en sak, uten at saken har en saksbehandler.
-# Det er veldig mange av disse, så kan det være at regelen er feil satt opp.
+# when: avgrenser hvilke rader regelen gjelder for. Her: kun lukkede faser.
+# Merk at tidligste_startmilepael_dato tidligere ble sjekket to ganger
+# (FAS-001a og FAS-003); duplikatet er fjernet.
 - rule_id: FAS-004
-  name: Saksbehandler_kode kan ikke være null for åpne saker
-  description: 'Alle faser hvor sluttdato er null må være tildelt en saksbehandler.'
-  expectation: not_null_when
-  parameters:
-    when_column: seneste_stoppmilepael_dato
-    operator: IS NULL
-    columns:
-    - saksansvarlig_kode
+  name: Lukket fase mangler fase_lukket_dato
+  description: 'Når siste milepæl er satt, må fasen også være lukket.'
+  when: seneste_stoppmilepael_dato IS NOT NULL
+  check: fase_lukket_dato IS NOT NULL
 
-# Dette er en viktig regelen, for å sikre at tidsbruk blir beregnet riktig
 - rule_id: FAS-005
-  name: Seneste_stoppmilepael_dato må være større enn eller lik startdato
+  name: Lukket fase mangler tidligste_startmilepael_dato
+  description: 'Når siste milepæl er satt, må startdato være kjent.'
+  when: seneste_stoppmilepael_dato IS NOT NULL
+  check: tidligste_startmilepael_dato IS NOT NULL
+
+# Formålet med denne regelen er å unngå at det finnes åpne faser i en sak,
+# uten at saken har en saksbehandler.
+- rule_id: FAS-006
+  name: Åpen fase mangler saksbehandler
+  description: 'Alle faser hvor sluttdato er null må være tildelt en saksbehandler.'
+  when: seneste_stoppmilepael_dato IS NULL
+  check: saksansvarlig_kode IS NOT NULL
+
+# Dette er en viktig regel, for å sikre at tidsbruk blir beregnet riktig
+- rule_id: FAS-007
+  name: Sluttdato kan ikke være før startdato
   description: 'For ferdige faser må dato for vedtak/beslutning ikke være tidligere enn mottatt dato.'
-  expectation: comparison
-  parameters:
-    left_column: seneste_stoppmilepael_dato
-    right_column: tidligste_startmilepael_dato
-    operator: '>='
+  check: seneste_stoppmilepael_dato >= tidligste_startmilepael_dato
 
 # Sjekk på tidsbruk er egentlig bare en sikkerhetsventil, siden vi får dette tallet fra PB360 direkte
-- rule_id: FAS-006
+- rule_id: FAS-008
   name: Tidsbruk kan ikke være negativt tall
   description: 'Negativ tidsbruk er et tegn på feil registrering av start- eller sluttdato.'
-  expectation: comparison
-  parameters:
-    left_column: tidsbruk
-    right_value: 0
-    operator: '>='
+  check: tidsbruk >= 0
 
 # Bransjetid beregner vi imidlertid selv, og må derfor ha en sjekk.
-- rule_id: FAS-007
+- rule_id: FAS-009
   name: Bransjetid kan ikke være negativt tall
   description: 'Negativ bransjetid er et tegn på feil registrering av start- eller sluttdato.'
-  expectation: comparison
-  parameters:
-    left_column: bransjetid
-    right_value: 0
-    operator: '>='
+  check: bransjetid >= 0
 
-# Fordi det ikke er noen begrensning på fristforlengelse i PB360, så må vi sjekke de indikatorene som normalt _ikke_ skal ha fristforlengelse
-# Se også regelen under, som sjekker hvor stor fristforlengelsen er for de fasene som skal ha det 
-# Det kan være fristforlengelse på Byggesak 12 uker, her kan vi vurdere om de skal bekreftes manuelt siden det er så få
-- rule_id: FAS-008
+# Fordi det ikke er noen begrensning på fristforlengelse i PB360, må vi sjekke de
+# indikatorene som normalt _ikke_ skal ha fristforlengelse. Se også regelen under.
+- rule_id: FAS-010
   name: Opprinnelig frist og frist_dager må være lik for indikatorer uten fristforlengelse
   description: 'For faser uten fristforlengelse må opprinnelig_frist være lik frist_dager.'
-  expectation: comparison
-  parameters:
-    left_column: opprinnelig_frist_dager
-    right_column: frist_dager
-    operator: '=='
-    filter_column: indikator
-    filter_values:
-      - Delesak 3 uker
-      - Delesak 12 uker
-      - Byggesak 3 uker
-      - Byggesak 12 uker
-      - Endringstillatelse
-      - Igangsettingstillatelse
-      - Brukstillatelse
-      - Ferdigattest
-      - Seksjonering
-      - Reseksjonering
-      - Oppstartsmøte
+  when: >
+    indikator IN ('Delesak 3 uker', 'Delesak 12 uker', 'Byggesak 3 uker',
+                  'Byggesak 12 uker', 'Endringstillatelse', 'Igangsettingstillatelse',
+                  'Brukstillatelse', 'Ferdigattest', 'Seksjonering', 'Reseksjonering',
+                  'Oppstartsmøte')
+  check: opprinnelig_frist_dager = frist_dager
 
 # Denne sjekker om fristforlengelsen er lengre enn tillatt
-- rule_id: FAS-009
+- rule_id: FAS-011
   name: Forlenget frist kan ikke være lengre enn 126 dager for saker til politisk behandling
   description: 'Forlenget frist kan ikke være lengre enn 126 dager for saker til politisk behandling.'
-  expectation: comparison
-  parameters:
-    left_column: frist_dager
-    operator: '<='
-    right_value: 126
-    filter_column: indikator
-    filter_values:
-      - Til politisk behandling
+  when: indikator IN ('Til politisk behandling')
+  check: frist_dager <= 126
 
 # Her er det en del avvik, og det stusser jeg litt på
-- rule_id: FAS-010
-  name: decisiondate kan ikke være lavere enn sluttdato 
+- rule_id: FAS-012
+  name: decisiondate kan ikke være lavere enn sluttdato
   description: 'For ferdige faser må decisiondate ikke være tidligere enn sluttdato.'
-  expectation: comparison
-  parameters:
-    left_column: decisiondate
-    right_column: seneste_stoppmilepael_dato
-    operator: '>='
+  check: decisiondate >= seneste_stoppmilepael_dato

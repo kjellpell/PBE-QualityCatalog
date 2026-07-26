@@ -72,7 +72,13 @@ def _load_module_from_path(module_name: str, module_path: Path):
 
 
 try:
-    from engine.expectations import CUSTOM_EXPECTATION_REGISTRY
+    from engine.expectations import (
+        GROUP_SCOPED,
+        RULE_TYPES,
+        RuleConfigError,
+        detect_rule_type,
+        run_rule,
+    )
     from engine.resolution import (
         VIOLATION_SCHEMA,
         _apply_resolution_tracking,
@@ -109,7 +115,11 @@ except ModuleNotFoundError:
     resolution_module = _load_module_from_path("qc_resolution", resolution_py)
     runtime_module = _load_module_from_path("qc_runtime", runtime_py)
 
-    CUSTOM_EXPECTATION_REGISTRY = expectations_module.CUSTOM_EXPECTATION_REGISTRY
+    GROUP_SCOPED = expectations_module.GROUP_SCOPED
+    RULE_TYPES = expectations_module.RULE_TYPES
+    RuleConfigError = expectations_module.RuleConfigError
+    detect_rule_type = expectations_module.detect_rule_type
+    run_rule = expectations_module.run_rule
     VIOLATION_SCHEMA = resolution_module.VIOLATION_SCHEMA
     _apply_resolution_tracking = resolution_module._apply_resolution_tracking
 
@@ -119,7 +129,7 @@ except ModuleNotFoundError:
     resolve_targets = runtime_module.resolve_targets
     write_execution_metric = runtime_module.write_execution_metric
 
-print("Custom expectation registry loaded:", list(CUSTOM_EXPECTATION_REGISTRY))
+print("Rule types loaded:", sorted(RULE_TYPES))
 
 CONFIG, CONFIG_PATH = load_config_module("QualityCatalogConfig")
 RUNTIME, RUNTIME_PATH = load_config_module("QualityCatalogRuntime")
@@ -183,9 +193,9 @@ def _load_all_rules() -> list[dict]:
         rule_group: <str>
         table:      <str>
         database:   <str>          # optional
-        pk_column:  <str>          # optional, default "id"
+        pk_column:  <str>          # row key, shared by every rule in the file
+        where:      <sql>          # optional row filter for the whole file
         joins:      [...]          # optional
-        catalog_filter: {...}      # optional (date_range/custom)
         rules:      [...]
 
     Files are loaded alphabetically.
@@ -224,9 +234,9 @@ def _load_all_rules() -> list[dict]:
             "rule_group": doc.get("rule_group") or yaml_path.stem,
             "table":      doc.get("table", ""),
             "database":   doc.get("database", ""),
-            "pk_column":  doc.get("pk_column", "id"),
+            "pk_column":  doc.get("pk_column"),
             "joins":      [_normalize_join_cfg(j) for j in (doc.get("joins") or [])],
-            "catalog_filter": doc.get("catalog_filter"),
+            "where":      doc.get("where"),
             "rules":      rules,
         }
         catalogs.append(catalog)
@@ -268,11 +278,6 @@ RESULT_SCHEMA = StructType([
     # Values: 'infrastructure' | 'configuration' | 'source_data'
     StructField("error_category",       StringType(),    True),
 ])
-
-# Expectation names whose primary_key_value is a group key rather than a row PK.
-_GROUP_SCOPED_EXPECTATIONS = {
-    "sequence_ordered", "pairs_present", "gate_complete", "group_aggregate_matches",
-}
 
 _INFRA_ERROR_MARKERS = ["timeout", "connection", "unavailable", "throttle"]
 _SOURCE_ERROR_MARKERS = [
@@ -325,29 +330,11 @@ def _align_df_to_table_schema(df, table_name: str):
     return aligned.select(*target_names)
 
 
-def _apply_default_pk_column(rule: dict, catalog_pk_col: str | None) -> dict:
-    """Return a rule copy with parameters.pk_column defaulted from catalog PK."""
-    if not catalog_pk_col:
-        return rule
+def _resolve_catalog_where(catalog: dict, runtime_module) -> str | None:
+    """Catalog-level `where:` predicate, honouring a per-rule_group override.
 
-    params = rule.get("parameters")
-    if isinstance(params, dict):
-        current_pk = params.get("pk_column")
-        if current_pk not in (None, ""):
-            return rule
-        params_out = dict(params)
-    else:
-        params_out = {}
-
-    params_out["pk_column"] = catalog_pk_col
-    rule_out = dict(rule)
-    rule_out["parameters"] = params_out
-    return rule_out
-
-
-def _resolve_catalog_filter(catalog: dict, runtime_module) -> dict | None:
-    """Resolve effective catalog filter with optional runtime override."""
-    base_filter = catalog.get("catalog_filter")
+    An override whose value is None disables the catalog's own filter.
+    """
     overrides = getattr(runtime_module, "CATALOG_FILTER_OVERRIDES", {}) or {}
     if not isinstance(overrides, dict):
         raise ValueError("CATALOG_FILTER_OVERRIDES must be a dict keyed by rule_group.")
@@ -355,52 +342,16 @@ def _resolve_catalog_filter(catalog: dict, runtime_module) -> dict | None:
     rule_group = catalog.get("rule_group")
     if rule_group in overrides:
         return overrides[rule_group]
-    return base_filter
+    return catalog.get("where")
 
 
-def _apply_catalog_filter(source_df, catalog_filter: dict | None, rule_group: str):
-    """Apply catalog-level source filtering and return (filtered_df, description)."""
-    if not catalog_filter:
+def _apply_catalog_where(source_df, where_clause: str | None, rule_group: str):
+    """Apply the catalog-level row filter and return (filtered_df, description)."""
+    if not where_clause:
         return source_df, None
-    if not isinstance(catalog_filter, dict):
-        raise ValueError(f"[{rule_group}] catalog_filter must be a mapping.")
-
-    filter_type = catalog_filter.get("type")
-    if filter_type == "date_range":
-        date_column = catalog_filter.get("date_column")
-        lookback_days = catalog_filter.get("lookback_days")
-        include_nulls = bool(catalog_filter.get("include_nulls", False))
-
-        if not date_column or not isinstance(date_column, str):
-            raise ValueError(f"[{rule_group}] catalog_filter.date_column is required for date_range.")
-        if date_column not in source_df.columns:
-            raise ValueError(f"[{rule_group}] catalog_filter.date_column '{date_column}' not found in source columns.")
-        if lookback_days is None:
-            raise ValueError(f"[{rule_group}] catalog_filter.lookback_days is required for date_range.")
-        if int(lookback_days) < 0:
-            raise ValueError(f"[{rule_group}] catalog_filter.lookback_days must be >= 0.")
-
-        cutoff_expr = F.date_sub(F.current_date(), int(lookback_days))
-        predicate = F.col(date_column).cast("date") >= cutoff_expr
-        if include_nulls:
-            predicate = predicate | F.col(date_column).isNull()
-        filtered_df = source_df.filter(predicate)
-        desc = (
-            f"date_range: {date_column} >= current_date()-{int(lookback_days)}"
-            + (" (including NULLs)" if include_nulls else "")
-        )
-        return filtered_df, desc
-
-    if filter_type == "custom":
-        where_clause = catalog_filter.get("where_clause")
-        if not where_clause or not isinstance(where_clause, str):
-            raise ValueError(f"[{rule_group}] catalog_filter.where_clause is required for custom filter.")
-        return source_df.filter(F.expr(where_clause)), f"custom: {where_clause}"
-
-    raise ValueError(
-        f"[{rule_group}] Unsupported catalog_filter.type '{filter_type}'. "
-        "Allowed: 'date_range', 'custom'."
-    )
+    if not isinstance(where_clause, str):
+        raise ValueError(f"[{rule_group}] 'where' must be a SQL predicate string.")
+    return source_df.filter(F.expr(where_clause)), where_clause
 
 
 # CELL 6 — Main validation engine
@@ -436,63 +387,60 @@ def run_validation(
     violation_dfs  = []
 
     for rule in rules:
-        rule = _apply_default_pk_column(rule, pk_col)
+        rule_id   = rule.get("rule_id", "?")
+        rule_name = rule.get("name", "")
+        try:
+            exp_name = detect_rule_type(rule)
+        except RuleConfigError as exc:
+            exp_name = "?"
+            print(f"  → [{rule_id}] {rule_name} ... ERROR")
+            all_results.append((
+                RUN_ID, RUN_TIMESTAMP, BATCH_DATE, rule_group, rule_id, rule_name,
+                table_name, exp_name, 0, 0, 0, 0.0, "ERROR",
+                f"[{table_name}/{rule_id}] {exc}", 0.0, "configuration",
+            ))
+            continue
 
-        rule_id   = rule["rule_id"]
-        rule_name = rule["name"]
-        exp_name  = rule["expectation"]
         print(f"  → [{rule_id}] {rule_name} ({exp_name}) ... ", end="")
         _rule_start = time.perf_counter()
 
-        if exp_name not in CUSTOM_EXPECTATION_REGISTRY:
-            result = {
-                "total_rows":  0,
-                "passed_rows": 0,
-                "failed_rows": 0,
-                "success_pct": 0.0,
-                "status":      "ERROR",
-                "details":     f"[{table_name}/{rule_id}] Unknown expectation: '{exp_name}'",
-            }
-            viols_spark = None
-        else:
-            validator    = CUSTOM_EXPECTATION_REGISTRY[exp_name]()
-            _timeout_s   = RUNTIME.RULE_TIMEOUT_SECONDS
-            _max_retries = RUNTIME.MAX_RULE_RETRIES
-            for _attempt in range(_max_retries + 1):
-                try:
-                    result, viols_spark = _run_validator(
-                        validator, source_df, rule, spark, exp_name, ref_cache, _timeout_s
+        _timeout_s   = RUNTIME.RULE_TIMEOUT_SECONDS
+        _max_retries = RUNTIME.MAX_RULE_RETRIES
+        for _attempt in range(_max_retries + 1):
+            try:
+                result, viols_spark = _run_validator(
+                    source_df, rule, spark, pk_col, ref_cache, _timeout_s
+                )
+                break
+            except concurrent.futures.TimeoutError:
+                result = {
+                    "total_rows":  0,
+                    "passed_rows": 0,
+                    "failed_rows": 0,
+                    "success_pct": 0.0,
+                    "status":      "ERROR",
+                    "details":     f"[{table_name}/{rule_id}] Timed out after {_timeout_s}s.",
+                }
+                viols_spark = None
+                break  # do not retry on timeout
+            except Exception as exc:
+                if _attempt < _max_retries and classify_retryable_error(str(exc), RUNTIME):
+                    print(
+                        f"\n    Retrying [{rule_id}] "
+                        f"(attempt {_attempt + 1}/{_max_retries}): {exc}"
                     )
-                    break
-                except concurrent.futures.TimeoutError:
-                    result = {
-                        "total_rows":  0,
-                        "passed_rows": 0,
-                        "failed_rows": 0,
-                        "success_pct": 0.0,
-                        "status":      "ERROR",
-                        "details":     f"[{table_name}/{rule_id}] Timed out after {_timeout_s}s.",
-                    }
-                    viols_spark = None
-                    break  # do not retry on timeout
-                except Exception as exc:
-                    if _attempt < _max_retries and classify_retryable_error(str(exc), RUNTIME):
-                        print(
-                            f"\n    Retrying [{rule_id}] "
-                            f"(attempt {_attempt + 1}/{_max_retries}): {exc}"
-                        )
-                        time.sleep(2 ** (_attempt + 1))
-                        continue
-                    result = {
-                        "total_rows":  0,
-                        "passed_rows": 0,
-                        "failed_rows": 0,
-                        "success_pct": 0.0,
-                        "status":      "ERROR",
-                        "details":     f"[{table_name}/{rule_id}/{exp_name}] Error: {exc}",
-                    }
-                    viols_spark = None
-                    break
+                    time.sleep(2 ** (_attempt + 1))
+                    continue
+                result = {
+                    "total_rows":  0,
+                    "passed_rows": 0,
+                    "failed_rows": 0,
+                    "success_pct": 0.0,
+                    "status":      "ERROR",
+                    "details":     f"[{table_name}/{rule_id}/{exp_name}] Error: {exc}",
+                }
+                viols_spark = None
+                break
 
         _rule_elapsed = time.perf_counter() - _rule_start
         print(f"{result['status']} ({_rule_elapsed:.2f}s)")
@@ -535,9 +483,7 @@ def run_validation(
                 # resolution.py preserves this value for still-active violations;
                 # brand-new violations use the current run timestamp as their origin.
                 F.lit(RUN_TIMESTAMP).alias("first_seen_at"),
-                F.lit(
-                    "group" if exp_name in _GROUP_SCOPED_EXPECTATIONS else "row"
-                ).alias("violation_scope"),
+                F.lit("group" if exp_name in GROUP_SCOPED else "row").alias("violation_scope"),
             )
             violation_dfs.append(viols_spark)
 
@@ -553,15 +499,14 @@ def run_validation(
 
 
 def _run_validator(
-    validator,
     source_df,
     rule: dict,
     spark_session,
-    exp_name: str,
+    pk_col,
     ref_cache,
     timeout_s: float,
 ) -> tuple:
-    """Execute validator.validate() in a bounded-time background thread.
+    """Execute one rule in a bounded-time background thread.
 
     On timeout, raises ``concurrent.futures.TimeoutError`` and releases the
     executor without waiting.  The underlying PySpark/JVM job continues to
@@ -571,11 +516,7 @@ def _run_validator(
     When a timeout does *not* occur the thread is already finished by the time
     we call ``shutdown(wait=True)``, so there is no extra blocking cost.
     """
-    # Registry IDs whose validators accept a shared reference-table cache.
-    if ref_cache is not None and exp_name in ("reference_exists", "reference_active"):
-        call = lambda: validator.validate(source_df, rule, spark_session, ref_cache=ref_cache)
-    else:
-        call = lambda: validator.validate(source_df, rule, spark_session)
+    call = lambda: run_rule(rule, source_df, spark_session, pk_col, ref_cache)
 
     _executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     _future = _executor.submit(call)
@@ -605,7 +546,7 @@ def main() -> tuple[int, int]:
         rule_group = catalog["rule_group"]
         table_name = catalog["table"]
         database = catalog.get("database", "")
-        pk_col = catalog.get("pk_column", "id")
+        pk_col = catalog.get("pk_column")
         joins_cfg = catalog.get("joins", [])
 
         full_table = f"{database}.{table_name}" if database else table_name
@@ -653,8 +594,8 @@ def main() -> tuple[int, int]:
                     f"Expected 'on' or both 'left_on'/'right_on': {join_cfg}"
                 )
 
-        effective_filter = _resolve_catalog_filter(catalog, RUNTIME)
-        source_df, filter_desc = _apply_catalog_filter(source_df, effective_filter, rule_group)
+        effective_where = _resolve_catalog_where(catalog, RUNTIME)
+        source_df, filter_desc = _apply_catalog_where(source_df, effective_where, rule_group)
         if filter_desc:
             print(f"  Applied catalog filter: {filter_desc}")
 
