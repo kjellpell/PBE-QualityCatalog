@@ -18,7 +18,6 @@ from pathlib import Path
 
 import yaml
 from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
 
 
 def _resolve_repo_root() -> Path:
@@ -38,7 +37,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 try:
-    from engine.expectations import PREDICATE_KEYS, RULE_TYPES, detect_rule_type
+    from engine.expectations import (
+        PREDICATE_KEYS,
+        RESERVED_RULE_KEYS,
+        RULE_TYPES,
+        detect_rule_type,
+    )
     from engine.runtime import (
         load_config_module,
         require_config_keys,
@@ -63,14 +67,11 @@ CONFIG_KEYS = [
 ]
 RUNTIME_KEYS = [
     "DRY_RUN",
-    "FAIL_ON_EMPTY_RULES",
     "FAIL_ON_EMPTY_SOURCE",
     "RETRYABLE_ERROR_MARKERS",
     "MAX_RULE_RETRIES",
     "RULE_TIMEOUT_SECONDS",
 ]
-
-_RESERVED_RULE_KEYS = {"rule_id", "name", "description", "when", "pk_column"}
 
 
 def _brief(exc: Exception) -> str:
@@ -157,7 +158,7 @@ def check_rule(rule: dict, probe, source_columns: set[str], where: str) -> list[
                 if column not in source_columns:
                     errors.append(f"{prefix} unique column '{column}' not found in source table.")
 
-    unknown = sorted(set(rule) - _RESERVED_RULE_KEYS - set(RULE_TYPES))
+    unknown = sorted(set(rule) - RESERVED_RULE_KEYS - set(RULE_TYPES))
     if unknown:
         errors.append(f"{prefix} Unrecognised key(s): {unknown}.")
 
@@ -199,16 +200,79 @@ def check_catalog(catalog: dict, probe, source_columns: set[str], where: str) ->
     return errors
 
 
-def _source_columns(spark, catalog: dict, full_table: str) -> set[str]:
-    """Source columns, including any brought in by catalog-level joins."""
-    columns = set(spark.read.table(full_table).columns)
-    for join in catalog.get("joins") or []:
+def build_probe(spark, catalog: dict, full_table: str):
+    """
+    A zero-row frame with the schema rules will actually see.
+
+    Replays the catalog's joins exactly as the runner does
+    (engine/validation_runner.py), on `.limit(0)` frames so it costs nothing.
+    Carrying the joined columns with their *real* types matters: a probe that
+    synthesises them as strings would let a type-sensitive predicate such as
+    `joined_date >= '2024-01-01'` pass preflight and fail at run time.
+
+    Replaying the joins also validates the join config itself, which nothing
+    else checks. The runner warns and skips a bad join; preflight is the gate,
+    so the same problem is an error here.
+
+    Returns (probe_df, errors).
+    """
+    errors: list[str] = []
+    probe = spark.read.table(full_table).limit(0)
+
+    for index, join in enumerate(catalog.get("joins") or []):
+        label = f"joins[{index}]"
         if not isinstance(join, dict):
+            errors.append(f"{label} must be a mapping.")
             continue
-        for column in join.get("select") or []:
-            if isinstance(column, str):
-                columns.add(column)
-    return columns
+
+        table = join.get("table")
+        if not table:
+            errors.append(f"{label} is missing 'table'.")
+            continue
+        if not spark.catalog.tableExists(table):
+            errors.append(f"{label} table '{table}' not found.")
+            continue
+
+        joined = spark.read.table(table).limit(0)
+        on, left_on, right_on = join.get("on"), join.get("left_on"), join.get("right_on")
+
+        selected = join.get("select")
+        if selected:
+            columns = list(selected)
+            if right_on and right_on not in columns:
+                columns.append(right_on)          # keep the key, as the runner does
+            unknown = [c for c in columns if c not in joined.columns]
+            if unknown:
+                errors.append(f"{label} select column(s) not in {table}: {sorted(unknown)}.")
+                continue
+            joined = joined.select(*columns)
+
+        how = join.get("how", "left")
+        try:
+            if on not in (None, ""):
+                absent = (
+                    "source" if on not in probe.columns
+                    else table if on not in joined.columns
+                    else None
+                )
+                if absent:
+                    errors.append(f"{label} join column '{on}' not found in {absent}.")
+                    continue
+                probe = probe.join(joined, on=on, how=how)
+            elif left_on and right_on:
+                if left_on not in probe.columns:
+                    errors.append(f"{label} left_on '{left_on}' not found in source.")
+                    continue
+                if right_on not in joined.columns:
+                    errors.append(f"{label} right_on '{right_on}' not found in {table}.")
+                    continue
+                probe = probe.join(joined, probe[left_on] == joined[right_on], how=how)
+            else:
+                errors.append(f"{label} needs 'on', or both 'left_on' and 'right_on'.")
+        except Exception as exc:
+            errors.append(f"{label} could not be applied: {_brief(exc)}")
+
+    return probe, errors
 
 
 def main() -> None:
@@ -250,19 +314,14 @@ def main() -> None:
             continue
 
         try:
-            source_df = spark.read.table(full_table)
-            columns = _source_columns(spark, catalog, full_table)
-            # Probe carries the joined-in columns too, so predicates that
-            # reference them resolve exactly as they will at run time.
-            probe = source_df
-            for column in sorted(columns - set(source_df.columns)):
-                probe = probe.withColumn(column, F.lit(None).cast("string"))
+            probe, join_errors = build_probe(spark, catalog, full_table)
         except Exception as exc:
             errors.append(f"[{yaml_path.name}] Could not read {full_table}: {_brief(exc)}")
             continue
 
+        errors.extend(f"[{yaml_path.name}] {e}" for e in join_errors)
         rule_count += len(catalog.get("rules") or [])
-        errors.extend(check_catalog(catalog, probe, columns, yaml_path.name))
+        errors.extend(check_catalog(catalog, probe, set(probe.columns), yaml_path.name))
 
     if missing_sources:
         raise RuntimeError(f"Missing source tables: {sorted(set(missing_sources))}")

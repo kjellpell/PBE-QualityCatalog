@@ -48,7 +48,7 @@ from pyspark.sql.types import StringType, StructField, StructType
 # 1. Shared helpers
 # =============================================================================
 
-VIOLATION_COLUMNS = (
+_VIOLATION_COLUMNS = (
     "primary_key_value",
     "violated_column",
     "actual_value",
@@ -57,7 +57,7 @@ VIOLATION_COLUMNS = (
 )
 
 _VIOLATION_SCHEMA = StructType([
-    StructField(name, StringType(), True) for name in VIOLATION_COLUMNS
+    StructField(name, StringType(), True) for name in _VIOLATION_COLUMNS
 ])
 
 
@@ -192,7 +192,6 @@ class Context:
     """Everything a builder needs. Assembled by the driver."""
     df: DataFrame           # already narrowed by catalog `where:` and rule `when:`
     cfg: object             # the value of the rule-type key
-    rule: dict
     spark: object
     pk_column: str | None
     ref_cache: dict = field(default_factory=dict)
@@ -440,7 +439,11 @@ def _build_sequence_ordered(ctx: Context) -> Evaluation:
         rank = F.when(F.col(event_column) == value, F.lit(position)).otherwise(rank)
 
     relevant = (
-        df.filter(F.col(event_column).isin(steps) & F.col(order_column).isNotNull())
+        df.filter(
+            F.col(group_column).isNotNull()
+            & F.col(event_column).isin(steps)
+            & F.col(order_column).isNotNull()
+        )
         .withColumn("_rank", rank)
     )
     # A group needs at least two ranked events before ordering means anything.
@@ -572,8 +575,9 @@ def _build_gate_complete(ctx: Context) -> Evaluation:
     order_column = cfg.get("order_column")
     _require_columns(ctx.df, event_column, group_column, order_column)
 
-    evaluated = ctx.df.select(group_column).distinct()
-    reached = ctx.df.filter(
+    grouped = ctx.df.filter(F.col(group_column).isNotNull())
+    evaluated = grouped.select(group_column).distinct()
+    reached = grouped.filter(
         _gate_predicate({
             "event_column": event_column, "value": value, "order_column": order_column,
         })
@@ -707,8 +711,9 @@ PREDICATE_KEYS = ("when", "check")
 # Rule types whose primary_key_value is a group key rather than a row key.
 GROUP_SCOPED = frozenset(t.name for t in RULE_TYPES.values() if t.scope == "group")
 
-# Reserved rule-level keys that never name a rule type.
-_RESERVED_KEYS = frozenset({"rule_id", "name", "description", "when", "pk_column"})
+# Reserved rule-level keys that never name a rule type. Preflight imports this
+# rather than restating it, so the two cannot disagree about what is legal.
+RESERVED_RULE_KEYS = frozenset({"rule_id", "name", "description", "when", "pk_column"})
 
 
 def detect_rule_type(rule: dict) -> str:
@@ -717,7 +722,7 @@ def detect_rule_type(rule: dict) -> str:
     if len(present) == 1:
         return present[0]
     if not present:
-        unknown = sorted(set(rule) - _RESERVED_KEYS)
+        unknown = sorted(set(rule) - RESERVED_RULE_KEYS)
         raise RuleConfigError(
             "No rule type found. Expected exactly one of "
             f"{sorted(RULE_TYPES)}; got keys {unknown}."
@@ -766,7 +771,7 @@ def run_rule(rule: dict, df: DataFrame, spark, pk_column=None, ref_cache=None) -
 
         evaluation = rule_type.build(
             Context(
-                df=scoped, cfg=rule[type_name], rule=rule, spark=spark,
+                df=scoped, cfg=rule[type_name], spark=spark,
                 pk_column=resolved_pk, ref_cache=ref_cache if ref_cache is not None else {},
             )
         )

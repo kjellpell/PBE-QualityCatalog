@@ -252,6 +252,26 @@ violation log still lists each failing pair. `passed_rows` is always
 For `check:`, `total_rows` counts rows where the predicate could be evaluated —
 so rows skipped for NULL operands are outside both numerator and denominator.
 
+A row whose group key is NULL is not a group: it is excluded from the denominator
+and never reported, since a violation keyed on NULL could not be traced back to
+anything.
+
+### `when:` on a group-scoped rule
+
+`when:` filters **rows, before they are grouped**. On a row-scoped rule that is all it
+can do. On a group-scoped rule it also changes *which events each group still
+contains*, which is rarely what you want:
+
+```yaml
+# Wrong: hides 'Mottatt revidert planforslag' from every group, so each one now
+# looks like it is missing the second half of the pair.
+when: milestone_title != 'Mottatt revidert planforslag'
+pairs_present: ...
+```
+
+To restrict *which groups* are evaluated rather than which rows they contain, use
+`completion_gate:` — it keeps whole groups and drops whole groups.
+
 ## Violation output
 
 One row in `dq_violations` per failing unit.

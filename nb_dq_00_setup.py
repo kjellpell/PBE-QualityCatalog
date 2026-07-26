@@ -37,11 +37,19 @@ REPO_ROOT = _resolve_repo_root()
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from engine.resolution import RESULT_SCHEMA, VIOLATION_SCHEMA   # noqa: E402
-from engine.runtime import (                                    # noqa: E402
-    _EXECUTION_METRIC_SCHEMA,
-    load_config_module,
-)
+try:
+    from engine.resolution import RESULT_SCHEMA, VIOLATION_SCHEMA   # noqa: E402
+    from engine.runtime import (                                    # noqa: E402
+        _EXECUTION_METRIC_SCHEMA,
+        load_config_module,
+    )
+except ModuleNotFoundError as exc:  # pragma: no cover - deployment problem
+    raise ModuleNotFoundError(
+        f"Could not import the engine package from {REPO_ROOT}. This script "
+        "generates its table DDL from the engine's own schemas, so the engine/ "
+        "directory must be deployed next to this notebook. Nothing has been "
+        f"created. Original error: {exc}"
+    ) from exc
 
 spark = SparkSession.builder.getOrCreate()
 spark.sql("SET spark.sql.ansi.enabled = false")
@@ -77,20 +85,43 @@ def _column_ddl(struct) -> str:
 
 
 def _ensure_table(table: str, struct) -> None:
-    """Create the table, or add any columns a previous deployment predates."""
+    """Create the table if absent; verify it matches the schema if it already exists.
+
+    There is deliberately no migration path. A table left over from an earlier
+    deployment is reported so it can be dropped, rather than quietly patched into
+    something that only resembles the current schema.
+    """
     spark.sql(
         f"CREATE TABLE IF NOT EXISTS {table} (\n{_column_ddl(struct)}\n) USING DELTA"
     )
-    existing = {f.name.lower() for f in spark.table(table).schema.fields}
-    for field in struct.fields:
-        if field.name.lower() in existing:
-            continue
-        column = f"{field.name} {field.dataType.simpleString().upper()}"
-        try:
-            spark.sql(f"ALTER TABLE {table} ADD COLUMNS ({column})")
-            print(f"    + added column {column}")
-        except Exception as exc:  # pragma: no cover - deployment-specific
-            print(f"    Warning: could not add column '{column}': {exc}")
+
+    expected = [(f.name.lower(), f.dataType.simpleString()) for f in struct.fields]
+    actual = [(f.name.lower(), f.dataType.simpleString()) for f in spark.table(table).schema.fields]
+    if actual == expected:
+        return
+
+    expected_types, actual_types = dict(expected), dict(actual)
+    missing = [n for n in expected_types if n not in actual_types]
+    extra = [n for n in actual_types if n not in expected_types]
+    changed = [
+        f"{n} (expected {t}, found {actual_types[n]})"
+        for n, t in expected
+        if n in actual_types and actual_types[n] != t
+    ]
+    detail = "\n".join(
+        f"  {label}: {', '.join(items)}"
+        for label, items in (
+            ("missing columns", missing),
+            ("unexpected columns", extra),
+            ("wrong type", changed),
+        )
+        if items
+    ) or "  column order differs from the engine schema"
+
+    raise RuntimeError(
+        f"Table {table} already exists with a different schema.\n{detail}\n"
+        "Drop the table and re-run this script — no in-place migration is applied."
+    )
 
 
 # CELL 3 — create the production tables and their dry-run twins

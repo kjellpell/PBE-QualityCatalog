@@ -39,8 +39,9 @@ Core capabilities:
   each execution logs status, timing, retryability, and targets.
 - Safer rollout:
   dry-run writes to temporary tables.
-- Backward-safe schema setup:
-  setup is rerunnable and additive.
+- Predictable schema setup:
+  setup is rerunnable, generates its DDL from the engine schemas, and reports a
+  pre-existing table whose shape has drifted instead of migrating it in place.
 
 ---
 
@@ -96,8 +97,6 @@ The engine will raise a clear error if either file is missing.
 
 - DRY_RUN:
   write to temporary targets with _tmp suffix.
-- FAIL_ON_EMPTY_RULES:
-  fail if no rules are found in the YAML catalogs.
 - FAIL_ON_EMPTY_SOURCE:
   fail if a configured source table is empty.
 - MAX_RETRIES and RETRYABLE_ERROR_MARKERS:
@@ -167,8 +166,8 @@ Persistence uses the DataFrame API rather than SQL `MERGE` — Fabric cannot
 resolve schema-qualified names inside a `MERGE` statement.
 
 If resolution tracking fails, the run fails with "Violations not written" — no
-partial data is committed. Rerun nb_dq_00_setup.py to ensure required tables
-and columns exist, then re-run validation.
+partial data is committed. Rerun nb_dq_00_setup.py to confirm the tables exist
+with the expected schema, then re-run validation.
 
 ---
 
