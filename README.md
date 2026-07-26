@@ -4,7 +4,7 @@ Data quality validation engine for the PBE case management platform,
 built on Apache Spark and Delta Lake, designed to run as Fabric Lakehouse notebooks.
 
 This README is for IT operations and maintainers.
-For business rule authoring, see RULES_GUIDE.md.
+For rule authoring, see RULES_GUIDE.md.
 For architecture and design decisions, see ARCHITECTURE.md.
 
 ---
@@ -19,10 +19,13 @@ Core capabilities:
 - Rules loaded directly from YAML catalogs in `rules/` (the `rule_catalog` Delta
   table is a legacy migration artifact — see ARCHITECTURE.md)
 - Run metrics for observability and support
-- Current-state issue tracking (Active and Resolved)
-- Clear IT/business ownership split
-- Active reference validation (checks existence AND active status in a reference table)
-- Time-in-state validation (flags records open beyond a configurable day threshold)
+- Current-state issue tracking (Active and Resolved), preserving when an issue
+  was first seen so violation age is answerable
+- Rules authored as Spark SQL predicates, validated against the real schema
+  before a run
+- Reference lookups, including "must exist *and* be active"
+- Group-level checks (required event pairs, ordering, completion gates) that a
+  single-row predicate cannot express
 
 ---
 
@@ -49,15 +52,16 @@ PBE-QualityCatalog/
 │   ├── QualityCatalogConfig.py     (table names, paths)
 │   └── QualityCatalogRuntime.py    (behavior flags, retry/timeout)
 ├── engine/
-│   ├── expectations.py             (expectation classes + registry)
-│   ├── resolution.py               (Active/Resolved violation tracking)
+│   ├── expectations.py             (rule types + the driver that runs a rule)
+│   ├── resolution.py               (output schemas, Active/Resolved tracking)
 │   ├── runtime.py                  (config loading, target resolution, metrics)
 │   └── validation_runner.py        (main orchestration)
 ├── rules/                          (YAML rule catalogs — loaded directly by the engine)
 │   ├── faktura.yaml
 │   ├── faser.yaml
 │   └── milepeler.yaml
-├── nb_dq_00_setup.py               (Delta table DDL)
+├── tests/                          (pytest suite; see requirements-dev.txt)
+├── nb_dq_00_setup.py               (Delta table DDL, generated from the schemas)
 ├── nb_dq_01_preflight.py           (pre-run checks)
 ├── nb_dq_03_run_validation.py      (Fabric wrapper for the engine)
 ├── ARCHITECTURE.md
@@ -108,10 +112,10 @@ The engine will raise a clear error if either file is missing.
 3. Load rules directly from the YAML catalogs in `rules/`.
 4. For each rule group:
   - Read source table from Spark metastore.
-  - Apply optional pre-joins.
-  - Dispatch each rule to its validator in CUSTOM_EXPECTATION_REGISTRY.
+  - Apply optional pre-joins and the catalog `where:` filter.
+  - Run each rule through the driver in engine/expectations.py.
 5. Append summary rows to dq_run_results.
-6. Apply MERGE-based issue lifecycle to dq_violations.
+6. Apply the issue lifecycle to dq_violations.
 7. Write execution evidence to dq_execution_metrics.
 
 ---
@@ -152,11 +156,15 @@ Primary uses:
 
 ## Resolution Tracking
 
-Resolution tracking is MERGE-based:
+Each run diffs the current violations against the stored ones:
 
 1. Previously Active issues missing from the current run are marked Resolved.
-2. Still-active issues are refreshed with latest run metadata.
+2. Still-active issues are refreshed with latest run metadata, keeping their
+   original `first_seen_at`.
 3. New issues are inserted as Active.
+
+Persistence uses the DataFrame API rather than SQL `MERGE` — Fabric cannot
+resolve schema-qualified names inside a `MERGE` statement.
 
 If resolution tracking fails, the run fails with "Violations not written" — no
 partial data is committed. Rerun nb_dq_00_setup.py to ensure required tables
@@ -197,26 +205,48 @@ For a one-page checklist, see OPERATIONS_QUICK_REF.md.
   run preflight and confirm metastore names.
 - Config loading failures:
   verify Lakehouse config path — ensure both config files exist at /lakehouse/default/Files/Configs/.
-- Violation MERGE failures:
+- Violation write failures:
   rerun nb_dq_00_setup.py and verify Delta support.
-- Unexpected expectation errors:
-  validate expectation names, parameters, and source columns in the YAML rule files.
-- `validate_active_reference` errors:
-  confirm reference table name, column names, and that `active_value` matches the exact value used in the reference table (including capitalisation).
-- `validate_time_in_state` errors:
-  confirm `start_column` is a date or timestamp column, and that `open_when_column` exists in the source table.
+- Rule configuration errors:
+  run preflight — it resolves every `where:`, `when:` and `check:` predicate
+  against the real schema and reports the offending rule.
+- `exists_in` errors:
+  confirm the reference table and column names, and that `active_value` matches
+  the value in the reference table (string comparison is case-insensitive).
 
 ---
 
 ## Testing
 
-The repository currently has no automated test suite. Recommended validation
-before promoting changes:
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+python -m pytest tests/ -v
+```
 
-1. `python -m py_compile engine/*.py nb_dq_*.py` — catch syntax errors.
-2. Run `nb_dq_01_preflight.py` — catches missing tables/columns, parameter
-  contract errors.
-3. Run `nb_dq_03_run_validation.py` with `DRY_RUN = True` — full run against
+The suite runs locally against PySpark and Delta — no Fabric needed. Delta is
+required rather than plain parquet, because the resolution path does a
+read-then-overwrite that parquet rejects.
+
+| Test module | Covers |
+|---|---|
+| `test_expectations.py` | Each rule type, predicate NULL semantics, scope counting |
+| `test_preflight.py` | Rule-contract and predicate validation, incl. typo detection |
+| `test_resolution.py` | Violation lifecycle: new → Active → Resolved, `first_seen_at` |
+| `test_equivalence.py` | Every catalog end to end, diffed against a committed baseline |
+| `test_docs.py` | The rule-type reference in RULES_GUIDE.md matches the engine |
+
+`test_equivalence.py` is the regression gate: it fails on any unintended change
+to `dq_run_results` or `dq_violations`. When output changes are intended,
+regenerate with `DQ_UPDATE_BASELINE=1 python -m pytest tests/test_equivalence.py`
+and review the diff.
+
+Before promoting changes:
+
+1. `python -m pytest tests/ -v`
+2. `python -m py_compile engine/*.py nb_dq_*.py`
+3. Run `nb_dq_01_preflight.py` — catches missing tables and unresolvable predicates.
+4. Run `nb_dq_03_run_validation.py` with `DRY_RUN = True` — full run against
    `_tmp` output tables without touching production data.
 
 ---
@@ -226,5 +256,5 @@ before promoting changes:
 - ARCHITECTURE.md: architecture decisions and file map
 - DEPLOY.md: deployment and environment guidance
 - DAX_POWERBI.md: Power BI measures reference
-- RULES_GUIDE.md: business rule authoring guide
+- RULES_GUIDE.md: rule authoring reference
 - OPERATIONS_QUICK_REF.md: one-page operations checklist

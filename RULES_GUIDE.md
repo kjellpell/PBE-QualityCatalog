@@ -1,751 +1,313 @@
-# Rules Guide For Business Teams
+# Rules Guide — PBE Quality Catalog
 
-This guide is the business-first reference for defining data quality rules with the canonical naming model.
+Technical reference for authoring rule catalogs. Written for engineers who know
+SQL; if you can write a `WHERE` clause you can write a rule.
 
-## Start Here
+Use [README.md](README.md) for runtime and deployment details, and
+[ARCHITECTURE.md](ARCHITECTURE.md) for engine internals.
 
-Use this when you want to express a rule in plain business language and map it to a valid rule contract.
+## A rule is a predicate
 
-Use [README.md](README.md) for runtime and deployment details.
-Use [ARCHITECTURE.md](ARCHITECTURE.md) for engine internals.
+```yaml
+- rule_id: FAS-008
+  name: Tidsbruk kan ikke være negativt tall
+  check: tidsbruk >= 0
+```
 
-## Fabric Notebook Workflow
+`check:` holds a Spark SQL boolean predicate. Every row must satisfy it.
 
-All operations are expected to run in Microsoft Fabric notebooks.
+Add `when:` to scope a rule to some of the rows:
 
-1. Update rule definitions in the YAML catalogs in `rules/` and deploy them to the Lakehouse (`/lakehouse/default/Files/rules/`). Rules are loaded directly from YAML at runtime — there is no Delta-based rule store.
+```yaml
+- rule_id: FAS-006
+  name: Åpen fase mangler saksbehandler
+  when: seneste_stoppmilepael_dato IS NULL
+  check: saksansvarlig_kode IS NOT NULL
+```
+
+**One rule asserts one thing.** `check:` takes a single predicate, not a list.
+A requirement covering two columns is two rules, so a failing `rule_id` names
+exactly one problem.
+
+### NULL handling
+
+`check:` behaves like a SQL `CHECK` constraint: a row violates it only when the
+predicate is **FALSE**. If the predicate evaluates to NULL because an operand is
+NULL, the row is *not evaluated* — it counts as neither passed nor failed.
+
+```yaml
+check: seneste_stoppmilepael_dato >= tidligste_startmilepael_dato
+```
+
+Rows where either date is NULL are skipped. To require presence, say so:
+
+```yaml
+check: tidligste_startmilepael_dato IS NOT NULL
+```
+
+`when:` works the same way: a row is in scope only where the condition is
+explicitly true.
+
+## Catalog header
+
+One file per rule group. Everything above `rules:` is declared once and shared
+by every rule in the file.
+
+```yaml
+rule_group: Faser                 # grouping dimension in Power BI
+table: faser
+database: saksbehandling
+pk_column: stage_recno            # identifies a row in violations
+where: fagsystem = 'PB360'        # row filter for the whole file
+
+joins:
+- table: saksbehandling.saker
+  left_on: to_case_recno
+  right_on: case_recno
+  how: left                       # default: left
+  select:
+  - saksnummer
+  - saksansvarlig_kode
+
+rules:
+- ...
+```
+
+This reads as the SQL it compiles to:
+`FROM saksbehandling.faser WHERE fagsystem = 'PB360' LEFT JOIN saksbehandling.saker …`
+
+| Key | Required | Meaning |
+|---|---|---|
+| `rule_group` | yes | Name of the group; stored on every result and violation row |
+| `table` | yes | Source table |
+| `database` | no | Schema for `table` |
+| `pk_column` | yes | Column identifying a row, used as `primary_key_value` |
+| `where` | no | SQL predicate narrowing the source for every rule in the file |
+| `joins` | no | Pre-joins; `select` lists the columns to bring across |
+| `rules` | yes | The rules |
+
+`where:` composes with each rule's `when:` — both must hold for a row to be
+evaluated.
+
+### The three predicate words
+
+| Word | Where | Means |
+|---|---|---|
+| `where:` | catalog header | which rows this whole file looks at |
+| `when:` | one rule | which rows that rule applies to |
+| `check:` | one rule | what must be true of them |
+
+## Rule types
+
+Most rules are `check:`. The rest cover things a row predicate cannot express —
+uniqueness, cross-table lookups, and checks over groups of rows.
+
+<!-- BEGIN RULE TYPES (generated — see tests/test_docs.py) -->
+
+| Rule type | Scope | Required keys |
+|---|---|---|
+| `check` | row | – |
+| `unique` | row | – |
+| `exists_in` | row | `column`, `table`, `reference_column` |
+| `sql` | row | – |
+| `row_count` | table | `threshold` |
+| `sequence_ordered` | group | `event_column`, `group_column`, `order_column`, `sequence` |
+| `pairs_present` | group | `event_column`, `group_column`, `required_pairs` |
+| `gate_complete` | group | `event_column`, `group_column`, `value` |
+| `group_aggregate_matches` | group | `group_column`, `aggregate_column`, `reference_column` |
+
+<!-- END RULE TYPES -->
+
+`scope` fixes the unit everything is counted in — see [Counting](#counting).
+
+### unique
+
+```yaml
+- rule_id: FAS-003
+  name: stage_recno må være unik
+  unique:
+  - stage_recno
+```
+
+### exists_in
+
+```yaml
+- rule_id: X-001
+  name: Saksbehandler må finnes i kodeverket
+  exists_in:
+    column: saksansvarlig_kode
+    table: kodeverk.saksbehandlere
+    reference_column: kode
+    active_column: status        # optional; both keys or neither
+    active_value: Aktiv
+```
+
+Only non-NULL values are checked. With `active_column`/`active_value` the
+reference set is narrowed to currently-active rows. Reference tables are read
+once per distinct `(table, column, active filter)` and cached across rules.
+
+### pairs_present
+
+```yaml
+- rule_id: MIL-004
+  name: Begge milepæler i et par må være tilstede
+  pairs_present:
+    event_column: milestone_title
+    group_column: to_stage_recno
+    required_pairs:
+    - [Merknader oversendt, Mottatt revidert planforslag]
+    - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
+    mode: both                   # or stop_requires_start
+    completion_gate:             # only evaluate groups that reached this event
+      event_column: milestone_title
+      value: Sendt til politisk behandling
+      order_column: milestonedate
+```
+
+A pair may name several acceptable stops: `[start, [stop_a, stop_b]]` is
+satisfied when either stop is present. `mode: both` flags a group missing
+either member; `stop_requires_start` flags only a stop without its start.
+
+`completion_gate` restricts evaluation to groups that have reached a given
+event — used to avoid flagging work that is legitimately still in progress.
+Also available on `sequence_ordered`.
+
+### group_aggregate_matches
+
+```yaml
+- rule_id: FAK-003
+  name: Fakturalinjer må summere til totalen
+  group_aggregate_matches:
+    group_column: fakturanr
+    aggregate_column: linje_belop
+    reference_column: fakturasum
+    aggregate: sum               # sum | count | avg | min | max
+    tolerance: 0.01
+```
+
+### sequence_ordered / gate_complete
+
+```yaml
+- rule_id: X-002
+  name: Milepæler må komme i rekkefølge
+  sequence_ordered:
+    event_column: milestone_title
+    group_column: to_stage_recno
+    order_column: milestonedate
+    sequence: [Mottatt, Under behandling, Vedtak]
+
+- rule_id: X-003
+  name: Alle faser må ha godkjenning
+  gate_complete:
+    event_column: milestone_title
+    group_column: to_stage_recno
+    value: Godkjent
+    order_column: milestonedate  # optional; also require a non-NULL date
+```
+
+### row_count / sql
+
+```yaml
+- rule_id: X-004
+  name: Tabellen må ha rader
+  row_count:
+    operator: '>='               # default '>='
+    threshold: 1000
+
+- rule_id: X-005
+  name: Egendefinert sjekk
+  sql:
+    query: SELECT id FROM saksbehandling.faser WHERE ...
+    pk_column: id                # optional; otherwise a row index is used
+```
+
+Prefer `check:` over `sql:`. A predicate is validated against the schema before
+the run and cannot modify anything; `sql:` runs an arbitrary statement.
+
+## Optional rule keys
+
+| Key | Meaning |
+|---|---|
+| `rule_id` | Required. Unique within the catalog; stored on every result and violation |
+| `name` | Required. Human-readable; stored as `rule_name` |
+| `description` | Optional. For whoever reads the YAML — not stored anywhere |
+| `when` | Optional. Narrows which rows the rule applies to |
+| `pk_column` | Optional. Overrides the catalog `pk_column` for this rule |
+
+## Counting
+
+Each rule type declares a scope, and that fixes the unit for `total_rows`,
+`passed_rows` and `failed_rows`:
+
+| Scope | One unit is | Used by |
+|---|---|---|
+| `row` | one row | `check`, `unique`, `exists_in`, `sql` |
+| `group` | one group | `pairs_present`, `sequence_ordered`, `gate_complete`, `group_aggregate_matches` |
+| `table` | the whole table | `row_count` |
+
+For a group-scoped rule, a group failing several pairs counts **once**, while the
+violation log still lists each failing pair. `passed_rows` is always
+`total_rows - failed_rows` in the same unit.
+
+For `check:`, `total_rows` counts rows where the predicate could be evaluated —
+so rows skipped for NULL operands are outside both numerator and denominator.
+
+## Violation output
+
+One row in `dq_violations` per failing unit.
+
+| Column | Contents |
+|---|---|
+| `primary_key_value` | Row key, or group key for group-scoped rules |
+| `violation_scope` | `row` or `group` — how to read `primary_key_value` |
+| `violated_column` | The column at fault. Always a real column name, or NULL for `sql` |
+| `actual_value` | The offending value |
+| `expected_condition` | The full predicate or condition that was required |
+| `violation_detail` | Human-readable explanation |
+| `issue_status` | `Active` while the violation persists, then `Resolved` |
+| `first_seen_at` | When first detected; preserved across runs, so age is answerable |
+| `resolution_timestamp` | When it stopped appearing |
+
+For a `check:` rule, `violated_column` is the first column referenced by the
+predicate — the natural subject (`a` in `a >= b`). `expected_condition` always
+carries the whole predicate, so nothing is lost.
+
+Violations are keyed on `(rule_id, primary_key_value, violated_column,
+expected_condition)`. A violation that disappears from a run is marked
+`Resolved` rather than deleted.
+
+## Preflight
+
+`nb_dq_01_preflight.py` checks catalogs before anything runs:
+
+- every source table exists;
+- every `where:`, `when:` and `check:` predicate resolves against the real
+  schema — a typo'd column or bad syntax fails here, not at 03:00;
+- each rule declares exactly one rule type, with its required keys;
+- column-valued keys name real source columns (including joined-in ones);
+- `rule_id` values are unique and `pk_column` exists.
+
+Run it after every catalog change.
+
+## Fabric notebook workflow
+
+1. Update the YAML catalogs in `rules/` and deploy them to the Lakehouse
+   (`/lakehouse/default/Files/rules/`). Rules are loaded from YAML at runtime;
+   there is no Delta-based rule store.
 2. Run [nb_dq_01_preflight.py](nb_dq_01_preflight.py).
 3. Run one validation cycle with `DRY_RUN = True`.
-4. Review outputs in temporary tables.
-5. Switch to `DRY_RUN = False` after validation is confirmed.
-
-Dry-run outputs:
-- `dq_run_results_tmp`
-- `dq_violations_tmp`
-- `default.dq_execution_metrics_tmp`
-
-## Rule Authoring Flow
-
-Write the rule as an intent sentence first.
-
-Examples:
-- "If the case is open, assigned handler must be present."
-- "End date must be on or after start date."
-- "Invoice type must be one of approved values."
-
-Then choose rule type:
-
-| Intent pattern | Canonical expectation |
-|---|---|
-| Field is always required | `not_null` |
-| If condition is true, field(s) required | `not_null_when` |
-| Compare two fields, or a field against a scalar | `comparison` |
-| Field must be in allowed list | `value_in_list` |
-| If condition is true, another field must equal a value | `value_when` |
-| Parent/reference must exist | `reference_exists` |
-| Reference must exist and be active | `reference_active` |
-| Column combination must be unique | `combination_unique` |
-| Row count must meet threshold | `row_count` |
-| Time open/state duration bounded | `state_duration_within_limit` |
-| Group events must be ordered | `sequence_ordered` |
-| Group must contain a required completion event | `gate_complete` |
-| Group event pairs must be present | `pairs_present` |
-| Group aggregate must match a reference value | `group_aggregate_matches` |
-| Advanced custom logic | `sql_violations` |
-
-## Operator Taxonomy
-
-Use the correct operator family for the rule type.
-
-| Operator family | Allowed values | Typical expectations |
-|---|---|---|
-| Trigger operators | `IS NULL`, `IS NOT NULL`, `==` | `not_null_when` |
-| Comparison operators | `>`, `<`, `>=`, `<=`, `==`, `!=` | `comparison` (column or scalar), `value_when`, `row_count` |
-
-`value` is required only when the selected operator needs a value.
-
-## Canonical Parameter Contract
-
-### Common keys
-
-All parameters live inside `parameters:`. Two conventions for specifying columns:
-
-- `columns:` — block list of columns to check (`not_null`, `not_null_when`, `combination_unique`)
-- `column:` — single column in `parameters` (`value_in_list`, `reference_exists`, `reference_active`)
-- `pk_column` — primary key for violation identity (default: catalog `pk_column`)
-
-### Canonical parameter keys
-
-| Parameter key | Meaning |
-|---|---|
-| `columns` | Block list of columns to check |
-| `column` | Single column to act on |
-| `left_column` | Left side for field comparison |
-| `right_column` | Right-hand column for field comparison |
-| `right_value` | Scalar numeric value for column-vs-scalar comparison |
-| `when_column` | Column evaluated by trigger condition |
-| `allowed_values` | Approved value list |
-| `event_column` | Event or milestone name column |
-| `order_column` | Sequencing or ordering column |
-| `open_state_column` | Column used to identify open state |
-| `open_state_value` | Value that means open |
-| `reference_table` | Reference table name |
-| `reference_column` | Join/value column in reference table |
-| `reference_active_column` | Active flag column in reference table |
-| `reference_active_value` | Active flag value |
-| `group_column` | Group identity for grouped checks |
-| `max_days` | Max allowed days in state |
-
-## Expectation Reference
-
-Parameters and a ready-to-copy example for every expectation type.
-
----
-
-### `not_null`
-
-Every row must have a non-null value in each listed column. One violation row is emitted
-per (primary key, failing column). The rule is PASSED only if all listed columns are
-non-null in all rows. Columns that need different severities must use separate rules.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `columns` | yes | Block list of column names to check |
-| `pk_column` | no | Default: catalog `pk_column` |
-
-```yaml
-# Single column:
-- rule_id: PROC-011
-  name: StartDate must be present
-  description: Every process requires a start date for reporting and SLA tracking.
-  expectation: not_null
-  parameters:
-    columns:
-      - StartDate
-
-
-# Multiple columns:
-- rule_id: PROC-012
-  name: Required identifiers cannot be null
-  description: Every row must have both a case number and a process ID.
-  expectation: not_null
-  parameters:
-    columns:
-      - case_recno
-      - prosess_id
-
-```
-
----
-
-### `not_null_when`
-
-All listed `columns` must be non-null whenever `when_column` satisfies the trigger.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `when_column` | yes | Column that triggers the check |
-| `operator` | yes | `IS NULL`, `IS NOT NULL`, or `==` |
-| `value` | if `operator` is `==` | The value `when_column` must equal |
-| `columns` | yes | Block list of columns that must be non-null when triggered |
-| `pk_column` | no | Default: catalog `pk_column` |
-
-```yaml
-- rule_id: PROC-021
-  name: Open cases must have a handler
-  description: Cases with no end date must be assigned.
-  expectation: not_null_when
-  parameters:
-    when_column: ActualEndDate
-    operator: IS NULL
-    columns:
-      - Saksbehandler_kode
-
-```
-
----
-
-### `comparison`
-
-Every row must satisfy `left_column <operator> right_column` (column vs column) or `left_column <operator> right_value` (column vs scalar). Rows where the left-hand column is NULL are skipped; for column-vs-column, rows where either column is NULL are skipped.
-
-Exactly one of `right_column` or `right_value` must be provided.
-
-Use `filter_column` + `filter_values` to restrict evaluation to a subset of rows (IN list). Rows outside the filter are excluded and counted as passed.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `left_column` | yes | Left-hand column |
-| `right_column` | one of these | Right-hand column name |
-| `right_value` | one of these | Scalar numeric value to compare against |
-| `operator` | yes | `>`, `<`, `>=`, `<=`, `==`, `!=` |
-| `filter_column` | no | Only evaluate rows where this column is IN `filter_values` |
-| `filter_values` | no | List of string values for the IN filter; required when `filter_column` is set |
-| `pk_column` | no | Default: catalog `pk_column` |
-
-```yaml
-# Column vs column:
-- rule_id: PROC-013
-  name: End date cannot be before start date
-  description: Timeline order must be valid.
-  expectation: comparison
-  parameters:
-    left_column: ActualEndDate
-    right_column: StartDate
-    operator: ">="
-
-
-# Column vs scalar:
-- rule_id: INV-020
-  name: Invoice amount must be positive
-  description: Line amounts must be greater than zero.
-  expectation: comparison
-  parameters:
-    left_column: linje_belop
-    right_value: 0
-    operator: ">"
-
-
-# Column vs column, restricted to a subset of rows:
-- rule_id: FAS-008
-  name: opprinnelig_frist_dager must match frist_dager for relevant phase types
-  description: For specified phase types the original deadline must not differ from the current deadline.
-  expectation: comparison
-  parameters:
-    filter_column: indikator
-    filter_values:
-      - Byggesak 3 uker
-      - Byggesak 12 uker
-    left_column: opprinnelig_frist_dager
-    right_column: frist_dager
-    operator: "=="
-
-```
-
----
-
-### `value_in_list`
-
-All non-null values in the column must belong to an approved list.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `column` | yes | Column to check (in `parameters`) |
-| `allowed_values` | yes | Block list of permitted values |
-| `pk_column` | no | Default: same as `column` |
-
-```yaml
-- rule_id: INV-010
-  name: Invoice type must be approved
-  description: Only approved business values are allowed.
-  expectation: value_in_list
-  parameters:
-    column: Faktura_type
-    allowed_values:
-      - Standard
-      - Kreditnota
-
-```
-
----
-
-### `value_when`
-
-When `when_column <operator> value`, `required_column` must equal `required_value`.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `when_column` | yes | Column checked for the trigger condition |
-| `operator` | yes | `<`, `>`, `<=`, `>=`, `==`, `!=` |
-| `value` | yes | Threshold value for the trigger condition |
-| `required_column` | yes | Column that must equal `required_value` when triggered |
-| `required_value` | yes | The required value |
-| `pk_column` | no | Default: `id` |
-
-```yaml
-- rule_id: INV-011
-  name: Negative amount requires credit note type
-  description: Negative lines are only valid for credit notes.
-  expectation: value_when
-  parameters:
-    when_column: linje_belop
-    operator: "<"
-    value: 0
-    required_column: Faktura_type
-    required_value: Kreditnota
-    pk_column: Fakturanr
-
-```
-
----
-
-### `reference_exists`
-
-Every non-null value in `column` must exist in `reference_table.reference_column`.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `column` | yes | Source column whose values are checked |
-| `reference_table` | yes | Fully-qualified reference table (e.g. `HR.Employees`) |
-| `reference_column` | yes | Column in the reference table holding valid values |
-| `pk_column` | no | Default: same as `column` |
-
-```yaml
-- rule_id: PROC-020
-  name: Case type must exist in reference
-  description: CaseType must reference a known type in the classification table.
-  expectation: reference_exists
-  parameters:
-    column: CaseType
-    reference_table: Config.CaseTypes
-    reference_column: TypeCode
-    pk_column: Saksnummer
-
-```
-
----
-
-### `reference_active`
-
-Every non-null value in `column` must exist in the reference table **and** match a row where `reference_active_column` equals `reference_active_value`.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `column` | yes | Source column whose values are checked |
-| `reference_table` | yes | Fully-qualified reference table |
-| `reference_column` | yes | Join column in the reference table |
-| `reference_active_column` | yes | Column holding the active flag |
-| `reference_active_value` | yes | Value that means "active" (string or boolean) |
-| `pk_column` | no | Default: same as `column` |
-
-```yaml
-- rule_id: PROC-014
-  name: Assigned handler must be active
-  description: Open assignments must reference active personnel.
-  expectation: reference_active
-  parameters:
-    column: Saksbehandler_kode
-    reference_table: HR.Employees
-    reference_column: EmployeeCode
-    reference_active_column: IsActive
-    reference_active_value: true
-    pk_column: Saksnummer
-
-```
-
----
-
-### `combination_unique`
-
-The combination of `columns` must be unique across all rows.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `columns` | yes | Non-empty list of column names that must form a unique key |
-| `pk_column` | no | Default: first column in `columns` |
-
-```yaml
-- rule_id: INV-030
-  name: Invoice line must be unique per invoice
-  description: Each Fakturanr + LinjeNr combination must appear at most once.
-  expectation: combination_unique
-  parameters:
-    columns:
-      - Fakturanr
-      - LinjeNr
-    pk_column: Fakturanr
-
-```
-
----
-
-### `row_count`
-
-Compares `COUNT(*)` of the table against a threshold. The rule either passes or fails for the entire table — there are no individual row violations.
-
-Use this to detect failed data loads (table unexpectedly empty) or runaway loads (table unexpectedly large).
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `operator` | no | `>`, `<`, `>=`, `<=`, `==`, `!=` (default: `>=`) |
-| `threshold` | yes | Integer or float the row count must satisfy |
-
-```yaml
-# Table must not be empty:
-- rule_id: PROC-007a
-  name: Process table must not be empty
-  description: Zero rows indicates that the data load failed or all processes were unexpectedly deleted.
-  expectation: row_count
-  parameters:
-    operator: ">="
-    threshold: 1
-
-
-# Row count ceiling:
-- rule_id: PROC-007b
-  name: Process table must not be oversized
-  description: Row count ceiling guards against runaway data loads.
-  expectation: row_count
-  parameters:
-    operator: "<="
-    threshold: 10000000
-
-```
-
-> **`row_count` vs `comparison`:** `comparison` checks each row individually. `row_count` checks the total number of rows in the table. Use `comparison` when the rule is about values on individual rows; use `row_count` when the rule is about dataset health.
->
-> **`row_count` vs `group_aggregate_matches`:** `row_count` checks `COUNT(*)` for the whole table. `group_aggregate_matches` computes an aggregate per group and checks it against a reference column value (e.g. line totals must equal the invoice header total).
-
----
-
-### `state_duration_within_limit`
-
-Rows still in the open state must not have been open longer than `max_days`.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `start_column` | yes | Date/timestamp column marking when the state began |
-| `open_state_column` | yes | Column checked to decide if the row is still open |
-| `open_state_value` | no | Value that means "open". Omit (or set to `null`) to treat IS NULL as open |
-| `pk_column` | yes | Primary key column for violation reporting |
-| `max_days` | yes | Maximum allowed days in the open state (integer >= 0) |
-
-```yaml
-- rule_id: PROC-040
-  name: Open case must be resolved within 90 days
-  description: Cases without an end date must not remain open longer than 90 days.
-  expectation: state_duration_within_limit
-  parameters:
-    start_column: StartDate
-    open_state_column: ActualEndDate
-    pk_column: Saksnummer
-    max_days: 90
-
-```
-
----
-
-### `sequence_ordered`
-
-Within each group, values in `event_column` must appear in the order defined by `expected_sequence` (sorted by `order_column`).
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `event_column` | yes | Column holding the sequence step names |
-| `group_column` | yes | Column identifying the group |
-| `order_column` | yes | Column used to sort rows within the group |
-| `expected_sequence` | yes | Ordered list of step names. Plain strings or `{value: X}` dict form. Any rank decrease or repeat is a violation. |
-| `completion_gate` | no | Restrict evaluation to groups that have completed a gate step — sub-keys: `event_column`, `value`, `order_column` (optional) |
-
-```yaml
-- rule_id: PROC-050
-  name: Case milestones must occur in order
-  description: >
-    Received must precede Reviewed, which must precede Closed.
-    Only evaluate cases that have already been closed.
-  expectation: sequence_ordered
-  parameters:
-    event_column: MilestoneType
-    group_column: Saksnummer
-    order_column: MilestoneDate
-    expected_sequence:
-      - Received
-      - Reviewed
-      - Closed
-    completion_gate:
-      event_column: MilestoneType
-      value: Closed
-
-```
-
----
-
-### `pairs_present`
-
-Within each group, checks that required pairs of events are both present. `mode` controls the direction enforced.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `event_column` | yes | Column holding the event/milestone values |
-| `group_column` | yes | Column identifying the group |
-| `required_pairs` | yes | List of `[start_marker, stop_marker]` pairs. The stop slot can be a list `[stop1, stop2]` — the pair is satisfied when any stop value is present |
-| `mode` | no | `both` (default) — flags groups missing either member. `stop_requires_start` — flags only groups that have a stop without the corresponding start |
-| `completion_gate` | no | Same structure as in `sequence_ordered` |
-
-```yaml
-# Both directions required (default):
-- rule_id: PROC-051
-  name: Every opened case must be closed
-  description: A Received milestone must be paired with a Closed milestone.
-  expectation: pairs_present
-  parameters:
-    event_column: MilestoneType
-    group_column: Saksnummer
-    required_pairs:
-      - [Received, Closed]
-
-
-# Stop implies start (one-way):
-- rule_id: PROC-052
-  name: Closure cannot exist without an opening
-  description: A Closed milestone is invalid if Received never occurred.
-  expectation: pairs_present
-  parameters:
-    event_column: MilestoneType
-    group_column: Saksnummer
-    required_pairs:
-      - [Received, Closed]
-    mode: stop_requires_start
-
-```
-
----
-
-### `gate_complete`
-
-Every group must contain at least one row where `event_column` equals `value_to_check`.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `event_column` | yes | Column holding the event values |
-| `group_column` | yes | Column identifying the group |
-| `value_to_check` | yes | The required value that must be present in each group |
-| `order_column` | no | When provided, the gate row must also have a non-null value in this column |
-| `trigger` | no | Human-readable label used in violation details (default: `Approval completed`) |
-
-```yaml
-- rule_id: PROC-053
-  name: Every case must have an approval event
-  description: Each Saksnummer must have at least one Approved milestone.
-  expectation: gate_complete
-  parameters:
-    event_column: MilestoneType
-    group_column: Saksnummer
-    value_to_check: Approved
-    trigger: Case approval
-
-```
-
----
-
-### `group_aggregate_matches`
-
-The aggregate of `aggregate_column` within each group must equal the value in `reference_column` within a tolerance.
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `group_column` | yes | Column identifying each group |
-| `aggregate_column` | yes | Numeric column to aggregate within each group |
-| `reference_column` | yes | Column holding the expected group total (must be joined in if it lives in another table) |
-| `aggregate` | no | `sum`, `count`, `avg`, `min`, `max` (default: `sum`) |
-| `tolerance` | no | Maximum allowed absolute difference (default: `0.01`) |
-
-```yaml
-- rule_id: INV-040
-  name: Invoice line totals must match header total
-  description: SUM(linje_belop) per invoice must equal Faktura_totalbelop.
-  expectation: group_aggregate_matches
-  parameters:
-    group_column: Fakturanr
-    aggregate_column: linje_belop
-    reference_column: Faktura_totalbelop
-    aggregate: sum
-    tolerance: 0.01
-
-```
-
----
-
-### `sql_violations`
-
-Runs a custom SQL query. Every row returned is treated as a violation — write the query to return only offending rows.
-
-> **Forbidden-state checks:** Use `sql_violations` with `SELECT <pk_column> FROM <schema.table> WHERE <forbidden_condition>` to express rules like "these two columns must never both be null."
-
-| Parameter | Required | Notes |
-|---|---|---|
-| `sql` | yes | SQL query; returned rows = violations |
-| `pk_column` | no | Column in the SQL result to use as the primary key value in violations |
-
-```yaml
-- rule_id: INV-012
-  name: Invoice totals cannot be zero
-  description: Sum of line amounts per invoice cannot be zero.
-  expectation: sql_violations
-  parameters:
-    sql: |
-      SELECT Fakturanr
-      FROM Saksbehandling.Fakturalinjer
-      GROUP BY Fakturanr
-      HAVING SUM(linje_belop) = 0
-
-```
-
----
-
-## Header Contract
-
-Recommended catalog-level header:
-
-```yaml
-rule_group: Process
-database: Saksbehandling
-table: Prosesser
-description: Data quality rules for process records
-pk_column: Saksnummer
-rules:
-  - rule_id: PROC-001
-    name: Example
-    expectation: not_null
-    column: Saksnummer
-  
-    category: Completeness
-```
-
-### `catalog_filter` — scope the source rows before rules run
-
-Applies a filter to the source table once, before any rules execute. All rules in the catalog see only the filtered rows. Two types are supported.
-
-**`date_range`** — keep rows where a date column falls within a rolling window:
-
-```yaml
-catalog_filter:
-  type: date_range
-  date_column: CreatedDate    # must exist in the source table
-  lookback_days: 90           # integer >= 0; rows older than this are excluded
-  include_nulls: true         # optional; also keeps rows where date_column IS NULL
-```
-
-**`custom`** — any valid Spark SQL predicate:
-
-```yaml
-catalog_filter:
-  type: custom
-  where_clause: "Status IN ('Open', 'Pending')"
-```
-
-Preflight checks that the type is one of the two allowed values, that required sub-keys are present, and (for `date_range`) that `date_column` exists in the source table.
-
-You can override or disable a YAML `catalog_filter` without touching the YAML file by setting `CATALOG_FILTER_OVERRIDES` in `QualityCatalogConfig.py`:
-
-```python
-CATALOG_FILTER_OVERRIDES = {
-    "Process": {                        # rule_group name
-        "type": "date_range",
-        "date_column": "ActualEndDate",
-        "lookback_days": 90,
-        "include_nulls": True,
-    },
-    "Invoice": None,                    # None disables the YAML filter entirely
-}
-```
-
-### `joins` — enrich the source table before rules run
-
-Joins one or more tables onto the source table before rules execute. Each entry in the list is applied in order. Rules then see the joined columns as if they were native to the source.
-
-Use this when a rule needs a column that lives in a related table rather than the source table itself.
-
-**Simple join on a shared column name:**
-
-```yaml
-joins:
-  - table: Saksbehandling.saker   # fully-qualified table name
-    on: Saksnummer                # column name shared by both tables
-    how: left                     # join type: left (default), inner, right, full
-    select:                       # optional — which columns to keep from the joined table
-      - Saksnummer
-      - Status
-      - Saksbehandler_kode
-```
-
-**Join on columns with different names in each table:**
-
-```yaml
-joins:
-  - table: HR.Employees
-    left_on: Saksbehandler_kode   # column in the source table
-    right_on: EmployeeCode        # column in the joined table
-    how: left
-    select:
-      - EmployeeCode
-      - IsActive
-      - Department
-```
-
-**Chained joins (Table1 → Table2 → Table3):**
-
-Joins are applied in order, and each join updates the working DataFrame. Columns brought in by an earlier join are immediately available as `left_on` in a later one.
-
-```yaml
-joins:
-  - table: Saksbehandling.faser          # join 1: primary → faser
-    left_on: to_stage_recno
-    right_on: stage_recno
-    how: left
-    select:
-      - stage_recno
-      - to_case_recno                    # now available for join 2
-      - indikator
-
-  - table: Saksbehandling.saker          # join 2: (primary + faser) → saker
-    left_on: to_case_recno               # from faser, available after join 1
-    right_on: case_recno
-    how: left
-    select:
-      - case_recno
-      - saksnummer
-      - sakstittel
-```
-
-**Fan-out joins (Table1 → Table2 and Table1 → Table3):**
-
-Two join entries can each reference a column from the original source table independently — order does not matter here.
-
-```yaml
-joins:
-  - table: HR.Employees
-    left_on: saksbehandler_kode
-    right_on: employee_code
-    how: left
-    select:
-      - employee_code
-      - display_name
-
-  - table: Config.CaseTypes
-    left_on: case_type_code
-    right_on: type_code
-    how: left
-    select:
-      - type_code
-      - type_label
-```
-
-Key behaviours:
-- `how` defaults to `left` if omitted.
-- `select` is optional. If provided, only those columns are brought in from the joined table (the join key is automatically included if missing from the list).
-- Use `on` when both tables share the same column name. Use `left_on` + `right_on` when they differ.
-- A join config with no key (`on`, `left_on`, or `right_on`) is skipped with a warning during the run.
-- Joins apply during validation so rules can reference joined columns.
-
----
-
-## Quality Checklist Before Save
-
-- Rule ID is unique in rule group
-- Canonical expectation name is used
-- Canonical parameter names are used
-- Operator matches operator family
-- `pk_column` is correct
-- Description explains business risk, not just technical check
-- Rule passes preflight and dry-run
-
-## Common Mistakes
-
-| Mistake | Impact | Fix |
-|---|---|---|
-| Unknown expectation/parameter names | Preflight failure | Check ARCHITECTURE.md for canonical names |
-| Wrong operator family | False positives or runtime errors | Use trigger operators only for conditional-required patterns |
-| Missing `pk_column` where needed | Hard to trace violations | Set at catalog level or per rule |
-| SQL returns non-violating rows | False failures | Ensure SQL returns violations only |
-| Running production mode first | Polluted production outputs | Run preflight and dry-run first |
+4. Review the `_tmp` output tables.
+5. Switch to `DRY_RUN = False` once the output looks right.
+
+## Why not just write SQL
+
+The predicate is the same either way. What differs is everything around it:
+
+1. **Boilerplate is declared once.** The rules in `faser.yaml` share one join
+   and one filter. In SQL each check repeats both.
+2. **State, not a result set.** A query answers "what is wrong now". This engine
+   tracks each violation as `Active` until it disappears, then marks it
+   `Resolved`, preserving `first_seen_at` — so "open for 40 days" is answerable.
+   Reproducing that means a MERGE, a key strategy and lifecycle columns per check.
+3. **Validation before the run.** Predicates are checked against the real schema
+   at deploy time rather than failing in a scheduled job.

@@ -97,7 +97,7 @@ MAX( dq_run_results[run_ts] )
 3. Active Violation Backlog:
    Table filtered to `dq_violations[issue_status] = "Active"`.
    `violated_column` is always a real column name in `table_name` (or `NULL`
-   for `sql_violations`, which has no single offending column) — safe to
+   for the `sql` rule type, which has no single offending column) — safe to
    group/count by. `violation_scope` tells you how to read
    `primary_key_value`: `"row"` means it's the PK of the offending row in
    `table_name`; `"group"` (used by `sequence_ordered`, `pairs_present`,
