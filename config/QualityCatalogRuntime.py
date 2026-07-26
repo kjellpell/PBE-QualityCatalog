@@ -13,13 +13,13 @@ FAIL_ON_EMPTY_SOURCE = True
 MAX_RULE_RETRIES = 2
 
 # ---------------------------------------------------------------------------
-# Per-rule timeout in seconds.  Each validator.validate() call is executed in
-# a background thread; if it has not returned within this window, the rule is
-# recorded as ERROR ("Timed out after Ns") and the run continues.
+# Per-rule timeout in seconds.  Each rule is executed in a background thread;
+# if it has not returned within this window, the rule is recorded as ERROR
+# ("Timed out after Ns") and the run continues.
 #
 # Sizing guidance (5 M rows, ~30 rules across 3 tables):
-#   - Simple rules (not-null, comparison, count):  < 30 s typical
-#   - FK / aggregate / group-match rules on large tables: 1–3 min typical
+#   - Simple predicate rules (check:, unique:):  < 30 s typical
+#   - Reference / aggregate / group-scoped rules on large tables: 1–3 min typical
 #   - 300 s (5 min) gives ample headroom while catching genuinely hung rules.
 #     Worst-case total run: 30 × 300 s = 150 min; realistic: 15–30 min.
 # ---------------------------------------------------------------------------
@@ -41,22 +41,17 @@ RETRYABLE_ERROR_MARKERS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Optional catalog-level source filter overrides keyed by rule_group.
+# Optional overrides for a catalog's `where:` filter, keyed by rule_group.
 #
-# Example:
+# The value is a Spark SQL predicate string — the same thing you would write
+# under `where:` in the catalog itself.  A date window is an ordinary predicate
+# rather than a dedicated filter type, so a lookback is expressed directly:
+#
 #   CATALOG_FILTER_OVERRIDES = {
-#       "Process": {
-#           "type": "date_range",
-#           "date_column": "ActualEndDate",
-#           "lookback_days": 90,
-#           "include_nulls": True,
-#       },
-#       "Invoice": {
-#           "type": "custom",
-#           "where_clause": "FakturaDato >= date_sub(current_date(), 30)",
-#       },
+#       "Faser":   "sist_endret >= date_sub(current_date(), 90) OR sist_endret IS NULL",
+#       "Faktura": "fakturadato >= date_sub(current_date(), 30)",
 #   }
 #
-# Set a rule_group override to None to disable its YAML catalog_filter.
+# Set a rule_group override to None to disable that catalog's own `where:`.
 # ---------------------------------------------------------------------------
 CATALOG_FILTER_OVERRIDES = {}
