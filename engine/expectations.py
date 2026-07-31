@@ -501,11 +501,11 @@ def _build_required_event(ctx: Context) -> Evaluation:
     return Evaluation(evaluated, violations, condition)
 
 
-def _build_group_aggregate_matches(ctx: Context) -> Evaluation:
+def _build_aggregate_matches(ctx: Context) -> Evaluation:
     """An aggregate over each group must match a reference value on the group."""
     cfg = ctx.cfg
     if not isinstance(cfg, dict):
-        raise RuleConfigError("'group_aggregate_matches' must be a mapping.")
+        raise RuleConfigError("'aggregate_matches' must be a mapping.")
     group_column, aggregate_column, reference_column = _require(
         cfg, "group_column", "aggregate_column", "reference_column"
     )
@@ -588,7 +588,7 @@ RULE_TYPES: dict[str, RuleType] = {
             column_keys=("event_column", "group_column", "order_column"),
         ),
         RuleType(
-            "group_aggregate_matches", "group", _build_group_aggregate_matches, "groups",
+            "aggregate_matches", "group", _build_aggregate_matches, "groups",
             required=("group_column", "aggregate_column", "reference_column"),
             column_keys=("group_column", "aggregate_column", "reference_column"),
         ),

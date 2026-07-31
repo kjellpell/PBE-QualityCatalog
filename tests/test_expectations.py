@@ -139,13 +139,13 @@ def test_required_event_counts_groups(spark):
     assert violations.collect()[0].primary_key_value == "g2"
 
 
-def test_group_aggregate_matches(spark):
+def test_aggregate_matches(spark):
     df = spark.createDataFrame(
         [("i1", 60.0, 100.0), ("i1", 40.0, 100.0), ("i2", 60.0, 100.0), ("i2", 30.0, 100.0)],
         "inv string, amount double, total double",
     )
     rule = {
-        "group_aggregate_matches": {
+        "aggregate_matches": {
             "group_column": "inv",
             "aggregate_column": "amount",
             "reference_column": "total",
@@ -237,7 +237,7 @@ def _null_group_case(name):
             "grp string, ev string, seq int",
         )
     return (
-        {"group_aggregate_matches": {
+        {"aggregate_matches": {
             "group_column": "grp", "aggregate_column": "amount", "reference_column": "total",
         }},
         [("g1", 60.0, 100.0), ("g1", 40.0, 100.0),
@@ -273,7 +273,7 @@ def test_null_group_key_is_neither_counted_nor_reported(spark, type_name):
 
 def test_group_scoped_is_derived_from_the_registry(spark):
     assert GROUP_SCOPED == {
-        "event_flow", "required_event", "group_aggregate_matches"
+        "event_flow", "required_event", "aggregate_matches"
     }
     assert all(RULE_TYPES[name].scope == "group" for name in GROUP_SCOPED)
 

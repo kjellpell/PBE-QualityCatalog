@@ -24,7 +24,7 @@ rules:
     Faktura_belop registrert på fakturahodet (innenfor en liten toleranse). Et
     avvik indikerer enten manglende linjer eller en oppdatering av hodet som ikke ble reflektert
     i detaljlinjene.'
-  group_aggregate_matches:
+  aggregate_matches:
     group_column: fakturanr
     aggregate_column: linje_belop
     reference_column: fakturasum
