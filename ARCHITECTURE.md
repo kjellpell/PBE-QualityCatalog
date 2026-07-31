@@ -33,7 +33,7 @@ Delta-based rule loading as ruled out.
 
 Most rules are a single boolean predicate under `check:`, optionally scoped by
 `when:`. The remaining rule types cover checks a row predicate cannot express:
-uniqueness, reference lookups, and checks over groups of rows.
+uniqueness and checks over groups of rows.
 
 `check:` follows SQL `CHECK` constraint semantics — a row fails only when the
 predicate is FALSE, so a NULL predicate leaves the row unevaluated. This is what
@@ -61,10 +61,17 @@ the driver so it cannot drift between rule types.
 
 ### Scope fixes the counting unit
 
-Each rule type declares `scope` — `row`, `group`, or `table` — and the driver
-counts in that unit. A group-scoped rule counts groups in both the numerator and
-the denominator, so a group failing several pairs counts once and `passed_rows`
-can never go negative.
+Each rule type declares `scope` — `row` or `group` — and the driver counts in
+that unit. A group-scoped rule counts groups in both the numerator and the
+denominator, so a group failing several pairs counts once and `passed_rows` can
+never go negative.
+
+There is deliberately no table-scoped rule type. Volume and completeness — "did
+this table fill at all?" — are caught upstream by the medallion ETL, which has
+the load history to judge them; a rule holding a hardcoded row-count threshold
+would duplicate that check and go stale. `FAIL_ON_EMPTY_SOURCE` remains as a
+guard on the *run* rather than the data: it aborts before an empty source can be
+reported as 100% passing.
 
 ## Runtime Flow
 

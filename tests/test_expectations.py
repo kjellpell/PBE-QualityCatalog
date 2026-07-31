@@ -157,18 +157,6 @@ def test_aggregate_matches(spark):
     assert violations.collect()[0].primary_key_value == "i2"
 
 
-def test_row_count(spark):
-    df = spark.createDataFrame([(1,), (2,)], "id int")
-
-    passing, _ = run_rule({"row_count": {"threshold": 2}}, df, spark)
-    assert passing["status"] == "PASSED"
-
-    failing, violations = run_rule({"row_count": {"threshold": 5}}, df, spark)
-    assert failing["status"] == "FAILED"
-    assert failing["failed_rows"] == 2     # whole table fails
-    assert violations.count() == 0         # nothing row-level to point at
-
-
 # --------------------------------------------------------------------------
 # configuration errors surface as ERROR, not as a crash
 # --------------------------------------------------------------------------

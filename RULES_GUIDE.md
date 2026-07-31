@@ -100,8 +100,8 @@ evaluated.
 ## Rule types
 
 Most rules are `check:`. The rest cover things a row predicate cannot express —
-uniqueness, table-level volume, and checks over groups of rows. A check needing a
-second table is a `check:` over a `joins:` column, not a rule type of its own.
+uniqueness, and checks over groups of rows. A check needing a second table is a
+`check:` over a `joins:` column, not a rule type of its own.
 
 <!-- BEGIN RULE TYPES (generated — see tests/test_docs.py) -->
 
@@ -109,7 +109,6 @@ second table is a `check:` over a `joins:` column, not a rule type of its own.
 |---|---|---|
 | `check` | row | – |
 | `unique` | row | – |
-| `row_count` | table | `threshold` |
 | `event_flow` | group | `event_column`, `group_column`, `order_column`, `cycle` |
 | `required_event` | group | `event_column`, `group_column`, `value` |
 | `aggregate_matches` | group | `group_column`, `aggregate_column`, `reference_column` |
@@ -211,16 +210,6 @@ groups `event_flow` evaluates and silently drops the ones that have not got ther
     tolerance: 0.01
 ```
 
-### row_count
-
-```yaml
-- rule_id: X-004
-  name: Tabellen må ha rader
-  row_count:
-    operator: '>='               # default '>='
-    threshold: 1000
-```
-
 ### Reaching another table
 
 Every rule type reads only the catalog's own source, so a check that needs a
@@ -264,7 +253,6 @@ Each rule type declares a scope, and that fixes the unit for `total_rows`,
 |---|---|---|
 | `row` | one row | `check`, `unique` |
 | `group` | one group | `event_flow`, `required_event`, `aggregate_matches` |
-| `table` | the whole table | `row_count` |
 
 For a group-scoped rule, a group failing several pairs counts **once**, while the
 violation log still lists each failing pair. `passed_rows` is always
