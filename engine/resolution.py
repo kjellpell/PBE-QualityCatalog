@@ -81,7 +81,7 @@ VIOLATION_SCHEMA = StructType([
     # run so violation age can be calculated as (now - first_seen_at).
     StructField("first_seen_at",       TimestampType(), True),
     # "row" — primary_key_value is a PK in table_name; "group" — it's a group key
-    # (sequence_ordered, pairs_present, gate_complete, group_aggregate_matches).
+    # (event_flow, gate_complete, group_aggregate_matches).
     StructField("violation_scope",     StringType(),    True),
 ])
 
@@ -138,7 +138,7 @@ def _apply_resolution_tracking(
     # sentinel for joining so two NULL values are treated as the same key.
     #
     # expected_condition is part of the key because group-style expectations
-    # (e.g. pairs_present) emit several distinct violations for the same
+    # (e.g. event_flow) emit several distinct violations for the same
     # (rule_id, primary_key_value, violated_column) — one per required pair —
     # differing only in expected_condition.  Without it those rows would collapse
     # to one under dropDuplicates/left-anti and the extra violations would be

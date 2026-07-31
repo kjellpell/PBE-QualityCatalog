@@ -27,46 +27,68 @@ rules:
   when: statusdescription = 'Nådd'
   check: milestonedate IS NOT NULL
 
-# I PB360 er det en del par av milepæler som skal komme sammen, denne sjekker disse.
-# Merk completion_gate, som gjør at regelen kun sjekker milepælene for faser hvor
-# "Sendt til politisk behandling" er nådd.
+# I PB360 er det en del par av milepæler som skal komme sammen. event_flow
+# sjekker at de kommer parvis OG i riktig rekkefølge: et par som åpnes uten å
+# lukkes er en feil, mens flere komplette runder er helt i orden.
+# Merk completion_gate, som gjør at regelen kun sjekker faser som har nådd
+# den angitte milepælen.
 - rule_id: MIL-004
-  name: Begge milepæler i et par for til politisk behandling må være tilstede
-  description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
-  pairs_present:
+  name: Merknader og revidert planforslag må komme parvis og i rekkefølge
+  description: 'Hver "Merknader oversendt" må følges av "Mottatt revidert planforslag".'
+  event_flow:
     event_column: milestone_title
     group_column: to_stage_recno
-    required_pairs:
-    - [Merknader oversendt, Mottatt revidert planforslag]
-    - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
+    order_column: milestonedate
+    cycle:
+    - Merknader oversendt
+    - Mottatt revidert planforslag
     completion_gate:
       event_column: milestone_title
       value: Sendt til politisk behandling
       order_column: milestonedate
 
-# Denne fungerer på samme måte som den over, men for offentlig ettersyn
 - rule_id: MIL-005
-  name: Begge milepæler i et par for offentlig ettersyn må være tilstede
-  description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
-  pairs_present:
+  name: Anmodning og mottatt plandokumentasjon må komme parvis for politisk behandling
+  description: 'Hver anmodning må følges av mottatt oppdatert plandokumentasjon.'
+  event_flow:
     event_column: milestone_title
     group_column: to_stage_recno
-    required_pairs:
-    - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
+    order_column: milestonedate
+    cycle:
+    - Anmodning om oppdatert plandokumentasjon
+    - Mottatt oppdatert plandokumentasjon
+    completion_gate:
+      event_column: milestone_title
+      value: Sendt til politisk behandling
+      order_column: milestonedate
+
+# Samme par, men for offentlig ettersyn
+- rule_id: MIL-006
+  name: Anmodning og mottatt plandokumentasjon må komme parvis for offentlig ettersyn
+  description: 'Hver anmodning må følges av mottatt oppdatert plandokumentasjon.'
+  event_flow:
+    event_column: milestone_title
+    group_column: to_stage_recno
+    order_column: milestonedate
+    cycle:
+    - Anmodning om oppdatert plandokumentasjon
+    - Mottatt oppdatert plandokumentasjon
     completion_gate:
       event_column: milestone_title
       value: Vedtak høring og offentlig ettersyn
       order_column: milestonedate
 
-# Denne fungerer på samme måte som den over, men for oppstartsmøte
-- rule_id: MIL-006
-  name: Begge milepæler i et par for oppstartsmøte må være tilstede
-  description: 'For ethvert påkrevd par må partnermilepælen også eksistere.'
-  pairs_present:
+# Samme par, men for oppstartsmøte
+- rule_id: MIL-007
+  name: Anmodning og mottatt plandokumentasjon må komme parvis for oppstartsmøte
+  description: 'Hver anmodning må følges av mottatt oppdatert plandokumentasjon.'
+  event_flow:
     event_column: milestone_title
     group_column: to_stage_recno
-    required_pairs:
-    - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
+    order_column: milestonedate
+    cycle:
+    - Anmodning om oppdatert plandokumentasjon
+    - Mottatt oppdatert plandokumentasjon
     completion_gate:
       event_column: milestone_title
       value: Innkalling til oppstartsmøte

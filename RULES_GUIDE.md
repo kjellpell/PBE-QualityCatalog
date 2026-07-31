@@ -111,8 +111,7 @@ uniqueness, cross-table lookups, and checks over groups of rows.
 | `exists_in` | row | `column`, `table`, `reference_column` |
 | `sql` | row | – |
 | `row_count` | table | `threshold` |
-| `sequence_ordered` | group | `event_column`, `group_column`, `order_column`, `sequence` |
-| `pairs_present` | group | `event_column`, `group_column`, `required_pairs` |
+| `event_flow` | group | `event_column`, `group_column`, `order_column`, `cycle` |
 | `gate_complete` | group | `event_column`, `group_column`, `value` |
 | `group_aggregate_matches` | group | `group_column`, `aggregate_column`, `reference_column` |
 
@@ -146,31 +145,55 @@ Only non-NULL values are checked. With `active_column`/`active_value` the
 reference set is narrowed to currently-active rows. Reference tables are read
 once per distinct `(table, column, active filter)` and cached across rules.
 
-### pairs_present
+### event_flow
+
+Declared events must occur **in order**, as **whole passes**. Events not named
+anywhere are ignored, so unrelated activity in between is fine.
 
 ```yaml
 - rule_id: MIL-004
-  name: Begge milepæler i et par må være tilstede
-  pairs_present:
+  name: Merknader og revidert planforslag må komme parvis og i rekkefølge
+  event_flow:
     event_column: milestone_title
     group_column: to_stage_recno
-    required_pairs:
-    - [Merknader oversendt, Mottatt revidert planforslag]
-    - [Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon]
-    mode: both                   # or stop_requires_start
-    completion_gate:             # only evaluate groups that reached this event
+    order_column: milestonedate
+    starts_with: Sendt til politisk behandling   # optional, single value, once
+    cycle:                                       # required, repeats as whole passes
+    - Merknader oversendt
+    - Mottatt revidert planforslag
+    ends_with: [Vedtak fattet, Sak trukket]      # optional, any one closes
+    completion_gate:                             # only evaluate groups that got here
       event_column: milestone_title
-      value: Sendt til politisk behandling
+      value: Sendt til politisk behandling       # scalar or list; any match
       order_column: milestonedate
 ```
 
-A pair may name several acceptable stops: `[start, [stop_a, stop_b]]` is
-satisfied when either stop is present. `mode: both` flags a group missing
-either member; `stop_requires_start` flags only a stop without its start.
+With `starts_with: start`, `cycle: [A, B]`, `ends_with: end`:
 
-`completion_gate` restricts evaluation to groups that have reached a given
-event — used to avoid flagging work that is legitimately still in progress.
-Also available on `sequence_ordered`.
+| Events, by date | Verdict | Why |
+|---|---|---|
+| `start A B end` | valid | one complete pass |
+| `start A B A B end` | valid | two complete passes |
+| `start B A end` | error | cycle out of order |
+| `B start A end` | error | cycle event before the start anchor |
+| `start A B A end` | error | the trailing `A` never closes |
+| `start A A B B end` | error | passes must alternate, not batch |
+
+The last two are the point: an opened pass that never closes is a real data
+problem, and a plain "do both exist?" check cannot see it.
+
+**Anchors are optional.** A bare `cycle:` of two events is a pair check — every
+`A` must be closed by a `B`. A group containing none of the listed events is
+valid (zero passes). `starts_with` takes a single value and may occur once;
+`ends_with` may list several, any one of which closes the flow, and only one may
+occur.
+
+`completion_gate` restricts evaluation to groups that have reached a given event,
+so work still legitimately in progress is not flagged. Its `value:` accepts a
+scalar or a list.
+
+Events on the **same date** are read in declared order, so a group whose
+milestones share a timestamp gives the same verdict every run.
 
 ### group_aggregate_matches
 
@@ -185,17 +208,9 @@ Also available on `sequence_ordered`.
     tolerance: 0.01
 ```
 
-### sequence_ordered / gate_complete
+### gate_complete
 
 ```yaml
-- rule_id: X-002
-  name: Milepæler må komme i rekkefølge
-  sequence_ordered:
-    event_column: milestone_title
-    group_column: to_stage_recno
-    order_column: milestonedate
-    sequence: [Mottatt, Under behandling, Vedtak]
-
 - rule_id: X-003
   name: Alle faser må ha godkjenning
   gate_complete:
@@ -242,7 +257,7 @@ Each rule type declares a scope, and that fixes the unit for `total_rows`,
 | Scope | One unit is | Used by |
 |---|---|---|
 | `row` | one row | `check`, `unique`, `exists_in`, `sql` |
-| `group` | one group | `pairs_present`, `sequence_ordered`, `gate_complete`, `group_aggregate_matches` |
+| `group` | one group | `event_flow`, `gate_complete`, `group_aggregate_matches` |
 | `table` | the whole table | `row_count` |
 
 For a group-scoped rule, a group failing several pairs counts **once**, while the
@@ -266,7 +281,7 @@ contains*, which is rarely what you want:
 # Wrong: hides 'Mottatt revidert planforslag' from every group, so each one now
 # looks like it is missing the second half of the pair.
 when: milestone_title != 'Mottatt revidert planforslag'
-pairs_present: ...
+event_flow: ...
 ```
 
 To restrict *which groups* are evaluated rather than which rows they contain, use

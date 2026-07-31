@@ -110,7 +110,7 @@ def test_resolution_lifecycle(spark):
 def test_resolution_distinct_violations_same_pk_and_column(spark):
     """
     Regression test for the A1 data-loss fix: group-style expectations
-    (e.g. pairs_present) can emit several distinct violations for the same
+    (e.g. event_flow) can emit several distinct violations for the same
     (rule_id, primary_key_value, violated_column), differing only in
     expected_condition. Both must survive resolution, not collapse to one.
     """

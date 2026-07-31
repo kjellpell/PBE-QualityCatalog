@@ -71,15 +71,16 @@ def test_missing_rule_type_is_caught(preflight, probe, columns):
 
 def test_structured_type_missing_key_is_caught(preflight, probe, columns):
     errors = preflight.check_rule(
-        _rule(pairs_present={"event_column": "indikator"}), probe, columns, "t.yaml"
+        _rule(event_flow={"event_column": "indikator"}), probe, columns, "t.yaml"
     )
     assert any("missing required key" in e for e in errors)
 
 
 def test_structured_type_bad_column_is_caught(preflight, probe, columns):
     errors = preflight.check_rule(
-        _rule(pairs_present={
-            "event_column": "nope", "group_column": "stage_recno", "required_pairs": [["a", "b"]],
+        _rule(event_flow={
+            "event_column": "nope", "group_column": "stage_recno",
+            "order_column": "decisiondate", "cycle": ["a", "b"],
         }),
         probe, columns, "t.yaml",
     )

@@ -128,33 +128,6 @@ def test_unique(spark):
     assert violations.collect()[0].expected_condition == "UNIQUE(a, b)"
 
 
-def test_pairs_present_counts_groups_not_rows(spark):
-    """
-    The mixed-units fix: a group failing several pairs counts once, and the
-    denominator is groups. Previously total_rows was a row count while
-    failed_rows was a group count, which could make passed_rows negative.
-    """
-    rows = [
-        ("g1", "start"), ("g1", "stop"), ("g1", "begin"), ("g1", "end"),  # satisfies both
-        ("g2", "start"), ("g2", "begin"),                                 # fails both
-    ]
-    df = spark.createDataFrame(rows, "grp string, ev string")
-    rule = {
-        "pairs_present": {
-            "event_column": "ev",
-            "group_column": "grp",
-            "required_pairs": [["start", "stop"], ["begin", "end"]],
-        }
-    }
-    result, violations = run_rule(rule, df, spark)
-
-    assert result["total_rows"] == 2       # groups, not the 6 rows
-    assert result["failed_rows"] == 1      # g2 fails two pairs but counts once
-    assert result["passed_rows"] == 1      # never negative
-    assert violations.count() == 2         # detail still lists both failing pairs
-    assert {r.primary_key_value for r in violations.collect()} == {"g2"}
-
-
 def test_gate_complete_counts_groups(spark):
     df = spark.createDataFrame(
         [("g1", "approved"), ("g1", "other"), ("g2", "other")], "grp string, ev string"
@@ -182,24 +155,6 @@ def test_group_aggregate_matches(spark):
 
     assert (result["total_rows"], result["failed_rows"]) == (2, 1)
     assert violations.collect()[0].primary_key_value == "i2"
-
-
-def test_sequence_ordered_counts_groups(spark):
-    rows = [
-        ("g1", "a", 1), ("g1", "b", 2),      # in order
-        ("g2", "b", 1), ("g2", "a", 2),      # reversed
-    ]
-    df = spark.createDataFrame(rows, "grp string, ev string, seq int")
-    rule = {
-        "sequence_ordered": {
-            "event_column": "ev", "group_column": "grp",
-            "order_column": "seq", "sequence": ["a", "b"],
-        }
-    }
-    result, violations = run_rule(rule, df, spark)
-
-    assert (result["total_rows"], result["failed_rows"]) == (2, 1)
-    assert violations.collect()[0].primary_key_value == "g2"
 
 
 def test_exists_in(spark):
@@ -315,23 +270,13 @@ def _null_group_case(name):
             [("g1", "ok"), ("g2", "x"), (None, "x"), (None, "ok")],
             "grp string, ev string",
         )
-    if name == "pairs_present":
+    if name == "event_flow":
         return (
-            {"pairs_present": {
+            {"event_flow": {
                 "event_column": "ev", "group_column": "grp",
-                "required_pairs": [["start", "stop"]],
+                "order_column": "seq", "cycle": ["start", "stop"],
             }},
-            [("g1", "start"), ("g1", "stop"), ("g2", "start"), (None, "start")],
-            "grp string, ev string",
-        )
-    if name == "sequence_ordered":
-        return (
-            {"sequence_ordered": {
-                "event_column": "ev", "group_column": "grp",
-                "order_column": "seq", "sequence": ["a", "b"],
-            }},
-            [("g1", "a", 1), ("g1", "b", 2), ("g2", "b", 1), ("g2", "a", 2),
-             (None, "b", 1), (None, "a", 2)],
+            [("g1", "start", 1), ("g1", "stop", 2), ("g2", "start", 1), (None, "start", 1)],
             "grp string, ev string, seq int",
         )
     return (
@@ -350,8 +295,8 @@ def test_null_group_key_is_neither_counted_nor_reported(spark, type_name):
     """
     A NULL group key is not a group. Counting it inflates the denominator, and
     reporting it emits a violation whose primary_key_value cannot be joined back
-    to anything. gate_complete used to do the latter and sequence_ordered the
-    former, while the other two already excluded NULLs.
+    to anything. gate_complete used to do the latter and the ordering rule the
+    former, while the others already excluded NULLs.
     """
     rule, rows, schema = _null_group_case(type_name)
     df = spark.createDataFrame(rows, schema)
@@ -371,7 +316,7 @@ def test_null_group_key_is_neither_counted_nor_reported(spark, type_name):
 
 def test_group_scoped_is_derived_from_the_registry(spark):
     assert GROUP_SCOPED == {
-        "sequence_ordered", "pairs_present", "gate_complete", "group_aggregate_matches"
+        "event_flow", "gate_complete", "group_aggregate_matches"
     }
     assert all(RULE_TYPES[name].scope == "group" for name in GROUP_SCOPED)
 
