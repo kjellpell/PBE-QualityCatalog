@@ -1,10 +1,10 @@
 # =============================================================================
-# engine/resolution.py
+# engine/output_store.py
 # Canonical output schemas, and resolution tracking for the violation log.
 #
-# This module is kept separate from validation_runner.py so that it can be
+# This module is kept separate from engine/runner.py so that it can be
 # imported without triggering the runner's module-level Spark bootstrap.  The
-# table schemas live here for the same reason: nb_dq_00_setup.py generates its
+# table schemas live here for the same reason: scripts/setup_dq_tables.py generates its
 # DDL from them, so the column lists are defined once rather than restated in
 # the setup script.
 #

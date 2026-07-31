@@ -13,8 +13,8 @@ Use this checklist to run, verify, and triage the Quality Catalog quickly.
 ## Standard Run Sequence
 
 1. Confirm source data refresh is complete.
-2. Run preflight: nb_dq_01_preflight.py.
-3. Run validation: nb_dq_03_run_validation.py (executes engine/validation_runner.py).
+2. Run preflight: scripts/preflight_checks.py.
+3. Run validation: scripts/run_validation.py (executes engine/runner.py).
 4. Check execution evidence in dq_execution_metrics.
 5. Check latest summary rows in dq_run_results.
 6. Check issue lifecycle behavior in dq_violations.
@@ -23,7 +23,7 @@ Use this checklist to run, verify, and triage the Quality Catalog quickly.
 
 ## First-Time Or Schema-Update Setup
 
-1. Run nb_dq_00_setup.py.
+1. Run scripts/setup_dq_tables.py.
 2. Re-run preflight before scheduling.
 
 ---
@@ -99,12 +99,12 @@ After each run, confirm:
 ### Resolution-tracking failure on dq_violations
 
 - The run fails with "Violations not written" — no partial data is committed.
-- Re-run nb_dq_00_setup.py to ensure the table and columns exist.
+- Re-run scripts/setup_dq_tables.py to ensure the table and columns exist.
 - Confirm Delta support and table availability, then re-run validation.
 
 ### Rule execution errors
 
-- Run `nb_dq_01_preflight.py` first — it resolves every `where:`, `when:` and
+- Run `scripts/preflight_checks.py` first — it resolves every `where:`, `when:` and
   `check:` predicate against the real schema and names the offending rule.
 - Verify each rule declares exactly one rule type.
 - Verify referenced columns exist in source data (including joined-in columns).

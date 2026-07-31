@@ -20,7 +20,7 @@ if str(REPO_ROOT) not in sys.path:
 
 @pytest.fixture(scope="module")
 def preflight():
-    return importlib.import_module("nb_dq_01_preflight")
+    return importlib.import_module("scripts.preflight_checks")
 
 
 @pytest.fixture

@@ -14,7 +14,7 @@ violation lifecycle state, and schema validation before the run.
 
 ### No Great Expectations (GX)
 
-GX Core is **not used**. All validation logic lives in `engine/expectations.py`.
+GX Core is **not used**. All validation logic lives in `engine/rule_engine.py`.
 Do not add GX imports, GX dependencies, or GX-based code paths.
 
 ### Rules live in YAML
@@ -54,7 +54,7 @@ joined columns are available to an ordinary predicate.
 
 ### One driver owns the common work
 
-`run_rule()` in `engine/expectations.py` owns `when:` filtering, primary-key
+`run_rule()` in `engine/rule_engine.py` owns `when:` filtering, primary-key
 resolution, counting, status derivation, and building the violations frame.
 Rule-type builders only describe what a violation *is*. Anything shared lives in
 the driver so it cannot drift between rule types.
@@ -74,11 +74,11 @@ reported as 100% passing.
 ## Runtime Flow
 
 ```
-nb_dq_00_setup.py           → Create Delta tables (run once; DDL generated from
+scripts/setup_dq_tables.py → Create Delta tables (run once; DDL generated from
                               the engine's own schemas)
-nb_dq_01_preflight.py       → Pre-run checks (source tables exist, predicates
+scripts/preflight_checks.py → Pre-run checks (source tables exist, predicates
                               resolve against the real schema, rule contract)
-nb_dq_03_run_validation.py  → Fabric wrapper that executes engine/validation_runner.py:
+scripts/run_validation.py   → Fabric wrapper that executes engine/runner.py:
   1. Load rules from rules/*.yaml and *.yml
   2. Per catalog: load source table, apply joins, apply the catalog `where:`
   3. Dispatch each rule through run_rule()
@@ -91,21 +91,21 @@ nb_dq_03_run_validation.py  → Fabric wrapper that executes engine/validation_r
 
 | File | Purpose |
 |------|---------|
-| `engine/expectations.py` | Rule types, the registry, and the driver that runs a rule |
-| `engine/resolution.py` | Output schemas + violation persistence with Active/Resolved tracking |
+| `engine/rule_engine.py` | Rule types, the registry, and the driver that runs a rule |
+| `engine/output_store.py` | Output schemas + violation persistence with Active/Resolved tracking |
 | `engine/runtime.py` | Config loading (Lakehouse only), target resolution, metrics writing |
-| `engine/validation_runner.py` | Main orchestration engine |
+| `engine/runner.py` | Main orchestration engine |
 | `config/QualityCatalogConfig.py` | Table names and paths |
 | `config/QualityCatalogRuntime.py` | Behavior flags (dry-run, retry, fail-on-empty) |
-| `nb_dq_00_setup.py` | Delta table DDL, generated from the engine schemas |
-| `nb_dq_01_preflight.py` | Pre-run checks |
-| `nb_dq_03_run_validation.py` | Fabric wrapper that executes `engine/validation_runner.py` |
+| `scripts/setup_dq_tables.py` | Delta table DDL, generated from the engine schemas |
+| `scripts/preflight_checks.py` | Pre-run checks |
+| `scripts/run_validation.py` | Fabric wrapper that executes `engine/runner.py` |
 | `rules/*.yaml` | Rule catalogs — one file per rule group, loaded at runtime |
 | `tests/` | Rule-type, preflight, resolution and end-to-end equivalence tests |
 
 ## Rule Contract
 
-The contract is declared once, in `RULE_TYPES` (`engine/expectations.py`). Each
+The contract is declared once, in `RULE_TYPES` (`engine/rule_engine.py`). Each
 entry carries the YAML key, its scope, its required config keys, which of those
 name source columns, and whether it accepts a `completion_gate`. Preflight reads
 that structure rather than restating it, so the two cannot drift.
@@ -144,9 +144,9 @@ Use these exact strings — typos silently break resolution tracking.
 | `dq_violations` | `validation_runner.py` (via `resolution.py`) | Current-state violation log (`Active`/`Resolved`) |
 | `dq_execution_metrics` | `validation_runner.py` | Run-level observability |
 
-Schemas are defined in `engine/resolution.py` (`RESULT_SCHEMA`,
+Schemas are defined in `engine/output_store.py` (`VIOLATION_SCHEMA`,
 `VIOLATION_SCHEMA`) and `engine/runtime.py` (`_EXECUTION_METRIC_SCHEMA`).
-`nb_dq_00_setup.py` generates its DDL from them, so adding a column there is
+`scripts/setup_dq_tables.py` generates its DDL from them, so adding a column there is
 enough.
 
 ### Violation persistence

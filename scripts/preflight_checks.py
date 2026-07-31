@@ -7,7 +7,7 @@ that do not resolve against the real table schema. Predicates are validated by
 Spark's own analyzer rather than a hand-maintained list of column-bearing
 parameter names, so a typo in a `check:` or `where:` fails here.
 
-The rule contract itself is read from engine.expectations.RULE_TYPES, so it
+The rule contract itself is read from engine.rule_engine.RULE_TYPES, so it
 cannot drift from what the engine will actually run.
 """
 
@@ -37,7 +37,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 try:
-    from engine.expectations import (
+    from engine.rule_engine import (
         PREDICATE_KEYS,
         RESERVED_RULE_KEYS,
         RULE_TYPES,
@@ -219,7 +219,7 @@ def build_probe(spark, catalog: dict, full_table: str):
     A zero-row frame with the schema rules will actually see.
 
     Replays the catalog's joins exactly as the runner does
-    (engine/validation_runner.py), on `.limit(0)` frames so it costs nothing.
+    (engine/runner.py), on `.limit(0)` frames so it costs nothing.
     Carrying the joined columns with their *real* types matters: a probe that
     synthesises them as strings would let a type-sensitive predicate such as
     `joined_date >= '2024-01-01'` pass preflight and fail at run time.

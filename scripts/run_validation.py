@@ -1,5 +1,5 @@
 # =============================================================================
-# nb_dq_03_run_validation.py
+# scripts/run_validation.py
 # Notebook runner for executing the Quality Catalog validation engine in Fabric.
 #
 # Expected Lakehouse layout:
@@ -20,15 +20,15 @@ from pyspark.sql import SparkSession
 ENGINE_DIR = Path("/lakehouse/default/Files/engine")
 CONFIG_DIR = Path("/lakehouse/default/Files/Configs")
 RULES_DIR = Path("/lakehouse/default/Files/rules")
-RUNNER_PATH = ENGINE_DIR / "validation_runner.py"
+RUNNER_PATH = ENGINE_DIR / "runner.py"
 
 spark = SparkSession.builder.getOrCreate()
 
 REQUIRED_FILES = [
     ENGINE_DIR / "__init__.py",
     ENGINE_DIR / "runtime.py",
-    ENGINE_DIR / "expectations.py",
-    ENGINE_DIR / "resolution.py",
+    ENGINE_DIR / "rule_engine.py",
+    ENGINE_DIR / "output_store.py",
     RUNNER_PATH,
     CONFIG_DIR / "QualityCatalogConfig.py",
     CONFIG_DIR / "QualityCatalogRuntime.py",
@@ -60,7 +60,7 @@ print(f"Rule YAML files found: {len(yaml_files)}")
 
 
 # -----------------------------------------------------------------------------
-# STEP 2: Execute engine/validation_runner.py
+# STEP 2: Execute engine/runner.py
 # Loaded via importlib rather than runpy so that:
 #   - Exceptions propagate with their original types (no runpy wrapping).
 #   - Both modules share the same SparkSession object from getOrCreate().
@@ -75,7 +75,7 @@ if _engine_parent not in sys.path:
 started = datetime.now(timezone.utc)
 print(f"Starting validation runner at {started.isoformat()}")
 
-_vr_spec = importlib.util.spec_from_file_location("validation_runner", str(RUNNER_PATH))
+_vr_spec = importlib.util.spec_from_file_location("runner", str(RUNNER_PATH))
 _vr_mod = importlib.util.module_from_spec(_vr_spec)
 _vr_spec.loader.exec_module(_vr_mod)  # runs config loading, SparkSession setup, globals
 
@@ -87,7 +87,7 @@ try:
         spark,
         _vr_mod.TARGETS["execution_metrics_table"],
         {
-            "script_name": "nb_dq_03_run_validation",
+            "script_name": "run_validation",
             "status": "Succeeded",
             "dry_run": _vr_mod.RUNTIME.DRY_RUN,
             "output_target": _vr_mod.TARGETS["results_table"],
@@ -112,7 +112,7 @@ except Exception as exc:
             spark,
             _targets.get("execution_metrics_table", "dq_execution_metrics"),
             {
-                "script_name": "nb_dq_03_run_validation",
+                "script_name": "run_validation",
                 "status": "Failed",
                 "dry_run": bool(getattr(_runtime, "DRY_RUN", False)),
                 "output_target": _targets.get("results_table"),

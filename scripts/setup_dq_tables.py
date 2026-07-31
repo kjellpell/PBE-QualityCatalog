@@ -1,5 +1,5 @@
 # =============================================================================
-# NB_DQ_00_SETUP.py
+# scripts/setup_dq_tables.py
 # Creates all Delta tables used by the Quality Catalog data quality framework.
 # Run once before the first validation run.
 #
@@ -38,7 +38,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 try:
-    from engine.resolution import RESULT_SCHEMA, VIOLATION_SCHEMA   # noqa: E402
+    from engine.output_store import RESULT_SCHEMA, VIOLATION_SCHEMA   # noqa: E402
     from engine.runtime import (                                    # noqa: E402
         _EXECUTION_METRIC_SCHEMA,
         load_config_module,

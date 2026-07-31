@@ -8,7 +8,7 @@ engine. On failure it prints the block to paste in.
 
 from pathlib import Path
 
-from engine.expectations import RULE_TYPES
+from engine.rule_engine import RULE_TYPES
 
 DOC = Path(__file__).resolve().parent.parent / "RULES_GUIDE.md"
 BEGIN = "<!-- BEGIN RULE TYPES (generated — see tests/test_docs.py) -->"

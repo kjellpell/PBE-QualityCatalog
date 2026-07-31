@@ -343,7 +343,7 @@ expected_condition)`. A violation that disappears from a run is marked
 
 ## Preflight
 
-`nb_dq_01_preflight.py` checks catalogs before anything runs:
+`scripts/preflight_checks.py` checks catalogs before anything runs:
 
 - every source table exists;
 - every `where:`, `when:` and `check:` predicate resolves against the real
@@ -359,7 +359,7 @@ Run it after every catalog change.
 1. Update the YAML catalogs in `rules/` and deploy them to the Lakehouse
    (`/lakehouse/default/Files/rules/`). Rules are loaded from YAML at runtime;
    there is no Delta-based rule store.
-2. Run [nb_dq_01_preflight.py](nb_dq_01_preflight.py).
+2. Run [scripts/preflight_checks.py](scripts/preflight_checks.py).
 3. Run one validation cycle with `DRY_RUN = True`.
 4. Review the `_tmp` output tables.
 5. Switch to `DRY_RUN = False` once the output looks right.

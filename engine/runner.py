@@ -1,5 +1,5 @@
 # =============================================================================
-# engine/validation_runner.py
+# engine/runner.py
 # Data quality validation engine for the PBE Quality Catalog.
 #
 # Flow:
@@ -7,7 +7,7 @@
 #   2. For each rule group, load the source table from the Spark metastore
 #      and apply any configured pre-joins.
 #   3. For each rule:
-#        a. Dispatch to the matching rule type in engine/expectations.py.
+#        a. Dispatch to the matching rule type in engine/rule_engine.py.
 #        b. Collect per-rule results (counts, success %, status).
 #        c. Collect per-row violation details.
 #   4. Write summary rows to dq_run_results (Delta table).
@@ -15,7 +15,7 @@
 #   6. Write execution metrics to dq_execution_metrics.
 #
 # Schedule: nightly (after source tables are refreshed).
-# Prerequisites: nb_dq_00_setup.py must have been run at least once.
+# Prerequisites: scripts/setup_dq_tables.py must have been run at least once.
 # =============================================================================
 
 
@@ -35,8 +35,8 @@ spark.sql("SET spark.sql.ansi.enabled = false")
 
 
 # CELL 3 — Import custom expectation registry and resolution helpers
-# All expectation classes are consolidated in engine/expectations.py.
-# Resolution-tracking helpers live in engine/resolution.py.
+# All expectation classes are consolidated in engine/rule_engine.py.
+# Resolution-tracking helpers live in engine/output_store.py.
 # -----------------------------------------------------------------------------
 import sys
 from functools import reduce
@@ -68,14 +68,14 @@ def _load_module_from_path(module_name: str, module_path: Path):
 
 
 try:
-    from engine.expectations import (
+    from engine.rule_engine import (
         GROUP_SCOPED,
         RULE_TYPES,
         RuleConfigError,
         detect_rule_type,
         run_rule,
     )
-    from engine.resolution import (
+    from engine.output_store import (
         RESULT_SCHEMA,
         VIOLATION_SCHEMA,
         _apply_resolution_tracking,
@@ -93,12 +93,12 @@ except ModuleNotFoundError:
         "using inline file-based imports (Fabric notebook mode)."
     )
     engine_dir = Path(_repo_root) / "engine"
-    expectations_py = engine_dir / "expectations.py"
-    resolution_py = engine_dir / "resolution.py"
+    rule_engine_py = engine_dir / "rule_engine.py"
+    output_store_py = engine_dir / "output_store.py"
     runtime_py = engine_dir / "runtime.py"
     missing = [
         str(p)
-        for p in [expectations_py, resolution_py, runtime_py]
+        for p in [rule_engine_py, output_store_py, runtime_py]
         if not p.exists()
     ]
     if missing:
@@ -108,18 +108,18 @@ except ModuleNotFoundError:
             f"{missing}"
         )
 
-    expectations_module = _load_module_from_path("qc_expectations", expectations_py)
-    resolution_module = _load_module_from_path("qc_resolution", resolution_py)
+    rule_engine_module = _load_module_from_path("qc_rule_engine", rule_engine_py)
+    output_store_module = _load_module_from_path("qc_output_store", output_store_py)
     runtime_module = _load_module_from_path("qc_runtime", runtime_py)
 
-    GROUP_SCOPED = expectations_module.GROUP_SCOPED
-    RULE_TYPES = expectations_module.RULE_TYPES
-    RuleConfigError = expectations_module.RuleConfigError
-    detect_rule_type = expectations_module.detect_rule_type
-    run_rule = expectations_module.run_rule
-    RESULT_SCHEMA = resolution_module.RESULT_SCHEMA
-    VIOLATION_SCHEMA = resolution_module.VIOLATION_SCHEMA
-    _apply_resolution_tracking = resolution_module._apply_resolution_tracking
+    GROUP_SCOPED = rule_engine_module.GROUP_SCOPED
+    RULE_TYPES = rule_engine_module.RULE_TYPES
+    RuleConfigError = rule_engine_module.RuleConfigError
+    detect_rule_type = rule_engine_module.detect_rule_type
+    run_rule = rule_engine_module.run_rule
+    RESULT_SCHEMA = output_store_module.RESULT_SCHEMA
+    VIOLATION_SCHEMA = output_store_module.VIOLATION_SCHEMA
+    _apply_resolution_tracking = output_store_module._apply_resolution_tracking
 
     classify_retryable_error = runtime_module.classify_retryable_error
     load_config_module = runtime_module.load_config_module

@@ -117,7 +117,7 @@ def resolve_targets(config_module, runtime_module) -> dict[str, str]:
 
 
 # The complete set of keys a rule catalog's header may carry. `_load_all_rules`
-# in engine/validation_runner.py reads exactly these; preflight rejects anything
+# in engine/runner.py reads exactly these; preflight rejects anything
 # else, so a misspelled `where:` is reported rather than silently ignored — which
 # would drop the filter and evaluate every rule against rows it never scoped.
 # `description` is for whoever reads the YAML and is deliberately unused.

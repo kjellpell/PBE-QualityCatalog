@@ -1,5 +1,5 @@
 # =============================================================================
-# engine/expectations.py
+# engine/rule_engine.py
 # Rule types for the PBE Quality Catalog.
 #
 # A rule is a predicate plus optional row scoping:

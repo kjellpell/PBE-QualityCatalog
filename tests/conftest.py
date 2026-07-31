@@ -68,7 +68,7 @@ CATALOG_FILTER_OVERRIDES = {}
 @pytest.fixture(scope="session")
 def runner(spark, tmp_path_factory):
     """
-    Import engine.validation_runner against a throwaway config.
+    Import engine.runner against a throwaway config.
 
     load_config_module() only searches the Lakehouse config directories, and
     QualityCatalogConfig.py in this repo is explicitly a non-loaded template.
@@ -89,7 +89,7 @@ def runner(spark, tmp_path_factory):
 
     # Import after the config redirect: the module bootstraps config at import
     # time. Output tables are only touched at write time, so they can follow.
-    import engine.validation_runner as vr
+    import engine.runner as vr
 
     fixtures.create_output_tables(
         spark,

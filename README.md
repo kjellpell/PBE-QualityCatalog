@@ -52,18 +52,19 @@ PBE-QualityCatalog/
 │   ├── QualityCatalogConfig.py     (table names, paths)
 │   └── QualityCatalogRuntime.py    (behavior flags, retry/timeout)
 ├── engine/
-│   ├── expectations.py             (rule types + the driver that runs a rule)
-│   ├── resolution.py               (output schemas, Active/Resolved tracking)
+│   ├── rule_engine.py              (rule types + the driver that runs a rule)
+│   ├── output_store.py             (output schemas, Active/Resolved tracking)
 │   ├── runtime.py                  (config loading, target resolution, metrics)
-│   └── validation_runner.py        (main orchestration)
+│   └── runner.py                   (main orchestration)
 ├── rules/                          (YAML rule catalogs — loaded directly by the engine)
 │   ├── faktura.yaml
 │   ├── faser.yaml
 │   └── milepeler.yaml
 ├── tests/                          (pytest suite; see requirements-dev.txt)
-├── nb_dq_00_setup.py               (Delta table DDL, generated from the schemas)
-├── nb_dq_01_preflight.py           (pre-run checks)
-├── nb_dq_03_run_validation.py      (Fabric wrapper for the engine)
+├── scripts/
+│   ├── setup_dq_tables.py          (Delta table DDL, generated from the schemas)
+│   ├── preflight_checks.py         (pre-run checks)
+│   └── run_validation.py           (Fabric wrapper for the engine)
 ├── ARCHITECTURE.md
 ├── DAX_POWERBI.md
 ├── DEPLOY.md
@@ -111,7 +112,7 @@ The engine will raise a clear error if either file is missing.
 4. For each rule group:
   - Read source table from Spark metastore.
   - Apply optional pre-joins and the catalog `where:` filter.
-  - Run each rule through the driver in engine/expectations.py.
+  - Run each rule through the driver in engine/rule_engine.py.
 5. Append summary rows to dq_run_results.
 6. Apply the issue lifecycle to dq_violations.
 7. Write execution evidence to dq_execution_metrics.
@@ -165,7 +166,7 @@ Persistence uses the DataFrame API rather than SQL `MERGE` — Fabric cannot
 resolve schema-qualified names inside a `MERGE` statement.
 
 If resolution tracking fails, the run fails with "Violations not written" — no
-partial data is committed. Rerun nb_dq_00_setup.py to confirm the tables exist
+partial data is committed. Rerun scripts/setup_dq_tables.py to confirm the tables exist
 with the expected schema, then re-run validation.
 
 ---
@@ -174,20 +175,20 @@ with the expected schema, then re-run validation.
 
 ### First-time setup
 
-1. Run nb_dq_00_setup.py to create Delta tables.
+1. Run scripts/setup_dq_tables.py to create Delta tables.
 2. Deploy the YAML catalogs in `rules/` to the Lakehouse (no Delta migration
    needed — rules are loaded directly from YAML).
 
 ### Preflight before promotion or scheduling
 
-1. Run nb_dq_01_preflight.py.
+1. Run scripts/preflight_checks.py.
 2. Confirm the YAML catalogs load and contain rules.
 3. Confirm all referenced source tables exist.
 
 ### Scheduled execution
 
-1. Run nb_dq_03_run_validation.py (the Fabric wrapper for
-   engine/validation_runner.py) after source refresh.
+1. Run scripts/run_validation.py (the Fabric wrapper for
+   engine/runner.py) after source refresh.
 2. Verify summary output and row counts.
 3. Confirm evidence in dq_execution_metrics.
 
@@ -240,8 +241,8 @@ Before promoting changes:
 
 1. `python -m pytest tests/ -v`
 2. `python -m py_compile engine/*.py nb_dq_*.py`
-3. Run `nb_dq_01_preflight.py` — catches missing tables and unresolvable predicates.
-4. Run `nb_dq_03_run_validation.py` with `DRY_RUN = True` — full run against
+3. Run `scripts/preflight_checks.py` — catches missing tables and unresolvable predicates.
+4. Run `scripts/run_validation.py` with `DRY_RUN = True` — full run against
    `_tmp` output tables without touching production data.
 
 ---

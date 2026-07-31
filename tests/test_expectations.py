@@ -8,7 +8,7 @@ bug, and each structured rule type.
 
 import pytest
 
-from engine.expectations import (
+from engine.rule_engine import (
     GROUP_SCOPED,
     RULE_TYPES,
     RuleConfigError,
