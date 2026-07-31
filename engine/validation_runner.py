@@ -334,7 +334,6 @@ def run_validation(
     rule_catalog: dict,
     source_df,
     pk_col: str,
-    ref_cache: dict = None,
 ) -> tuple:
     """
     Validate source_df against all rules in rule_catalog.
@@ -345,8 +344,6 @@ def run_validation(
     source_df    : full Spark DataFrame to validate
     pk_col       : primary key column of source_df (stored as primary_key_value
                    in each violation row)
-    ref_cache    : optional dict for caching reference table DataFrames across
-                   rules, keyed by (table, column); avoids redundant reads
 
     Returns
     -------
@@ -383,7 +380,7 @@ def run_validation(
         for _attempt in range(_max_retries + 1):
             try:
                 result, viols_spark = _run_validator(
-                    source_df, rule, spark, pk_col, ref_cache, _timeout_s
+                    source_df, rule, spark, pk_col, _timeout_s
                 )
                 break
             except concurrent.futures.TimeoutError:
@@ -477,7 +474,6 @@ def _run_validator(
     rule: dict,
     spark_session,
     pk_col,
-    ref_cache,
     timeout_s: float,
 ) -> tuple:
     """Execute one rule in a bounded-time background thread.
@@ -490,7 +486,7 @@ def _run_validator(
     When a timeout does *not* occur the thread is already finished by the time
     we call ``shutdown(wait=True)``, so there is no extra blocking cost.
     """
-    call = lambda: run_rule(rule, source_df, spark_session, pk_col, ref_cache)
+    call = lambda: run_rule(rule, source_df, spark_session, pk_col)
 
     _executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     _future = _executor.submit(call)
@@ -509,12 +505,6 @@ def main() -> tuple[int, int]:
     all_catalogs = _load_all_rules()
     result_dfs    = []
     violation_dfs = []
-
-    # Shared cache for reference tables used by the reference_exists and
-    # reference_active expectations.  Keyed per reference table/column so
-    # repeated rules against the same reference read it only once across
-    # all catalogs.
-    ref_cache: dict = {}
 
     for catalog in all_catalogs:
         rule_group = catalog["rule_group"]
@@ -585,7 +575,6 @@ def main() -> tuple[int, int]:
                 rule_catalog=catalog,
                 source_df=source_df,
                 pk_col=pk_col,
-                ref_cache=ref_cache,
             )
         finally:
             source_df.unpersist()

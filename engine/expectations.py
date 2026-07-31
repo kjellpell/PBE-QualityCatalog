@@ -35,7 +35,7 @@
 # between rule types.
 # =============================================================================
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 from pyspark.sql import DataFrame
@@ -199,7 +199,6 @@ class Context:
     cfg: object             # the value of the rule-type key
     spark: object
     pk_column: str | None
-    ref_cache: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -283,66 +282,6 @@ def _build_unique(ctx: Context) -> Evaluation:
     )
     return Evaluation(ctx.df, violations, condition)
 
-
-def _build_exists_in(ctx: Context) -> Evaluation:
-    """
-    Every non-NULL value must exist in a reference table.
-
-    With `active_column`/`active_value` the reference set is narrowed to rows
-    that are currently active, which is what the old `reference_active` type
-    did as a separate expectation.
-    """
-    cfg = ctx.cfg
-    if not isinstance(cfg, dict):
-        raise RuleConfigError("'exists_in' must be a mapping.")
-    column, table, reference_column = _require(cfg, "column", "table", "reference_column")
-    active_column = cfg.get("active_column")
-    active_value = cfg.get("active_value")
-    if bool(active_column) != (active_value is not None):
-        raise RuleConfigError(
-            "'active_column' and 'active_value' must be given together."
-        )
-    _require_columns(ctx.df, column)
-
-    cache_key = (table, reference_column, active_column, str(active_value))
-    reference = ctx.ref_cache.get(cache_key) if ctx.ref_cache is not None else None
-    if reference is None:
-        try:
-            source = ctx.spark.table(table)
-            if active_column:
-                if isinstance(active_value, str):
-                    active = F.lower(_as_str(active_column)) == F.lower(F.lit(active_value))
-                else:
-                    active = F.col(active_column) == active_value
-                source = source.filter(active)
-            reference = (
-                source.select(_as_str(reference_column).alias("_ref_key")).distinct()
-            )
-        except RuleConfigError:
-            raise
-        except Exception as exc:
-            raise RuleConfigError(f"Could not load reference table '{table}': {exc}")
-        if ctx.ref_cache is not None:
-            ctx.ref_cache[cache_key] = reference
-
-    evaluated = ctx.df.filter(F.col(column).isNotNull())
-    violating = evaluated.alias("src").join(
-        reference, F.col(f"src.{column}").cast("string") == F.col("_ref_key"), "left_anti"
-    )
-
-    qualifier = f" where {active_column} = {active_value}" if active_column else ""
-    condition = f"{column} must exist in {table}.{reference_column}{qualifier}"
-    violations = violating.select(
-        _as_str(ctx.pk_column).alias("primary_key_value"),
-        F.lit(column).alias("violated_column"),
-        _as_str(column).alias("actual_value"),
-        F.lit(condition).alias("expected_condition"),
-        F.concat(
-            F.lit("Value '"), _str_or_null(column),
-            F.lit(f"' not found in {table}.{reference_column}{qualifier}."),
-        ).alias("violation_detail"),
-    )
-    return Evaluation(evaluated, violations, condition)
 
 
 _ROW_COUNT_OPERATORS = {
@@ -675,11 +614,6 @@ RULE_TYPES: dict[str, RuleType] = {
     for rule_type in (
         RuleType("check", "row", _build_check, "rows"),
         RuleType("unique", "row", _build_unique, "rows"),
-        RuleType(
-            "exists_in", "row", _build_exists_in, "rows",
-            required=("column", "table", "reference_column"),
-            column_keys=("column",),
-        ),
         RuleType("sql", "row", _build_sql, "rows"),
         RuleType("row_count", "table", _build_row_count, "rows", required=("threshold",)),
         RuleType(
@@ -737,7 +671,7 @@ def _error(message: str) -> dict:
     }
 
 
-def run_rule(rule: dict, df: DataFrame, spark, pk_column=None, ref_cache=None) -> tuple:
+def run_rule(rule: dict, df: DataFrame, spark, pk_column=None) -> tuple:
     """
     Evaluate one rule and return ``(result_dict, violations_df)``.
 
@@ -769,7 +703,7 @@ def run_rule(rule: dict, df: DataFrame, spark, pk_column=None, ref_cache=None) -
         evaluation = rule_type.build(
             Context(
                 df=scoped, cfg=rule[type_name], spark=spark,
-                pk_column=resolved_pk, ref_cache=ref_cache if ref_cache is not None else {},
+                pk_column=resolved_pk,
             )
         )
 

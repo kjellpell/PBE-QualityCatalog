@@ -87,20 +87,6 @@ def test_structured_type_bad_column_is_caught(preflight, probe, columns):
     assert any("event_column 'nope' not found" in e for e in errors)
 
 
-def test_reference_table_is_not_checked_against_source_columns(preflight, probe, columns):
-    """
-    The old _RULE_COLUMN_KEYS treated reference_table as a source column and
-    warned on every reference rule. A reference table is not a source column.
-    """
-    errors = preflight.check_rule(
-        _rule(exists_in={
-            "column": "indikator", "table": "some.other_table", "reference_column": "kode",
-        }),
-        probe, columns, "t.yaml",
-    )
-    assert errors == []
-
-
 def test_unknown_key_is_caught(preflight, probe, columns):
     errors = preflight.check_rule(
         _rule(check="tidsbruk >= 0", parameters={"columns": ["x"]}), probe, columns, "t.yaml"

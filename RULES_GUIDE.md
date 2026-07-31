@@ -108,7 +108,6 @@ uniqueness, cross-table lookups, and checks over groups of rows.
 |---|---|---|
 | `check` | row | – |
 | `unique` | row | – |
-| `exists_in` | row | `column`, `table`, `reference_column` |
 | `sql` | row | – |
 | `row_count` | table | `threshold` |
 | `event_flow` | group | `event_column`, `group_column`, `order_column`, `cycle` |
@@ -127,23 +126,6 @@ uniqueness, cross-table lookups, and checks over groups of rows.
   unique:
   - stage_recno
 ```
-
-### exists_in
-
-```yaml
-- rule_id: X-001
-  name: Saksbehandler må finnes i kodeverket
-  exists_in:
-    column: saksansvarlig_kode
-    table: kodeverk.saksbehandlere
-    reference_column: kode
-    active_column: status        # optional; both keys or neither
-    active_value: Aktiv
-```
-
-Only non-NULL values are checked. With `active_column`/`active_value` the
-reference set is narrowed to currently-active rows. Reference tables are read
-once per distinct `(table, column, active filter)` and cached across rules.
 
 ### event_flow
 
@@ -239,6 +221,22 @@ milestones share a timestamp gives the same verdict every run.
 Prefer `check:` over `sql:`. A predicate is validated against the schema before
 the run and cannot modify anything; `sql:` runs an arbitrary statement.
 
+`sql:` is also the way to reach another table. There is no dedicated
+referential-integrity rule type — nothing needed one — so a lookup against a
+codebook is written as a query returning the offending rows:
+
+```yaml
+- rule_id: X-006
+  name: Saksbehandler må finnes i kodeverket
+  sql:
+    query: >
+      SELECT f.stage_recno
+      FROM saksbehandling.faser f
+      LEFT JOIN kodeverk.saksbehandlere k ON f.saksansvarlig_kode = k.kode
+      WHERE f.saksansvarlig_kode IS NOT NULL AND k.kode IS NULL
+    pk_column: stage_recno
+```
+
 ## Optional rule keys
 
 | Key | Meaning |
@@ -256,7 +254,7 @@ Each rule type declares a scope, and that fixes the unit for `total_rows`,
 
 | Scope | One unit is | Used by |
 |---|---|---|
-| `row` | one row | `check`, `unique`, `exists_in`, `sql` |
+| `row` | one row | `check`, `unique`, `sql` |
 | `group` | one group | `event_flow`, `gate_complete`, `group_aggregate_matches` |
 | `table` | the whole table | `row_count` |
 

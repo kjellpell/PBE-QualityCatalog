@@ -157,35 +157,6 @@ def test_group_aggregate_matches(spark):
     assert violations.collect()[0].primary_key_value == "i2"
 
 
-def test_exists_in(spark):
-    spark.createDataFrame([("K1", "Y"), ("K2", "N")], "code string, active string") \
-        .createOrReplaceTempView("exists_in_ref")
-    df = spark.createDataFrame([(1, "K1"), (2, "K9")], "id int, code string")
-
-    rule = {"exists_in": {"column": "code", "table": "exists_in_ref", "reference_column": "code"}}
-    result, violations = run_rule(rule, df, spark, pk_column="id")
-
-    assert (result["total_rows"], result["failed_rows"]) == (2, 1)
-    assert violations.collect()[0].actual_value == "K9"
-
-
-def test_exists_in_with_active_filter(spark):
-    spark.createDataFrame([("K1", "Y"), ("K2", "N")], "code string, active string") \
-        .createOrReplaceTempView("exists_in_ref2")
-    df = spark.createDataFrame([(1, "K1"), (2, "K2")], "id int, code string")
-
-    rule = {
-        "exists_in": {
-            "column": "code", "table": "exists_in_ref2", "reference_column": "code",
-            "active_column": "active", "active_value": "Y",
-        }
-    }
-    result, violations = run_rule(rule, df, spark, pk_column="id")
-
-    assert result["failed_rows"] == 1      # K2 exists but is inactive
-    assert violations.collect()[0].actual_value == "K2"
-
-
 def test_row_count(spark):
     df = spark.createDataFrame([(1,), (2,)], "id int")
 
