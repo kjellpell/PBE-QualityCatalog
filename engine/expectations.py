@@ -467,11 +467,11 @@ def _build_event_flow(ctx: Context) -> Evaluation:
     return Evaluation(evaluated, violations, condition)
 
 
-def _build_gate_complete(ctx: Context) -> Evaluation:
+def _build_required_event(ctx: Context) -> Evaluation:
     """Every group must contain at least one row carrying the required event."""
     cfg = ctx.cfg
     if not isinstance(cfg, dict):
-        raise RuleConfigError("'gate_complete' must be a mapping.")
+        raise RuleConfigError("'required_event' must be a mapping.")
     event_column, group_column, value = _require(
         cfg, "event_column", "group_column", "value"
     )
@@ -583,7 +583,7 @@ RULE_TYPES: dict[str, RuleType] = {
             gated=True,
         ),
         RuleType(
-            "gate_complete", "group", _build_gate_complete, "groups",
+            "required_event", "group", _build_required_event, "groups",
             required=("event_column", "group_column", "value"),
             column_keys=("event_column", "group_column", "order_column"),
         ),

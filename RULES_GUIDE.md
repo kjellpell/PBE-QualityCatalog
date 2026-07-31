@@ -110,7 +110,7 @@ uniqueness, cross-table lookups, and checks over groups of rows.
 | `unique` | row | – |
 | `row_count` | table | `threshold` |
 | `event_flow` | group | `event_column`, `group_column`, `order_column`, `cycle` |
-| `gate_complete` | group | `event_column`, `group_column`, `value` |
+| `required_event` | group | `event_column`, `group_column`, `value` |
 | `group_aggregate_matches` | group | `group_column`, `aggregate_column`, `reference_column` |
 
 <!-- END RULE TYPES -->
@@ -176,6 +176,27 @@ scalar or a list.
 Events on the **same date** are read in declared order, so a group whose
 milestones share a timestamp gives the same verdict every run.
 
+### required_event
+
+Every group must contain at least one row carrying the named event.
+
+```yaml
+- rule_id: X-003
+  name: Alle faser må ha godkjenning
+  required_event:
+    event_column: milestone_title
+    group_column: to_stage_recno
+    value: Godkjent
+    order_column: milestonedate  # optional; also require a non-NULL date
+```
+
+Groups with no matching row are violations, keyed on `group_column`.
+
+Note how this differs from `event_flow`'s `completion_gate:`, which names the same
+kind of thing for the opposite purpose: `required_event:` **asserts** the event is
+there and fails the group when it is not, while `completion_gate:` **scopes** which
+groups `event_flow` evaluates and silently drops the ones that have not got there.
+
 ### group_aggregate_matches
 
 ```yaml
@@ -187,18 +208,6 @@ milestones share a timestamp gives the same verdict every run.
     reference_column: fakturasum
     aggregate: sum               # sum | count | avg | min | max
     tolerance: 0.01
-```
-
-### gate_complete
-
-```yaml
-- rule_id: X-003
-  name: Alle faser må ha godkjenning
-  gate_complete:
-    event_column: milestone_title
-    group_column: to_stage_recno
-    value: Godkjent
-    order_column: milestonedate  # optional; also require a non-NULL date
 ```
 
 ### row_count
@@ -253,7 +262,7 @@ Each rule type declares a scope, and that fixes the unit for `total_rows`,
 | Scope | One unit is | Used by |
 |---|---|---|
 | `row` | one row | `check`, `unique` |
-| `group` | one group | `event_flow`, `gate_complete`, `group_aggregate_matches` |
+| `group` | one group | `event_flow`, `required_event`, `group_aggregate_matches` |
 | `table` | the whole table | `row_count` |
 
 For a group-scoped rule, a group failing several pairs counts **once**, while the

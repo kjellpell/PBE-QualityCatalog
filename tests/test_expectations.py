@@ -128,11 +128,11 @@ def test_unique(spark):
     assert violations.collect()[0].expected_condition == "UNIQUE(a, b)"
 
 
-def test_gate_complete_counts_groups(spark):
+def test_required_event_counts_groups(spark):
     df = spark.createDataFrame(
         [("g1", "approved"), ("g1", "other"), ("g2", "other")], "grp string, ev string"
     )
-    rule = {"gate_complete": {"event_column": "ev", "group_column": "grp", "value": "approved"}}
+    rule = {"required_event": {"event_column": "ev", "group_column": "grp", "value": "approved"}}
     result, violations = run_rule(rule, df, spark)
 
     assert (result["total_rows"], result["failed_rows"]) == (2, 1)
@@ -221,9 +221,9 @@ def test_rule_level_pk_overrides_catalog(spark):
 def _null_group_case(name):
     """(rule, rows, schema) per group-scoped type: two real groups, one failing,
     plus rows carrying a NULL group key."""
-    if name == "gate_complete":
+    if name == "required_event":
         return (
-            {"gate_complete": {"event_column": "ev", "group_column": "grp", "value": "ok"}},
+            {"required_event": {"event_column": "ev", "group_column": "grp", "value": "ok"}},
             [("g1", "ok"), ("g2", "x"), (None, "x"), (None, "ok")],
             "grp string, ev string",
         )
@@ -252,8 +252,8 @@ def test_null_group_key_is_neither_counted_nor_reported(spark, type_name):
     """
     A NULL group key is not a group. Counting it inflates the denominator, and
     reporting it emits a violation whose primary_key_value cannot be joined back
-    to anything. gate_complete used to do the latter and the ordering rule the
-    former, while the others already excluded NULLs.
+    to anything. The presence check used to do the latter and the ordering rule
+    the former, while the others already excluded NULLs.
     """
     rule, rows, schema = _null_group_case(type_name)
     df = spark.createDataFrame(rows, schema)
@@ -273,7 +273,7 @@ def test_null_group_key_is_neither_counted_nor_reported(spark, type_name):
 
 def test_group_scoped_is_derived_from_the_registry(spark):
     assert GROUP_SCOPED == {
-        "event_flow", "gate_complete", "group_aggregate_matches"
+        "event_flow", "required_event", "group_aggregate_matches"
     }
     assert all(RULE_TYPES[name].scope == "group" for name in GROUP_SCOPED)
 
