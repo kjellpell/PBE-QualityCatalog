@@ -39,6 +39,19 @@ uniqueness, reference lookups, and checks over groups of rows.
 predicate is FALSE, so a NULL predicate leaves the row unevaluated. This is what
 `~F.expr(...)` already does in Spark; it is inherited, not implemented.
 
+### Rules cannot modify data
+
+Every rule type is a predicate or a declarative block; none executes a
+caller-supplied statement. `check:`, `when:` and `where:` go through `F.expr()`,
+which builds a column expression and cannot carry DDL or DML. A `sql:` rule type
+existed and was removed: nothing used it, `spark.sql()` ran whatever string it
+was given, and `DRY_RUN` did not protect against it — dry-run redirects the
+*output* tables, so a mutating query would still have run against production.
+Removing it makes read-only a property of the engine rather than a convention.
+
+A check needing a second table uses `joins:` in the catalog header, so the
+joined columns are available to an ordinary predicate.
+
 ### One driver owns the common work
 
 `run_rule()` in `engine/expectations.py` owns `when:` filtering, primary-key

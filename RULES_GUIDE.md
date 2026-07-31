@@ -108,7 +108,6 @@ uniqueness, cross-table lookups, and checks over groups of rows.
 |---|---|---|
 | `check` | row | – |
 | `unique` | row | – |
-| `sql` | row | – |
 | `row_count` | table | `threshold` |
 | `event_flow` | group | `event_column`, `group_column`, `order_column`, `cycle` |
 | `gate_complete` | group | `event_column`, `group_column`, `value` |
@@ -202,7 +201,7 @@ milestones share a timestamp gives the same verdict every run.
     order_column: milestonedate  # optional; also require a non-NULL date
 ```
 
-### row_count / sql
+### row_count
 
 ```yaml
 - rule_id: X-004
@@ -210,32 +209,31 @@ milestones share a timestamp gives the same verdict every run.
   row_count:
     operator: '>='               # default '>='
     threshold: 1000
-
-- rule_id: X-005
-  name: Egendefinert sjekk
-  sql:
-    query: SELECT id FROM saksbehandling.faser WHERE ...
-    pk_column: id                # optional; otherwise a row index is used
 ```
 
-Prefer `check:` over `sql:`. A predicate is validated against the schema before
-the run and cannot modify anything; `sql:` runs an arbitrary statement.
+### Reaching another table
 
-`sql:` is also the way to reach another table. There is no dedicated
-referential-integrity rule type — nothing needed one — so a lookup against a
-codebook is written as a query returning the offending rows:
+Every rule type reads only the catalog's own source, so a check that needs a
+second table is expressed with `joins:` in the catalog header — the joined
+columns are then available to any `check:` predicate:
 
 ```yaml
+joins:
+- table: kodeverk.saksbehandlere
+  left_on: saksansvarlig_kode
+  right_on: kode
+  select: [kode]
+
+rules:
 - rule_id: X-006
   name: Saksbehandler må finnes i kodeverket
-  sql:
-    query: >
-      SELECT f.stage_recno
-      FROM saksbehandling.faser f
-      LEFT JOIN kodeverk.saksbehandlere k ON f.saksansvarlig_kode = k.kode
-      WHERE f.saksansvarlig_kode IS NOT NULL AND k.kode IS NULL
-    pk_column: stage_recno
+  when: saksansvarlig_kode IS NOT NULL
+  check: kode IS NOT NULL          # NULL means the left join found no match
 ```
+
+There is deliberately no rule type that executes raw SQL. Every rule is a
+predicate or a declarative block, so a rule cannot modify data — see
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Optional rule keys
 
@@ -254,7 +252,7 @@ Each rule type declares a scope, and that fixes the unit for `total_rows`,
 
 | Scope | One unit is | Used by |
 |---|---|---|
-| `row` | one row | `check`, `unique`, `sql` |
+| `row` | one row | `check`, `unique` |
 | `group` | one group | `event_flow`, `gate_complete`, `group_aggregate_matches` |
 | `table` | the whole table | `row_count` |
 
@@ -293,7 +291,7 @@ One row in `dq_violations` per failing unit.
 |---|---|
 | `primary_key_value` | Row key, or group key for group-scoped rules |
 | `violation_scope` | `row` or `group` — how to read `primary_key_value` |
-| `violated_column` | The column at fault. Always a real column name, or NULL for `sql` |
+| `violated_column` | The column at fault. A real column name, or NULL if the predicate names none |
 | `actual_value` | The offending value |
 | `expected_condition` | The full predicate or condition that was required |
 | `violation_detail` | Human-readable explanation |

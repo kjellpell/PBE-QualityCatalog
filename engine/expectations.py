@@ -321,45 +321,6 @@ def _build_row_count(ctx: Context) -> Evaluation:
     )
 
 
-def _build_sql(ctx: Context) -> Evaluation:
-    """
-    Every row returned by the query is a violation.
-
-    Kept for checks that cannot be expressed as a row predicate. Unlike
-    `check:`/`when:`, this runs an arbitrary statement.
-    """
-    cfg = ctx.cfg
-    query = cfg.get("query") if isinstance(cfg, dict) else cfg
-    if not isinstance(query, str) or not query.strip():
-        raise RuleConfigError("'sql' must be a non-empty query.")
-    pk_column = cfg.get("pk_column") if isinstance(cfg, dict) else None
-
-    try:
-        returned = ctx.spark.sql(query.strip())
-    except Exception as exc:
-        raise RuleConfigError(f"SQL execution error: {exc}")
-
-    if pk_column and pk_column in returned.columns:
-        pk = _as_str(pk_column)
-    else:
-        returned = returned.withColumn(
-            "_row_num", F.row_number().over(Window.orderBy(F.monotonically_increasing_id()))
-        )
-        pk = _as_str("_row_num")
-
-    detail_columns = [c for c in returned.columns if c != "_row_num"]
-    violations = returned.select(
-        pk.alias("primary_key_value"),
-        F.lit(None).cast("string").alias("violated_column"),
-        F.lit(None).cast("string").alias("actual_value"),
-        F.lit("Query must return 0 rows").alias("expected_condition"),
-        F.to_json(F.struct(*[F.col(c) for c in detail_columns])).alias("violation_detail"),
-    )
-    # Only the returned rows were examined, so they are both the denominator
-    # and the failures — matching how this check has always been reported.
-    return Evaluation(returned, violations, "query returns no rows")
-
-
 def _build_event_flow(ctx: Context) -> Evaluation:
     """
     Within each group, declared events must occur in order, as whole passes.
@@ -614,7 +575,6 @@ RULE_TYPES: dict[str, RuleType] = {
     for rule_type in (
         RuleType("check", "row", _build_check, "rows"),
         RuleType("unique", "row", _build_unique, "rows"),
-        RuleType("sql", "row", _build_sql, "rows"),
         RuleType("row_count", "table", _build_row_count, "rows", required=("threshold",)),
         RuleType(
             "event_flow", "group", _build_event_flow, "groups",
@@ -693,7 +653,7 @@ def run_rule(rule: dict, df: DataFrame, spark, pk_column=None) -> tuple:
             scoped = df.filter(F.expr(condition.strip()))
 
         resolved_pk = rule.get("pk_column") or pk_column
-        if rule_type.scope == "row" and type_name != "sql":
+        if rule_type.scope == "row":
             if not resolved_pk:
                 raise RuleConfigError(
                     "No primary key: set 'pk_column' on the rule or the catalog."

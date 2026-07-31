@@ -169,20 +169,6 @@ def test_row_count(spark):
     assert violations.count() == 0         # nothing row-level to point at
 
 
-def test_sql(spark):
-    spark.createDataFrame([(1, "bad"), (2, "ok")], "id int, flag string") \
-        .createOrReplaceTempView("sql_fixture")
-    df = spark.createDataFrame([(1,)], "id int")
-
-    rule = {"sql": {"query": "SELECT id FROM sql_fixture WHERE flag = 'bad'", "pk_column": "id"}}
-    result, violations = run_rule(rule, df, spark)
-
-    assert result["status"] == "FAILED"
-    row = violations.collect()[0]
-    assert row.primary_key_value == "1"
-    assert row.violated_column is None     # no single offending column
-
-
 # --------------------------------------------------------------------------
 # configuration errors surface as ERROR, not as a crash
 # --------------------------------------------------------------------------
