@@ -100,7 +100,8 @@ evaluated.
 ## Rule types
 
 Most rules are `check:`. The rest cover things a row predicate cannot express —
-uniqueness, cross-table lookups, and checks over groups of rows.
+uniqueness, and checks over groups of rows. A check needing a second table is a
+`check:` over a `joins:` column, not a rule type of its own.
 
 <!-- BEGIN RULE TYPES (generated — see tests/test_docs.py) -->
 
@@ -108,10 +109,9 @@ uniqueness, cross-table lookups, and checks over groups of rows.
 |---|---|---|
 | `check` | row | – |
 | `unique` | row | – |
-| `row_count` | table | `threshold` |
 | `event_flow` | group | `event_column`, `group_column`, `order_column`, `cycle` |
 | `required_event` | group | `event_column`, `group_column`, `value` |
-| `group_aggregate_matches` | group | `group_column`, `aggregate_column`, `reference_column` |
+| `aggregate_matches` | group | `group_column`, `aggregate_column`, `reference_column` |
 
 <!-- END RULE TYPES -->
 
@@ -197,27 +197,17 @@ kind of thing for the opposite purpose: `required_event:` **asserts** the event 
 there and fails the group when it is not, while `completion_gate:` **scopes** which
 groups `event_flow` evaluates and silently drops the ones that have not got there.
 
-### group_aggregate_matches
+### aggregate_matches
 
 ```yaml
 - rule_id: FAK-003
   name: Fakturalinjer må summere til totalen
-  group_aggregate_matches:
+  aggregate_matches:
     group_column: fakturanr
     aggregate_column: linje_belop
     reference_column: fakturasum
     aggregate: sum               # sum | count | avg | min | max
     tolerance: 0.01
-```
-
-### row_count
-
-```yaml
-- rule_id: X-004
-  name: Tabellen må ha rader
-  row_count:
-    operator: '>='               # default '>='
-    threshold: 1000
 ```
 
 ### Reaching another table
@@ -262,8 +252,7 @@ Each rule type declares a scope, and that fixes the unit for `total_rows`,
 | Scope | One unit is | Used by |
 |---|---|---|
 | `row` | one row | `check`, `unique` |
-| `group` | one group | `event_flow`, `required_event`, `group_aggregate_matches` |
-| `table` | the whole table | `row_count` |
+| `group` | one group | `event_flow`, `required_event`, `aggregate_matches` |
 
 For a group-scoped rule, a group failing several pairs counts **once**, while the
 violation log still lists each failing pair. `passed_rows` is always

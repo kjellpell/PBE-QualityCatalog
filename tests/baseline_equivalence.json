@@ -33,7 +33,7 @@
       "rule_id": "FAK-003",
       "rule_name": "Alle fakturalinjer må ha samme sum som total",
       "table_name": "fakturalinjer",
-      "expectation": "group_aggregate_matches",
+      "expectation": "aggregate_matches",
       "total_rows": "2",
       "passed_rows": "1",
       "failed_rows": "1",

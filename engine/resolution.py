@@ -81,7 +81,7 @@ VIOLATION_SCHEMA = StructType([
     # run so violation age can be calculated as (now - first_seen_at).
     StructField("first_seen_at",       TimestampType(), True),
     # "row" — primary_key_value is a PK in table_name; "group" — it's a group key
-    # (event_flow, required_event, group_aggregate_matches).
+    # (event_flow, required_event, aggregate_matches).
     StructField("violation_scope",     StringType(),    True),
 ])
 

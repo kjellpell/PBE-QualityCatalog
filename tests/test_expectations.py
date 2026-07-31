@@ -139,13 +139,13 @@ def test_required_event_counts_groups(spark):
     assert violations.collect()[0].primary_key_value == "g2"
 
 
-def test_group_aggregate_matches(spark):
+def test_aggregate_matches(spark):
     df = spark.createDataFrame(
         [("i1", 60.0, 100.0), ("i1", 40.0, 100.0), ("i2", 60.0, 100.0), ("i2", 30.0, 100.0)],
         "inv string, amount double, total double",
     )
     rule = {
-        "group_aggregate_matches": {
+        "aggregate_matches": {
             "group_column": "inv",
             "aggregate_column": "amount",
             "reference_column": "total",
@@ -155,18 +155,6 @@ def test_group_aggregate_matches(spark):
 
     assert (result["total_rows"], result["failed_rows"]) == (2, 1)
     assert violations.collect()[0].primary_key_value == "i2"
-
-
-def test_row_count(spark):
-    df = spark.createDataFrame([(1,), (2,)], "id int")
-
-    passing, _ = run_rule({"row_count": {"threshold": 2}}, df, spark)
-    assert passing["status"] == "PASSED"
-
-    failing, violations = run_rule({"row_count": {"threshold": 5}}, df, spark)
-    assert failing["status"] == "FAILED"
-    assert failing["failed_rows"] == 2     # whole table fails
-    assert violations.count() == 0         # nothing row-level to point at
 
 
 # --------------------------------------------------------------------------
@@ -237,7 +225,7 @@ def _null_group_case(name):
             "grp string, ev string, seq int",
         )
     return (
-        {"group_aggregate_matches": {
+        {"aggregate_matches": {
             "group_column": "grp", "aggregate_column": "amount", "reference_column": "total",
         }},
         [("g1", 60.0, 100.0), ("g1", 40.0, 100.0),
@@ -273,7 +261,7 @@ def test_null_group_key_is_neither_counted_nor_reported(spark, type_name):
 
 def test_group_scoped_is_derived_from_the_registry(spark):
     assert GROUP_SCOPED == {
-        "event_flow", "required_event", "group_aggregate_matches"
+        "event_flow", "required_event", "aggregate_matches"
     }
     assert all(RULE_TYPES[name].scope == "group" for name in GROUP_SCOPED)
 

@@ -213,7 +213,6 @@ class Evaluation:
     evaluated: DataFrame
     violations: DataFrame
     describes: str
-    failed_override: int | None = None
 
 
 # =============================================================================
@@ -281,44 +280,6 @@ def _build_unique(ctx: Context) -> Evaluation:
         F.lit(f"Duplicate combination of ({combination}).").alias("violation_detail"),
     )
     return Evaluation(ctx.df, violations, condition)
-
-
-
-_ROW_COUNT_OPERATORS = {
-    ">": lambda a, b: a > b,
-    "<": lambda a, b: a < b,
-    ">=": lambda a, b: a >= b,
-    "<=": lambda a, b: a <= b,
-    "==": lambda a, b: a == b,
-    "=": lambda a, b: a == b,
-    "!=": lambda a, b: a != b,
-}
-
-
-def _build_row_count(ctx: Context) -> Evaluation:
-    """The table as a whole must hold a given number of rows."""
-    cfg = ctx.cfg
-    if not isinstance(cfg, dict):
-        raise RuleConfigError("'row_count' must be a mapping.")
-    (threshold,) = _require(cfg, "threshold")
-    operator = str(cfg.get("operator", ">="))
-    if operator not in _ROW_COUNT_OPERATORS:
-        raise RuleConfigError(
-            f"Unsupported operator '{operator}'. Allowed: {sorted(_ROW_COUNT_OPERATORS)}"
-        )
-    try:
-        threshold = float(threshold)
-    except (TypeError, ValueError):
-        raise RuleConfigError(f"'threshold' must be numeric, got {threshold!r}.")
-
-    total = ctx.df.count()
-    holds = _ROW_COUNT_OPERATORS[operator](float(total), threshold)
-    return Evaluation(
-        evaluated=ctx.df,
-        violations=empty_violations(ctx.spark),
-        describes=f"COUNT(*) {operator} {threshold}",
-        failed_override=0 if holds else total,
-    )
 
 
 def _build_event_flow(ctx: Context) -> Evaluation:
@@ -501,11 +462,11 @@ def _build_required_event(ctx: Context) -> Evaluation:
     return Evaluation(evaluated, violations, condition)
 
 
-def _build_group_aggregate_matches(ctx: Context) -> Evaluation:
+def _build_aggregate_matches(ctx: Context) -> Evaluation:
     """An aggregate over each group must match a reference value on the group."""
     cfg = ctx.cfg
     if not isinstance(cfg, dict):
-        raise RuleConfigError("'group_aggregate_matches' must be a mapping.")
+        raise RuleConfigError("'aggregate_matches' must be a mapping.")
     group_column, aggregate_column, reference_column = _require(
         cfg, "group_column", "aggregate_column", "reference_column"
     )
@@ -556,7 +517,7 @@ def _build_group_aggregate_matches(ctx: Context) -> Evaluation:
 @dataclass(frozen=True)
 class RuleType:
     name: str                 # the YAML key; the rule-type name IS the key
-    scope: str                # "row" | "group" | "table"
+    scope: str                # "row" | "group"
     build: Callable[[Context], Evaluation]
     unit: str                 # what one unit is called, for the details text
     # Config keys that must be present. Preflight reads these, so the contract
@@ -575,7 +536,6 @@ RULE_TYPES: dict[str, RuleType] = {
     for rule_type in (
         RuleType("check", "row", _build_check, "rows"),
         RuleType("unique", "row", _build_unique, "rows"),
-        RuleType("row_count", "table", _build_row_count, "rows", required=("threshold",)),
         RuleType(
             "event_flow", "group", _build_event_flow, "groups",
             required=("event_column", "group_column", "order_column", "cycle"),
@@ -588,7 +548,7 @@ RULE_TYPES: dict[str, RuleType] = {
             column_keys=("event_column", "group_column", "order_column"),
         ),
         RuleType(
-            "group_aggregate_matches", "group", _build_group_aggregate_matches, "groups",
+            "aggregate_matches", "group", _build_aggregate_matches, "groups",
             required=("group_column", "aggregate_column", "reference_column"),
             column_keys=("group_column", "aggregate_column", "reference_column"),
         ),
@@ -668,9 +628,7 @@ def run_rule(rule: dict, df: DataFrame, spark, pk_column=None) -> tuple:
         )
 
         total = evaluation.evaluated.count()
-        if evaluation.failed_override is not None:
-            failed = evaluation.failed_override
-        elif rule_type.scope == "group":
+        if rule_type.scope == "group":
             # One group counts once however many of its pairs or events failed,
             # so failures stay in the same unit as the denominator.
             failed = evaluation.violations.select("primary_key_value").distinct().count()
