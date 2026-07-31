@@ -112,34 +112,47 @@ def _saker_rows():
 
 
 def _milepaeler_rows():
-    G_PASS, G_FAIL, G_UNGATED = 10, 11, 12
-    d = date(2024, 2, 1)
+    """
+    Dates are spread one day apart within each group so that event_flow's
+    ordering is genuinely exercised. With every milestone on the same date the
+    ordering check would be vacuous and a regression could slip through.
+    """
+    G_PASS, G_INCOMPLETE, G_UNGATED, G_MISORDERED = 10, 11, 12, 13
+
+    def day(n):
+        return date(2024, 2, n)
+
     return [
-        # Group 10 — gated in, has both members of both required pairs -> passes
-        (1, "Sendt til politisk behandling", G_PASS, "Nådd", d, "PB360"),
-        (2, "Merknader oversendt", G_PASS, "Nådd", d, "PB360"),
-        (3, "Mottatt revidert planforslag", G_PASS, "Nådd", d, "PB360"),
-        (4, "Anmodning om oppdatert plandokumentasjon", G_PASS, "Nådd", d, "PB360"),
-        (5, "Mottatt oppdatert plandokumentasjon", G_PASS, "Nådd", d, "PB360"),
-        # Group 11 — gated in, start present but stop missing -> MIL-003 violation
-        (6, "Sendt til politisk behandling", G_FAIL, "Nådd", d, "PB360"),
-        (7, "Merknader oversendt", G_FAIL, "Nådd", d, "PB360"),
-        # Group 12 — never gated in; incomplete pair must NOT be reported
-        (8, "Merknader oversendt", G_UNGATED, "Nådd", d, "PB360"),
-        # MIL-001: required columns null
-        (9, None, G_PASS, "Nådd", d, "PB360"),
-        (10, "Merknader oversendt", None, "Nådd", d, "PB360"),
-        # MIL-002: reached milestone with no date
+        # Group 10 — gated in, both pairs complete and in order -> passes
+        (1, "Sendt til politisk behandling", G_PASS, "Nådd", day(1), "PB360"),
+        (2, "Merknader oversendt", G_PASS, "Nådd", day(2), "PB360"),
+        (3, "Mottatt revidert planforslag", G_PASS, "Nådd", day(3), "PB360"),
+        (4, "Anmodning om oppdatert plandokumentasjon", G_PASS, "Nådd", day(4), "PB360"),
+        (5, "Mottatt oppdatert plandokumentasjon", G_PASS, "Nådd", day(5), "PB360"),
+        # Group 11 — gated in, pair opened and never closed -> MIL-004 violation
+        (6, "Sendt til politisk behandling", G_INCOMPLETE, "Nådd", day(1), "PB360"),
+        (7, "Merknader oversendt", G_INCOMPLETE, "Nådd", day(2), "PB360"),
+        # Group 12 — never gated in; the same incomplete pair must NOT be reported
+        (8, "Merknader oversendt", G_UNGATED, "Nådd", day(2), "PB360"),
+        # Group 13 — gated in, both events present but in the wrong order.
+        # Only an ordering check catches this; a presence check would pass it.
+        (18, "Sendt til politisk behandling", G_MISORDERED, "Nådd", day(1), "PB360"),
+        (19, "Mottatt revidert planforslag", G_MISORDERED, "Nådd", day(2), "PB360"),
+        (20, "Merknader oversendt", G_MISORDERED, "Nådd", day(3), "PB360"),
+        # MIL-001 / MIL-002: required columns null
+        (9, None, G_PASS, "Nådd", day(6), "PB360"),
+        (10, "Merknader oversendt", None, "Nådd", day(6), "PB360"),
+        # MIL-003: reached milestone with no date
         (11, "Merknader oversendt", G_PASS, "Nådd", None, "PB360"),
-        # MIL-002 passing counterpart: not reached, no date required
+        # MIL-003 passing counterpart: not reached, no date required
         (12, "Merknader oversendt", G_PASS, "Ikke nådd", None, "PB360"),
         # Excluded by the catalog filter
         (13, None, None, "Nådd", None, "ALTINN"),
-        # Gates for MIL-004 / MIL-005, each with one incomplete pair
-        (14, "Vedtak høring og offentlig ettersyn", 20, "Nådd", d, "PB360"),
-        (15, "Anmodning om oppdatert plandokumentasjon", 20, "Nådd", d, "PB360"),
-        (16, "Innkalling til oppstartsmøte", 30, "Nådd", d, "PB360"),
-        (17, "Anmodning om oppdatert plandokumentasjon", 30, "Nådd", d, "PB360"),
+        # Gates for MIL-006 / MIL-007, each with one unclosed pair
+        (14, "Vedtak høring og offentlig ettersyn", 20, "Nådd", day(1), "PB360"),
+        (15, "Anmodning om oppdatert plandokumentasjon", 20, "Nådd", day(2), "PB360"),
+        (16, "Innkalling til oppstartsmøte", 30, "Nådd", day(1), "PB360"),
+        (17, "Anmodning om oppdatert plandokumentasjon", 30, "Nådd", day(2), "PB360"),
     ]
 
 

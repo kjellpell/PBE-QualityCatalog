@@ -35,7 +35,7 @@
 # between rule types.
 # =============================================================================
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 from pyspark.sql import DataFrame
@@ -140,23 +140,28 @@ def _predicate_subject(expression: str) -> str | None:
     return columns[0] if columns else None
 
 
-def _normalise_stops(raw_stop) -> list:
+def _as_list(raw) -> list:
     """
-    Normalise the stop slot of a required pair to a list.
+    Accept a scalar or a list wherever several values are permitted.
 
-      [A, B]      -> [B]        single stop
-      [A, [B, C]] -> [B, C]     satisfied by either stop
+      "A"       -> ["A"]
+      ["A","B"] -> ["A", "B"]     any one of them satisfies
+
+    Used by `ends_with:` and `completion_gate.value:`, so a rule that closes on
+    one of several events does not need list syntax when it closes on one.
     """
-    return list(raw_stop) if isinstance(raw_stop, list) else [raw_stop]
+    if raw is None:
+        return []
+    return list(raw) if isinstance(raw, (list, tuple)) else [raw]
 
 
 def _gate_predicate(gate: dict):
     """Predicate identifying the rows that mark a group as complete."""
     event_column = gate.get("event_column")
-    value = gate.get("value")
+    values = _as_list(gate.get("value"))
     order_column = gate.get("order_column")
 
-    predicate = F.col(event_column) == value
+    predicate = F.col(event_column).isin(values)
     if order_column:
         predicate = predicate & F.col(order_column).isNotNull()
     return predicate
@@ -169,7 +174,7 @@ def _resolve_gate_groups(df: DataFrame, gate: dict, group_column: str) -> DataFr
     An absent or incomplete gate leaves the frame untouched, so an
     ungated rule evaluates every group.
     """
-    if not gate or not gate.get("event_column") or gate.get("value") is None:
+    if not gate or not gate.get("event_column") or not _as_list(gate.get("value")):
         return df
 
     _require_columns(df, gate.get("event_column"), gate.get("order_column"))
@@ -194,7 +199,6 @@ class Context:
     cfg: object             # the value of the rule-type key
     spark: object
     pk_column: str | None
-    ref_cache: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -279,66 +283,6 @@ def _build_unique(ctx: Context) -> Evaluation:
     return Evaluation(ctx.df, violations, condition)
 
 
-def _build_exists_in(ctx: Context) -> Evaluation:
-    """
-    Every non-NULL value must exist in a reference table.
-
-    With `active_column`/`active_value` the reference set is narrowed to rows
-    that are currently active, which is what the old `reference_active` type
-    did as a separate expectation.
-    """
-    cfg = ctx.cfg
-    if not isinstance(cfg, dict):
-        raise RuleConfigError("'exists_in' must be a mapping.")
-    column, table, reference_column = _require(cfg, "column", "table", "reference_column")
-    active_column = cfg.get("active_column")
-    active_value = cfg.get("active_value")
-    if bool(active_column) != (active_value is not None):
-        raise RuleConfigError(
-            "'active_column' and 'active_value' must be given together."
-        )
-    _require_columns(ctx.df, column)
-
-    cache_key = (table, reference_column, active_column, str(active_value))
-    reference = ctx.ref_cache.get(cache_key) if ctx.ref_cache is not None else None
-    if reference is None:
-        try:
-            source = ctx.spark.table(table)
-            if active_column:
-                if isinstance(active_value, str):
-                    active = F.lower(_as_str(active_column)) == F.lower(F.lit(active_value))
-                else:
-                    active = F.col(active_column) == active_value
-                source = source.filter(active)
-            reference = (
-                source.select(_as_str(reference_column).alias("_ref_key")).distinct()
-            )
-        except RuleConfigError:
-            raise
-        except Exception as exc:
-            raise RuleConfigError(f"Could not load reference table '{table}': {exc}")
-        if ctx.ref_cache is not None:
-            ctx.ref_cache[cache_key] = reference
-
-    evaluated = ctx.df.filter(F.col(column).isNotNull())
-    violating = evaluated.alias("src").join(
-        reference, F.col(f"src.{column}").cast("string") == F.col("_ref_key"), "left_anti"
-    )
-
-    qualifier = f" where {active_column} = {active_value}" if active_column else ""
-    condition = f"{column} must exist in {table}.{reference_column}{qualifier}"
-    violations = violating.select(
-        _as_str(ctx.pk_column).alias("primary_key_value"),
-        F.lit(column).alias("violated_column"),
-        _as_str(column).alias("actual_value"),
-        F.lit(condition).alias("expected_condition"),
-        F.concat(
-            F.lit("Value '"), _str_or_null(column),
-            F.lit(f"' not found in {table}.{reference_column}{qualifier}."),
-        ).alias("violation_detail"),
-    )
-    return Evaluation(evaluated, violations, condition)
-
 
 _ROW_COUNT_OPERATORS = {
     ">": lambda a, b: a > b,
@@ -416,152 +360,150 @@ def _build_sql(ctx: Context) -> Evaluation:
     return Evaluation(returned, violations, "query returns no rows")
 
 
-def _build_sequence_ordered(ctx: Context) -> Evaluation:
-    """Within each group, values must appear in the declared order."""
+def _build_event_flow(ctx: Context) -> Evaluation:
+    """
+    Within each group, declared events must occur in order, as whole passes.
+
+    The shape is `starts_with` (once) -> `cycle` repeated as complete passes ->
+    `ends_with` (once, any of several values). Events not named anywhere are
+    ignored entirely, so unrelated activity between the declared ones is fine.
+
+    A pass that never closes is the error this exists to catch: with
+    `cycle: [A, B]`, `start A B A end` is wrong because the trailing A has no B,
+    while `start A B A B end` is two complete passes and correct. Requiring the
+    count to divide by the cycle length is what expresses that, and it also
+    reproduces a plain "both or neither" pair check when the cycle is a pair and
+    there are no anchors.
+    """
     cfg = ctx.cfg
     if not isinstance(cfg, dict):
-        raise RuleConfigError("'sequence_ordered' must be a mapping.")
+        raise RuleConfigError("'event_flow' must be a mapping.")
     event_column, group_column, order_column = _require(
         cfg, "event_column", "group_column", "order_column"
     )
-    sequence = cfg.get("sequence") or []
+    cycle = [str(v) for v in (cfg.get("cycle") or [])]
+    if not cycle:
+        raise RuleConfigError("'cycle' must list at least one event.")
+    if len(set(cycle)) != len(cycle):
+        raise RuleConfigError(f"'cycle' repeats an event: {cycle}.")
+
+    starts_with = cfg.get("starts_with")
+    if isinstance(starts_with, (list, tuple)):
+        raise RuleConfigError("'starts_with' takes a single event, not a list.")
+    ends_with = _as_list(cfg.get("ends_with"))
     gate = cfg.get("completion_gate") or {}
     _require_columns(ctx.df, event_column, group_column, order_column)
 
-    steps = [s.get("value", "") if isinstance(s, dict) else str(s) for s in sequence]
-    if len(steps) < 2:
-        raise RuleConfigError("'sequence' must contain at least 2 values.")
+    overlap = (set(ends_with) | ({starts_with} if starts_with else set())) & set(cycle)
+    if overlap:
+        raise RuleConfigError(
+            f"Event(s) {sorted(overlap)} are both an anchor and part of the cycle."
+        )
 
-    df = _resolve_gate_groups(ctx.df, gate, group_column)
+    width = len(cycle)
+    START_RANK, END_RANK = 0, width + 1
+    ranked_events = ([starts_with] if starts_with else []) + cycle + ends_with
 
     rank = F.lit(None).cast("int")
-    for position, value in reversed(list(enumerate(steps))):
+    for value, position in (
+        [(starts_with, START_RANK)] if starts_with else []
+    ) + [(v, i + 1) for i, v in enumerate(cycle)] + [(v, END_RANK) for v in ends_with]:
         rank = F.when(F.col(event_column) == value, F.lit(position)).otherwise(rank)
 
-    relevant = (
+    df = _resolve_gate_groups(ctx.df, gate, group_column)
+    listed = (
         df.filter(
             F.col(group_column).isNotNull()
-            & F.col(event_column).isin(steps)
+            & F.col(event_column).isin(ranked_events)
             & F.col(order_column).isNotNull()
         )
         .withColumn("_rank", rank)
     )
-    # A group needs at least two ranked events before ordering means anything.
     evaluated = (
-        relevant.groupBy(group_column)
-        .agg(F.count(F.lit(1)).alias("_n"))
-        .filter(F.col("_n") >= 2)
-        .select(group_column)
-    )
-    ranked = relevant.join(evaluated, on=group_column, how="inner").withColumn(
-        "_previous", F.lag("_rank").over(
-            Window.partitionBy(group_column).orderBy(F.col(order_column).asc())
-        )
-    )
-    out_of_order = F.col("_previous").isNotNull() & (F.col("_rank") <= F.col("_previous"))
-    violating = (
-        ranked.withColumn("_bad", out_of_order.cast("int"))
-        .groupBy(group_column)
-        .agg(
-            F.max("_bad").alias("_has_bad"),
-            F.min(F.when(F.col("_bad") == 1, F.col(event_column))).alias("_first_bad"),
-        )
-        .filter(F.col("_has_bad") == 1)
+        df.filter(F.col(group_column).isNotNull()).select(group_column).distinct()
     )
 
-    condition = "Values must appear in sequence: " + " → ".join(steps)
+    # Ordering ties are broken by rank so two events recorded on the same date are
+    # read in declared order. Without it the outcome depends on row arrival order.
+    ordering = [F.col(order_column).asc(), F.col("_rank").asc()]
+    by_group = Window.partitionBy(group_column).orderBy(*ordering)
+    positioned = listed.withColumn("_pos", F.row_number().over(by_group)).withColumn(
+        "_last", F.max("_pos").over(Window.partitionBy(group_column))
+    )
+
+    cycle_only = positioned.filter(
+        (F.col("_rank") > START_RANK) & (F.col("_rank") < END_RANK)
+    ).withColumn(
+        "_cpos",
+        F.row_number().over(Window.partitionBy(group_column).orderBy(*ordering)),
+    )
+    # The i-th cycle event must be cycle[i % width]; anything else is out of order.
+    misplaced = F.col("_rank") != (((F.col("_cpos") - 1) % F.lit(width)) + 1)
+
+    anchor_problem = (
+        # a start that is not the first listed event, or an end that is not the last
+        ((F.col("_rank") == START_RANK) & (F.col("_pos") != 1))
+        | ((F.col("_rank") == END_RANK) & (F.col("_pos") != F.col("_last")))
+    )
+
+    offenders = (
+        positioned.filter(anchor_problem)
+        .select(group_column, order_column, event_column)
+        .unionByName(
+            cycle_only.filter(misplaced).select(group_column, order_column, event_column)
+        )
+    )
+
+    counts = positioned.groupBy(group_column).agg(
+        F.count(F.when(F.col("_rank") == START_RANK, F.lit(1))).alias("_starts"),
+        F.count(F.when(F.col("_rank") == END_RANK, F.lit(1))).alias("_ends"),
+        F.count(
+            F.when(
+                (F.col("_rank") > START_RANK) & (F.col("_rank") < END_RANK), F.lit(1)
+            )
+        ).alias("_cycle_events"),
+    )
+    structural = counts.filter(
+        (F.col("_starts") > 1)
+        | (F.col("_ends") > 1)
+        | (F.col("_cycle_events") % F.lit(width) != 0)   # an unclosed pass
+    ).select(group_column)
+
+    # One row per failing group, naming the earliest event that broke the flow.
+    first_offender = (
+        offenders.groupBy(group_column)
+        .agg(F.min(F.struct(F.col(order_column), F.col(event_column))).alias("_first"))
+        .select(group_column, F.col(f"_first.{event_column}").alias("_bad_event"))
+    )
+    violating = (
+        offenders.select(group_column)
+        .unionByName(structural)
+        .distinct()
+        .join(first_offender, on=group_column, how="left")
+    )
+
+    flow = " → ".join(
+        ([starts_with] if starts_with else [])
+        + [f"({', '.join(cycle)})*"]
+        + ([" or ".join(ends_with)] if ends_with else [])
+    )
+    condition = f"Events must follow: {flow}"
     violations = violating.select(
         _as_str(group_column).alias("primary_key_value"),
         F.lit(event_column).alias("violated_column"),
-        _as_str("_first_bad").alias("actual_value"),
+        _as_str("_bad_event").alias("actual_value"),
         F.lit(condition).alias("expected_condition"),
         F.concat(
-            F.lit("'"), _str_or_null("_first_bad"),
-            F.lit(f"' appears out of sequence within {group_column}="),
-            _str_or_null(group_column), F.lit("."),
+            F.coalesce(
+                F.concat(F.lit("'"), _as_str("_bad_event"), F.lit("' breaks the flow")),
+                F.lit("Incomplete pass"),
+            ),
+            F.lit(f" within {group_column}="),
+            _str_or_null(group_column),
+            F.lit("."),
         ).alias("violation_detail"),
     )
     return Evaluation(evaluated, violations, condition)
-
-
-def _build_pairs_present(ctx: Context) -> Evaluation:
-    """Both members of each required pair must occur within the same group."""
-    cfg = ctx.cfg
-    if not isinstance(cfg, dict):
-        raise RuleConfigError("'pairs_present' must be a mapping.")
-    event_column, group_column = _require(cfg, "event_column", "group_column")
-    pairs = cfg.get("required_pairs") or []
-    mode = cfg.get("mode", "both")
-    gate = cfg.get("completion_gate") or {}
-    if mode not in ("both", "stop_requires_start"):
-        raise RuleConfigError(
-            f"Unsupported mode '{mode}'. Allowed: 'both', 'stop_requires_start'."
-        )
-    _require_columns(ctx.df, event_column, group_column)
-
-    normalised = []
-    for index, pair in enumerate(pairs):
-        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
-            raise RuleConfigError(
-                f"required_pairs[{index}] must be [start, stop] or [start, [stop, ...]]."
-            )
-        stops = _normalise_stops(pair[1])
-        if not stops:
-            raise RuleConfigError(f"required_pairs[{index}]: stop slot must not be empty.")
-        normalised.append((pair[0], stops))
-
-    df = _resolve_gate_groups(ctx.df, gate, group_column)
-    evaluated = df.filter(F.col(group_column).isNotNull()).select(group_column).distinct()
-    if not normalised:
-        return Evaluation(evaluated, empty_violations(ctx.spark), "required pairs present")
-
-    events = sorted({e for start, stops in normalised for e in [start] + stops})
-    presence = (
-        df.filter(F.col(group_column).isNotNull() & F.col(event_column).isin(events))
-        .groupBy(group_column)
-        .agg(*[
-            F.max(F.when(F.col(event_column) == event, F.lit(True)).otherwise(F.lit(False)))
-            .alias(f"_has_{i}")
-            for i, event in enumerate(events)
-        ])
-    )
-    column_for = {event: f"_has_{i}" for i, event in enumerate(events)}
-
-    per_pair = []
-    for start, stops in normalised:
-        has_stop = F.col(column_for[stops[0]])
-        for stop in stops[1:]:
-            has_stop = has_stop | F.col(column_for[stop])
-        frame = presence.withColumn("_has_stop", has_stop)
-        has_start = F.col(column_for[start])
-        stop_label = " or ".join(f"'{s}'" for s in stops)
-
-        if mode == "stop_requires_start":
-            failing = F.col("_has_stop") & ~has_start
-            condition = f"'{start}' must exist whenever {stop_label} does, per {group_column}"
-            actual = F.lit(stop_label)
-        else:
-            failing = has_start != F.col("_has_stop")
-            condition = f"Both '{start}' and {stop_label} must exist per {group_column}"
-            actual = F.when(has_start, F.lit(start)).otherwise(F.lit(stop_label))
-
-        per_pair.append(
-            frame.filter(failing).select(
-                _as_str(group_column).alias("primary_key_value"),
-                F.lit(event_column).alias("violated_column"),
-                actual.alias("actual_value"),
-                F.lit(condition).alias("expected_condition"),
-                F.concat(
-                    F.lit(f"Incomplete pair ('{start}' / {stop_label}) for {group_column}="),
-                    _str_or_null(group_column), F.lit("."),
-                ).alias("violation_detail"),
-            )
-        )
-
-    violations = per_pair[0]
-    for extra in per_pair[1:]:
-        violations = violations.unionByName(extra)
-    return Evaluation(evaluated, violations, "required pairs present")
 
 
 def _build_gate_complete(ctx: Context) -> Evaluation:
@@ -672,23 +614,12 @@ RULE_TYPES: dict[str, RuleType] = {
     for rule_type in (
         RuleType("check", "row", _build_check, "rows"),
         RuleType("unique", "row", _build_unique, "rows"),
-        RuleType(
-            "exists_in", "row", _build_exists_in, "rows",
-            required=("column", "table", "reference_column"),
-            column_keys=("column",),
-        ),
         RuleType("sql", "row", _build_sql, "rows"),
         RuleType("row_count", "table", _build_row_count, "rows", required=("threshold",)),
         RuleType(
-            "sequence_ordered", "group", _build_sequence_ordered, "groups",
-            required=("event_column", "group_column", "order_column", "sequence"),
+            "event_flow", "group", _build_event_flow, "groups",
+            required=("event_column", "group_column", "order_column", "cycle"),
             column_keys=("event_column", "group_column", "order_column"),
-            gated=True,
-        ),
-        RuleType(
-            "pairs_present", "group", _build_pairs_present, "groups",
-            required=("event_column", "group_column", "required_pairs"),
-            column_keys=("event_column", "group_column"),
             gated=True,
         ),
         RuleType(
@@ -740,7 +671,7 @@ def _error(message: str) -> dict:
     }
 
 
-def run_rule(rule: dict, df: DataFrame, spark, pk_column=None, ref_cache=None) -> tuple:
+def run_rule(rule: dict, df: DataFrame, spark, pk_column=None) -> tuple:
     """
     Evaluate one rule and return ``(result_dict, violations_df)``.
 
@@ -772,7 +703,7 @@ def run_rule(rule: dict, df: DataFrame, spark, pk_column=None, ref_cache=None) -
         evaluation = rule_type.build(
             Context(
                 df=scoped, cfg=rule[type_name], spark=spark,
-                pk_column=resolved_pk, ref_cache=ref_cache if ref_cache is not None else {},
+                pk_column=resolved_pk,
             )
         )
 

@@ -23,7 +23,6 @@ Core capabilities:
   was first seen so violation age is answerable
 - Rules authored as Spark SQL predicates, validated against the real schema
   before a run
-- Reference lookups, including "must exist *and* be active"
 - Group-level checks (required event pairs, ordering, completion gates) that a
   single-row predicate cannot express
 
@@ -209,9 +208,6 @@ For a one-page checklist, see OPERATIONS_QUICK_REF.md.
 - Rule configuration errors:
   run preflight — it resolves every `where:`, `when:` and `check:` predicate
   against the real schema and reports the offending rule.
-- `exists_in` errors:
-  confirm the reference table and column names, and that `active_value` matches
-  the value in the reference table (string comparison is case-insensitive).
 
 ---
 
