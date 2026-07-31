@@ -128,6 +128,65 @@ def test_unique(spark):
     assert violations.collect()[0].expected_condition == "UNIQUE(a, b)"
 
 
+class TestRowCountExpectation:
+    def test_within_range(self, spark):
+        df = spark.createDataFrame([(1,), (2,), (3,)], "id int")
+        result, violations = run_rule(
+            {"row_count": {"minimum": 2, "maximum": 3}},
+            df,
+            spark,
+            pk_column="id",
+        )
+
+        assert result["status"] == "PASSED"
+        assert result["total_rows"] == 1
+        assert result["failed_rows"] == 0
+        assert violations.count() == 0
+
+    def test_below_minimum(self, spark):
+        df = spark.createDataFrame([(1,)], "id int")
+        result, violations = run_rule(
+            {"row_count": {"minimum": 2, "maximum": 5}},
+            df,
+            spark,
+            pk_column="id",
+        )
+
+        assert result["status"] == "FAILED"
+        assert result["total_rows"] == 1
+        assert result["failed_rows"] == 1
+        row = violations.collect()[0]
+        assert row.primary_key_value is None
+        assert row.violated_column == "row_count"
+        assert row.actual_value == "1"
+
+    def test_above_maximum(self, spark):
+        df = spark.createDataFrame([(1,), (2,), (3,), (4,)], "id int")
+        result, violations = run_rule(
+            {"row_count": {"minimum": 1, "maximum": 3}},
+            df,
+            spark,
+            pk_column="id",
+        )
+
+        assert result["status"] == "FAILED"
+        assert result["failed_rows"] == 1
+        assert violations.collect()[0].actual_value == "4"
+
+    def test_missing_params(self, spark):
+        df = spark.createDataFrame([(1,), (2,)], "id int")
+        result, violations = run_rule(
+            {"row_count": {"minimum": 1}},
+            df,
+            spark,
+            pk_column="id",
+        )
+
+        assert result["status"] == "ERROR"
+        assert "Missing required parameter(s): maximum." in result["details"]
+        assert violations.count() == 0
+
+
 def test_required_event_counts_groups(spark):
     df = spark.createDataFrame(
         [("g1", "approved"), ("g1", "other"), ("g2", "other")], "grp string, ev string"

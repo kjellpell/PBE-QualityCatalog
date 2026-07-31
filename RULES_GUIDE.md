@@ -109,6 +109,7 @@ uniqueness, and checks over groups of rows. A check needing a second table is a
 |---|---|---|
 | `check` | row | – |
 | `unique` | row | – |
+| `row_count` | table | `minimum`, `maximum` |
 | `event_flow` | group | `event_column`, `group_column`, `order_column`, `cycle` |
 | `required_event` | group | `event_column`, `group_column`, `value` |
 | `aggregate_matches` | group | `group_column`, `aggregate_column`, `reference_column` |
@@ -125,6 +126,20 @@ uniqueness, and checks over groups of rows. A check needing a second table is a
   unique:
   - stage_recno
 ```
+
+### row_count
+
+```yaml
+- rule_id: FAS-001
+  name: Faser må ha forventet volum
+  row_count:
+    minimum: 1
+    maximum: 500000
+```
+
+Use this for bounded table volume checks in silver-layer blocker workflows.
+The scoped table after catalog `where:` and rule `when:` must have a row count
+between `minimum` and `maximum` (inclusive).
 
 ### event_flow
 
@@ -266,6 +281,7 @@ Each rule type declares a scope, and that fixes the unit for `total_rows`,
 | Scope | One unit is | Used by |
 |---|---|---|
 | `row` | one row | `check`, `unique` |
+| `table` | one table | `row_count` |
 | `group` | one group | `event_flow`, `required_event`, `aggregate_matches` |
 
 For a group-scoped rule, a group failing several pairs counts **once**, while the
@@ -308,7 +324,7 @@ One row in `dq_violations` per failing unit.
 | Column | Contents |
 |---|---|
 | `primary_key_value` | Row key, or group key for group-scoped rules |
-| `violation_scope` | `row` or `group` — how to read `primary_key_value` |
+| `violation_scope` | `row`, `group` or `table` — how to read `primary_key_value` |
 | `violated_column` | The column at fault. A real column name, or NULL if the predicate names none |
 | `actual_value` | The offending value |
 | `expected_condition` | The full predicate or condition that was required |

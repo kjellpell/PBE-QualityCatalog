@@ -23,6 +23,7 @@
 #
 #   row    - one row is one unit
 #   group  - one group is one unit
+#   table  - the whole table is one unit
 #
 # This file has three sections:
 #   1. Shared helpers
@@ -281,6 +282,41 @@ def _build_unique(ctx: Context) -> Evaluation:
     return Evaluation(ctx.df, violations, condition)
 
 
+def _build_row_count(ctx: Context) -> Evaluation:
+    """The scoped table must have a row count within configured bounds."""
+    cfg = ctx.cfg
+    if not isinstance(cfg, dict):
+        raise RuleConfigError("'row_count' must be a mapping.")
+
+    minimum_raw, maximum_raw = _require(cfg, "minimum", "maximum")
+    try:
+        minimum = int(minimum_raw)
+        maximum = int(maximum_raw)
+    except (TypeError, ValueError):
+        raise RuleConfigError(
+            f"'minimum' and 'maximum' must be integers, got {minimum_raw!r} and {maximum_raw!r}."
+        )
+    if minimum > maximum:
+        raise RuleConfigError(
+            f"'minimum' ({minimum}) cannot be greater than 'maximum' ({maximum})."
+        )
+
+    count = ctx.df.count()
+    evaluated = ctx.spark.createDataFrame([(count,)], "row_count long")
+
+    if minimum <= count <= maximum:
+        violations = empty_violations(ctx.spark)
+    else:
+        expected = f"{minimum} <= row_count <= {maximum}"
+        detail = f"Table has {count} rows; expected between {minimum} and {maximum}."
+        violations = ctx.spark.createDataFrame(
+            [(None, "row_count", str(count), expected, detail)],
+            _VIOLATION_SCHEMA,
+        )
+
+    return Evaluation(evaluated, violations, f"row_count in [{minimum}, {maximum}]")
+
+
 def _build_event_flow(ctx: Context) -> Evaluation:
     """
     Within each group, declared events must occur in order, as whole passes.
@@ -516,7 +552,7 @@ def _build_aggregate_matches(ctx: Context) -> Evaluation:
 @dataclass(frozen=True)
 class RuleType:
     name: str                 # the YAML key; the rule-type name IS the key
-    scope: str                # "row" | "group"
+    scope: str                # "row" | "group" | "table"
     build: Callable[[Context], Evaluation]
     unit: str                 # what one unit is called, for the details text
     # Config keys that must be present. Preflight reads these, so the contract
@@ -535,6 +571,10 @@ RULE_TYPES: dict[str, RuleType] = {
     for rule_type in (
         RuleType("check", "row", _build_check, "rows"),
         RuleType("unique", "row", _build_unique, "rows"),
+        RuleType(
+            "row_count", "table", _build_row_count, "tables",
+            required=("minimum", "maximum"),
+        ),
         RuleType(
             "event_flow", "group", _build_event_flow, "groups",
             required=("event_column", "group_column", "order_column", "cycle"),

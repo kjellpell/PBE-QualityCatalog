@@ -61,16 +61,14 @@ the driver so it cannot drift between rule types.
 
 ### Scope fixes the counting unit
 
-Each rule type declares `scope` — `row` or `group` — and the driver counts in
+Each rule type declares `scope` — `row`, `group`, or `table` — and the driver counts in
 that unit. A group-scoped rule counts groups in both the numerator and the
 denominator, so a group failing several pairs counts once and `passed_rows` can
 never go negative.
 
-There is deliberately no table-scoped rule type. Volume and completeness — "did
-this table fill at all?" — are caught upstream by the medallion ETL, which has
-the load history to judge them; a rule holding a hardcoded row-count threshold
-would duplicate that check and go stale. `FAIL_ON_EMPTY_SOURCE` remains as a
-guard on the *run* rather than the data: it aborts before an empty source can be
+Table-scoped checks are limited to bounded row-volume validation (`row_count`)
+for silver-layer blocker workflows. `FAIL_ON_EMPTY_SOURCE` remains a guard on
+the *run* rather than the data: it aborts before an empty source can be
 reported as 100% passing.
 
 ## Runtime Flow
@@ -135,7 +133,7 @@ Use these exact strings — typos silently break resolution tracking.
 
 - **Run result status** (`dq_run_results`): `"PASSED"`, `"FAILED"`, `"ERROR"`
 - **Violation status** (`dq_violations`): `"Active"`, `"Resolved"`
-- **Violation scope** (`dq_violations`): `"row"`, `"group"`
+- **Violation scope** (`dq_violations`): `"row"`, `"group"`, `"table"`
 - **Execution metric status** (`dq_execution_metrics`): `"Succeeded"`, `"Failed"`
 
 ## Delta Tables

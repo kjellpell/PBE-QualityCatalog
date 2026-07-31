@@ -56,6 +56,11 @@ def _table_rows(spark):
     return {r.primary_key_value: r for r in spark.table(TABLE_NAME).collect()}
 
 
+def _spark_roundtrip_timestamp(spark, value: datetime) -> datetime:
+    """Mirror Spark's TimestampType conversion for stable timezone-agnostic asserts."""
+    return spark.createDataFrame([(value,)], "ts timestamp").collect()[0].ts
+
+
 def test_resolution_lifecycle(spark):
     _create_empty_table(spark)
 
@@ -67,8 +72,8 @@ def test_resolution_lifecycle(spark):
     rows = _table_rows(spark)
     assert set(rows) == {"P1"}
     assert rows["P1"].issue_status == "Active"
-    # Spark's TimestampType round-trips as a naive datetime (session tz = UTC).
-    assert rows["P1"].first_seen_at == run1_ts.replace(tzinfo=None)
+    expected_first_seen = _spark_roundtrip_timestamp(spark, run1_ts)
+    assert rows["P1"].first_seen_at == expected_first_seen
     assert rows["P1"].resolution_timestamp is None
 
     # Run 2: still-active -> refreshed metadata, but first_seen_at is preserved
@@ -82,7 +87,7 @@ def test_resolution_lifecycle(spark):
     rows = _table_rows(spark)
     assert set(rows) == {"P1"}
     assert rows["P1"].issue_status == "Active"
-    assert rows["P1"].first_seen_at == run1_ts.replace(tzinfo=None)  # preserved, not run2_ts
+    assert rows["P1"].first_seen_at == expected_first_seen  # preserved, not run2_ts
     assert rows["P1"].run_id == "run-2"  # metadata otherwise refreshed
 
     # Run 3: violation absent -> marked Resolved with a resolution_timestamp.
@@ -94,7 +99,7 @@ def test_resolution_lifecycle(spark):
     assert set(rows) == {"P1"}
     assert rows["P1"].issue_status == "Resolved"
     assert rows["P1"].resolution_timestamp == run3_ts.isoformat()
-    assert rows["P1"].first_seen_at == run1_ts.replace(tzinfo=None)  # still preserved
+    assert rows["P1"].first_seen_at == expected_first_seen  # still preserved
 
     # Run 4: already-Resolved row is carried through unchanged.
     run4_ts = datetime(2026, 1, 4, tzinfo=timezone.utc)
