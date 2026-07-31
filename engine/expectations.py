@@ -23,7 +23,6 @@
 #
 #   row    - one row is one unit
 #   group  - one group is one unit
-#   table  - the whole table is one unit
 #
 # This file has three sections:
 #   1. Shared helpers
