@@ -209,22 +209,23 @@ def _load_all_rules() -> list[dict]:
     print(f"  Rule YAML files found: {len(yaml_files)}")
 
     catalogs = []
+    unusable: list[str] = []
     total_rules = 0
     for yaml_path in yaml_files:
         try:
             with open(yaml_path, "r", encoding="utf-8") as fh:
                 doc = _yaml.safe_load(fh)
         except Exception as exc:
-            print(f"  Warning: could not parse {yaml_path.name}: {exc} — skipping.")
+            unusable.append(f"{yaml_path.name}: could not be parsed ({exc})")
             continue
 
         if not isinstance(doc, dict):
-            print(f"  Warning: {yaml_path.name} did not parse to a dict — skipping.")
+            unusable.append(f"{yaml_path.name}: did not parse to a mapping")
             continue
 
         rules = doc.get("rules") or []
         if not rules:
-            print(f"  Warning: {yaml_path.name} has no rules — skipping.")
+            unusable.append(f"{yaml_path.name}: contains no rules")
             continue
 
         catalog = {
@@ -239,6 +240,18 @@ def _load_all_rules() -> list[dict]:
         catalogs.append(catalog)
         total_rules += len(rules)
         print(f"  Rule group: {catalog['rule_group']} ({len(rules)} rules)  [{yaml_path.name}]")
+
+    # A catalog that cannot be loaded is a silent loss of coverage, not a warning.
+    # Skipping it would leave the run reporting Succeeded over fewer rules, and the
+    # quality score can *rise*, because the rules that disappeared included the
+    # failing ones. Nobody reads stdout at 03:00, so fail the run instead.
+    if unusable:
+        raise RuntimeError(
+            f"Rule catalogs in {rules_dir} could not be loaded:\n"
+            + "\n".join(f"  - {item}" for item in unusable)
+            + "\nFix or remove the file. Running without it would report a quality "
+            "score over fewer rules than intended."
+        )
 
     if not catalogs:
         raise RuntimeError(f"No valid rule catalogs loaded from {rules_dir}.")

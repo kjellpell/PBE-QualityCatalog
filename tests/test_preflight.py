@@ -87,6 +87,24 @@ def test_structured_type_bad_column_is_caught(preflight, probe, columns):
     assert any("event_column 'nope' not found" in e for e in errors)
 
 
+@pytest.mark.parametrize("expression", ["saksansvarlig_kode", "tidsbruk"])
+def test_non_boolean_predicate_is_caught(preflight, probe, columns, expression):
+    """
+    A bare column resolves but is not a predicate. Spark's `filter` rejects it
+    with FILTER_NOT_BOOLEAN; `selectExpr` accepted it, so this used to clear
+    preflight and fail in the scheduled run instead.
+    """
+    errors = preflight.check_rule(_rule(check=expression), probe, columns, "t.yaml")
+    assert any("does not resolve" in e for e in errors), errors
+
+
+def test_non_boolean_when_is_caught(preflight, probe, columns):
+    errors = preflight.check_rule(
+        _rule(when="stage_recno", check="tidsbruk >= 0"), probe, columns, "t.yaml"
+    )
+    assert any("'when' does not resolve" in e for e in errors), errors
+
+
 def test_unknown_key_is_caught(preflight, probe, columns):
     errors = preflight.check_rule(
         _rule(check="tidsbruk >= 0", parameters={"columns": ["x"]}), probe, columns, "t.yaml"
@@ -108,6 +126,31 @@ def test_catalog_where_is_validated(preflight, probe, columns):
     }
     errors = preflight.check_catalog(catalog, probe, columns, "t.yaml")
     assert any("'where' does not resolve" in e for e in errors)
+
+
+def test_misspelled_catalog_key_is_caught(preflight, probe, columns):
+    """
+    `wehre:` would silently drop the filter for every rule in the file, so the
+    header needs the same unknown-key guard the rules already have.
+    """
+    catalog = {
+        "pk_column": "stage_recno",
+        "wehre": "fagsystem = 'PB360'",
+        "rules": [_rule(check="tidsbruk >= 0")],
+    }
+    errors = preflight.check_catalog(catalog, probe, columns, "t.yaml")
+    assert any("Unrecognised catalog key(s): ['wehre']" in e for e in errors), errors
+
+
+def test_documented_catalog_keys_are_accepted(preflight, probe, columns):
+    """Every key the guide documents must survive the header check."""
+    catalog = {
+        "rule_group": "Faser", "table": "faser", "database": "saksbehandling",
+        "description": "…", "pk_column": "stage_recno", "where": "tidsbruk >= 0",
+        "joins": [], "rules": [_rule(check="tidsbruk >= 0")],
+    }
+    errors = preflight.check_catalog(catalog, probe, columns, "t.yaml")
+    assert not any("Unrecognised catalog key" in e for e in errors), errors
 
 
 def test_duplicate_rule_id_is_caught(preflight, probe, columns):

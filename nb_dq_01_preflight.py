@@ -44,6 +44,7 @@ try:
         detect_rule_type,
     )
     from engine.runtime import (
+        CATALOG_KEYS,
         load_config_module,
         require_config_keys,
         resolve_rules_dir,
@@ -80,11 +81,17 @@ def _brief(exc: Exception) -> str:
 
 
 def check_predicate(probe, expression: str, label: str) -> list[str]:
-    """Resolve a predicate against the real schema via Spark's analyzer."""
+    """Resolve a predicate against the real schema via Spark's analyzer.
+
+    Uses `filter`, not `selectExpr`: only `filter` requires the expression to be
+    boolean. `selectExpr` accepts any expression, so `check: saksnummer` cleared
+    preflight and then failed at run time with FILTER_NOT_BOOLEAN — the 03:00
+    failure this exists to prevent.
+    """
     if not isinstance(expression, str) or not expression.strip():
         return [f"{label} must be a non-empty SQL predicate."]
     try:
-        probe.selectExpr(expression)
+        probe.filter(expression)
     except Exception as exc:
         return [f"{label} does not resolve: {_brief(exc)}"]
     return []
@@ -168,6 +175,13 @@ def check_rule(rule: dict, probe, source_columns: set[str], where: str) -> list[
 def check_catalog(catalog: dict, probe, source_columns: set[str], where: str) -> list[str]:
     """Validate a catalog header and every rule in it."""
     errors: list[str] = []
+
+    # A header typo is the most expensive kind: `wehre:` silently drops the
+    # filter for every rule in the file. Rule-level keys are checked in
+    # check_rule; this is the same guard one level up.
+    unknown = sorted(set(catalog) - CATALOG_KEYS)
+    if unknown:
+        errors.append(f"[{where}] Unrecognised catalog key(s): {unknown}.")
 
     if not catalog.get("pk_column"):
         errors.append(

@@ -27,7 +27,9 @@ Notes:
 
 ## Run order
 
-1. Run `nb_dq_00_setup.py` once per environment to create or upgrade Delta tables.
+1. Run `nb_dq_00_setup.py` once per environment to create the Delta tables. It is
+   rerunnable, but applies no migration: a table whose shape has drifted is
+   reported so it can be dropped, not patched in place.
 2. Run `nb_dq_01_preflight.py` before promoting runtime changes.
 3. Run `nb_dq_03_run_validation.py` after source tables refresh.
    This notebook runner executes `/lakehouse/default/Files/engine/validation_runner.py`

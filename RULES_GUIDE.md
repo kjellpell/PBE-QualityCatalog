@@ -186,11 +186,25 @@ Every group must contain at least one row carrying the named event.
   required_event:
     event_column: milestone_title
     group_column: to_stage_recno
-    value: Godkjent
+    value: Godkjent              # scalar or list; any one of them satisfies
     order_column: milestonedate  # optional; also require a non-NULL date
 ```
 
 Groups with no matching row are violations, keyed on `group_column`.
+
+`value:` takes a list wherever several events close the same requirement, so a
+group holding **any one** of them passes:
+
+```yaml
+    value: [Vedtak fattet, Sak trukket]
+```
+
+`order_column:` does more than order here — it tightens the assertion to "the
+event exists *and* that row carries a date". Leave it out if a dateless event
+still counts as reached.
+
+A row whose `group_column` is NULL is not a group: it is neither counted nor
+reported, so the denominator is groups with a real key.
 
 Note how this differs from `event_flow`'s `completion_gate:`, which names the same
 kind of thing for the opposite purpose: `required_event:` **asserts** the event is
@@ -280,6 +294,12 @@ event_flow: ...
 
 To restrict *which groups* are evaluated rather than which rows they contain, use
 `completion_gate:` — it keeps whole groups and drops whole groups.
+
+`completion_gate:` is accepted by `event_flow` only. On `required_event` and
+`aggregate_matches` the only lever is `when:`, which is safe here **when the
+predicate is constant within a group** — a phase-level attribute like `indikator`
+selects whole groups, while a row-level one like `milestone_title` cuts groups in
+half and then judges what is left.
 
 ## Violation output
 
