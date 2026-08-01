@@ -67,7 +67,6 @@ CONFIG_KEYS = [
     "DQ_EXECUTION_METRICS_TABLE",
 ]
 RUNTIME_KEYS = [
-    "DRY_RUN",
     "FAIL_ON_EMPTY_SOURCE",
     "RETRYABLE_ERROR_MARKERS",
     "MAX_RULE_RETRIES",
@@ -295,7 +294,7 @@ def main() -> None:
     require_config_keys(config_module, CONFIG_KEYS, "QualityCatalogConfig")
     require_config_keys(runtime_module, RUNTIME_KEYS, "QualityCatalogRuntime")
 
-    targets = resolve_targets(config_module, runtime_module)
+    targets = resolve_targets(config_module)
     rules_dir = resolve_rules_dir(config_module, REPO_ROOT)
     if not rules_dir.exists():
         raise RuntimeError(f"Rules directory not found: {rules_dir}")
@@ -348,7 +347,6 @@ def main() -> None:
     print("Quality Catalog preflight passed.")
     print(f"  Config path:      {config_path}")
     print(f"  Runtime path:     {runtime_path}")
-    print(f"  Dry run:          {runtime_module.DRY_RUN}")
     print(f"  Rules dir:        {rules_dir}")
     print(f"  Results table:    {targets['results_table']}")
     print(f"  Violations table: {targets['violations_table']}")

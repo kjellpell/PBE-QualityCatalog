@@ -370,9 +370,8 @@ Run it after every catalog change.
    (`/lakehouse/default/Files/rules/`). Rules are loaded from YAML at runtime;
    there is no Delta-based rule store.
 2. Run [scripts/preflight_checks.py](scripts/preflight_checks.py).
-3. Run one validation cycle with `DRY_RUN = True`.
-4. Review the `_tmp` output tables.
-5. Switch to `DRY_RUN = False` once the output looks right.
+3. Run one validation cycle in the target environment.
+4. Review the output tables.
 
 ## Why not just write SQL
 

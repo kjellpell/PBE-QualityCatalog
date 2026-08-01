@@ -39,14 +39,13 @@ def _rows(df, sort_keys):
 def _snapshot(spark, vr):
     results, violations = vr.main()
     assert results > 0, "pipeline produced no result rows"
-    suffix = "_tmp" if vr.RUNTIME.DRY_RUN else ""
     schema = vr.CONFIG.DEFAULT_SCHEMA
     return {
         "results": _rows(
-            spark.table(f"{schema}.dq_run_results{suffix}"), ["rule_group", "rule_id"]
+            spark.table(f"{schema}.dq_run_results"), ["rule_group", "rule_id"]
         ),
         "violations": _rows(
-            spark.table(f"{schema}.dq_violations{suffix}"),
+            spark.table(f"{schema}.dq_violations"),
             ["rule_id", "primary_key_value", "violated_column", "expected_condition"],
         ),
     }

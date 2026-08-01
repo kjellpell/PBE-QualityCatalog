@@ -145,7 +145,6 @@ require_config_keys(
 require_config_keys(
     RUNTIME,
     [
-        "DRY_RUN",
         "FAIL_ON_EMPTY_SOURCE",
         "RETRYABLE_ERROR_MARKERS",
         "MAX_RULE_RETRIES",
@@ -153,7 +152,7 @@ require_config_keys(
     ],
     "QualityCatalogRuntime",
 )
-TARGETS = resolve_targets(CONFIG, RUNTIME)
+TARGETS = resolve_targets(CONFIG)
 
 RUN_ID = str(uuid.uuid4())
 RUN_TIMESTAMP = datetime.now(timezone.utc)
@@ -165,7 +164,6 @@ print(f"Timestamp : {RUN_TIMESTAMP.isoformat()}")
 print(f"Batch date: {BATCH_DATE}")
 print(f"Config    : {CONFIG_PATH}")
 print(f"Runtime   : {RUNTIME_PATH}")
-print(f"Dry run   : {RUNTIME.DRY_RUN}")
 print(f"Results   : {TARGETS['results_table']}")
 print(f"Violations: {TARGETS['violations_table']}")
 print(f"Metrics   : {TARGETS['execution_metrics_table']}")
@@ -622,28 +620,16 @@ def main() -> tuple[int, int]:
 
     print("\nWriting results to Delta tables…")
 
-    # In dry-run mode overwrite the tmp tables so each test run starts clean.
-    # Fabric's SQL engine cannot resolve schema-qualified _tmp table names in
-    # MERGE (Hive metastore vs Lakehouse catalog mismatch), so we skip MERGE
-    # entirely for dry-runs and use the DataFrame API (which works) instead.
-    _write_mode = "overwrite" if RUNTIME.DRY_RUN else "append"
-
     results_to_write = _align_df_to_table_schema(all_results_combined, TARGETS["results_table"])
-    results_to_write.write.mode(_write_mode).saveAsTable(TARGETS["results_table"])
+    results_to_write.write.mode("append").saveAsTable(TARGETS["results_table"])
     print(f"  {TARGETS['results_table']} : {results_count} rows written.")
 
-    if RUNTIME.DRY_RUN:
-        _viol_to_write = _align_df_to_table_schema(
-            all_violations_combined, TARGETS["violations_table"]
-        )
-        _viol_to_write.write.mode("overwrite").saveAsTable(TARGETS["violations_table"])
-    else:
-        _apply_resolution_tracking(
-            all_violations_combined,
-            spark_session=spark,
-            violations_table=TARGETS["violations_table"],
-            run_timestamp=RUN_TIMESTAMP,
-        )
+    _apply_resolution_tracking(
+        all_violations_combined,
+        spark_session=spark,
+        violations_table=TARGETS["violations_table"],
+        run_timestamp=RUN_TIMESTAMP,
+    )
     print(f"  {TARGETS['violations_table']} : {violations_count} violations processed.")
 
     print("\n=== DATA QUALITY RUN SUMMARY ===")
@@ -686,7 +672,6 @@ if __name__ == "__main__":
             {
                 "script_name": "validation_runner",
                 "status": "Succeeded",
-                "dry_run": RUNTIME.DRY_RUN,
                 "output_target": TARGETS["results_table"],
                 "artifact_target": TARGETS["violations_table"],
                 "row_count": int(results_count),
@@ -705,7 +690,6 @@ if __name__ == "__main__":
             {
                 "script_name": "validation_runner",
                 "status": "Failed",
-                "dry_run": RUNTIME.DRY_RUN,
                 "output_target": TARGETS["results_table"],
                 "artifact_target": TARGETS["violations_table"],
                 "row_count": 0,

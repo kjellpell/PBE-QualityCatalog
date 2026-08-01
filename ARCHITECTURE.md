@@ -45,8 +45,8 @@ Every rule type is a predicate or a declarative block; none executes a
 caller-supplied statement. `check:`, `when:` and `where:` go through `F.expr()`,
 which builds a column expression and cannot carry DDL or DML. A `sql:` rule type
 existed and was removed: nothing used it, `spark.sql()` ran whatever string it
-was given, and `DRY_RUN` did not protect against it — dry-run redirects the
-*output* tables, so a mutating query would still have run against production.
+was given, and output-table routing did not protect against it — a mutating
+query would still have run against the source environment.
 Removing it makes read-only a property of the engine rather than a convention.
 
 A check needing a second table uses `joins:` in the catalog header, so the

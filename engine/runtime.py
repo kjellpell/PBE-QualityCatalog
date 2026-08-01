@@ -97,18 +97,11 @@ def _qualify(table_name: str, default_schema: str) -> str:
     return table_name if "." in table_name else f"{default_schema}.{table_name}"
 
 
-def resolve_targets(config_module, runtime_module) -> dict[str, str]:
+def resolve_targets(config_module) -> dict[str, str]:
     schema = config_module.DEFAULT_SCHEMA
     results    = _qualify(config_module.DQ_RESULTS_TABLE,            schema)
     violations = _qualify(config_module.DQ_VIOLATIONS_TABLE,         schema)
     metrics    = _qualify(config_module.DQ_EXECUTION_METRICS_TABLE,  schema)
-
-    if runtime_module.DRY_RUN:
-        return {
-            "results_table":           f"{results}_tmp",
-            "violations_table":        f"{violations}_tmp",
-            "execution_metrics_table": f"{metrics}_tmp",
-        }
     return {
         "results_table":           results,
         "violations_table":        violations,
@@ -153,7 +146,6 @@ def classify_retryable_error(message: str | None, runtime_module) -> bool:
 _EXECUTION_METRIC_SCHEMA = StructType([
     StructField("script_name", StringType(), True),
     StructField("status", StringType(), True),
-    StructField("dry_run", BooleanType(), True),
     StructField("output_target", StringType(), True),
     StructField("artifact_target", StringType(), True),
     StructField("row_count", LongType(), True),
@@ -169,7 +161,6 @@ def write_execution_metric(spark, table_name: str, payload: dict) -> None:
     row = {
         "script_name": payload.get("script_name"),
         "status": payload.get("status"),
-        "dry_run": payload.get("dry_run"),
         "output_target": payload.get("output_target"),
         "artifact_target": payload.get("artifact_target"),
         "row_count": int(payload.get("row_count", 0)) if payload.get("row_count") is not None else None,
@@ -180,6 +171,7 @@ def write_execution_metric(spark, table_name: str, payload: dict) -> None:
         "error_message": payload.get("error_message"),
     }
     df = spark.createDataFrame([row], schema=_EXECUTION_METRIC_SCHEMA)
+
     try:
         df.write.mode("append").saveAsTable(table_name)
     except Exception as exc:

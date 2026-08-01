@@ -184,16 +184,15 @@ def create_source_tables(spark) -> None:
 
 
 def create_output_tables(spark, schema: str, result_schema, violation_schema, metric_schema) -> None:
-    """Create the dq_* output tables (and their _tmp twins) from the engine schemas."""
+    """Create the dq_* output tables from the engine schemas."""
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
     for base, struct in (
         ("dq_run_results", result_schema),
         ("dq_violations", violation_schema),
         ("dq_execution_metrics", metric_schema),
     ):
-        for name in (base, f"{base}_tmp"):
-            (
-                spark.createDataFrame([], schema=struct)
-                .write.format("delta").mode("overwrite")
-                .saveAsTable(f"{schema}.{name}")
-            )
+        (
+            spark.createDataFrame([], schema=struct)
+            .write.format("delta").mode("overwrite")
+            .saveAsTable(f"{schema}.{base}")
+        )

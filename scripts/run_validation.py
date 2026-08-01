@@ -89,7 +89,6 @@ try:
         {
             "script_name": "run_validation",
             "status": "Succeeded",
-            "dry_run": _vr_mod.RUNTIME.DRY_RUN,
             "output_target": _vr_mod.TARGETS["results_table"],
             "artifact_target": _vr_mod.TARGETS["violations_table"],
             "row_count": int(results_count),
@@ -114,7 +113,6 @@ except Exception as exc:
             {
                 "script_name": "run_validation",
                 "status": "Failed",
-                "dry_run": bool(getattr(_runtime, "DRY_RUN", False)),
                 "output_target": _targets.get("results_table"),
                 "artifact_target": _targets.get("violations_table"),
                 "row_count": 0,
@@ -138,12 +136,9 @@ print(f"Duration seconds: {(finished - started).total_seconds():.1f}")
 # -----------------------------------------------------------------------------
 _cfg_spec = importlib.util.spec_from_file_location("QualityCatalogConfig", str(CONFIG_DIR / "QualityCatalogConfig.py"))
 _cfg_mod = importlib.util.module_from_spec(_cfg_spec); _cfg_spec.loader.exec_module(_cfg_mod)
-_rt_spec = importlib.util.spec_from_file_location("QualityCatalogRuntime", str(CONFIG_DIR / "QualityCatalogRuntime.py"))
-_rt_mod = importlib.util.module_from_spec(_rt_spec); _rt_spec.loader.exec_module(_rt_mod)
 
 _schema = getattr(_cfg_mod, "DEFAULT_SCHEMA", "default")
-_suffix = "_tmp" if _rt_mod.DRY_RUN else ""
-_q = lambda t: f"{_schema}.{t}{_suffix}"
+_q = lambda t: f"{_schema}.{t}"
 
 results_candidates = [_q(_cfg_mod.DQ_RESULTS_TABLE)]
 violations_candidates = [_q(_cfg_mod.DQ_VIOLATIONS_TABLE)]
@@ -168,7 +163,6 @@ if metrics_table:
         SELECT
             script_name,
             status,
-            dry_run,
             row_count,
             started_at_utc,
             finished_at_utc,

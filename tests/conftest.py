@@ -53,10 +53,8 @@ DQ_VIOLATIONS_TABLE = "dq_violations"
 DQ_EXECUTION_METRICS_TABLE = "dq_execution_metrics"
 '''
 
-# DRY_RUN routes writes to the _tmp tables. MAX_RULE_RETRIES = 0 keeps the
-# retry backoff (2s, 4s) out of the test run.
+# MAX_RULE_RETRIES = 0 keeps the retry backoff (2s, 4s) out of the test run.
 _TEST_RUNTIME = '''
-DRY_RUN = True
 FAIL_ON_EMPTY_SOURCE = True
 RETRYABLE_ERROR_MARKERS = ["timeout", "temporar", "connection", "unavailable", "throttle"]
 MAX_RULE_RETRIES = 0

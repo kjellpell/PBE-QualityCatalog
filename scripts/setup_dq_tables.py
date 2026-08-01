@@ -5,9 +5,7 @@
 #
 # The DDL is generated from the Spark schemas the engine actually writes, so
 # a column added to RESULT_SCHEMA / VIOLATION_SCHEMA / _EXECUTION_METRIC_SCHEMA
-# reaches the tables without being restated here. Previously each schema was
-# hand-maintained in three places (the production DDL, the _tmp DDL, and the
-# Python schema) with nothing keeping them in step.
+# reaches the tables without being restated here.
 #
 # Safe to re-run: CREATE TABLE IF NOT EXISTS leaves existing data alone, and
 # any column missing from an already-deployed table is added via ALTER TABLE.
@@ -124,13 +122,12 @@ def _ensure_table(table: str, struct) -> None:
     )
 
 
-# CELL 3 — create the production tables and their dry-run twins
+# CELL 3 — create the output tables
 # -----------------------------------------------------------------------------
 for _base, _struct in TABLES:
-    for _name in (_base, f"{_base}_tmp"):
-        _table = f"{_schema}.{_name}"
-        _ensure_table(_table, _struct)
-        print(f"  {_table} ready ({len(_struct.fields)} columns).")
+    _table = f"{_schema}.{_base}"
+    _ensure_table(_table, _struct)
+    print(f"  {_table} ready ({len(_struct.fields)} columns).")
 
 
 # Performance tip: after the first significant data load, apply Z-order
@@ -142,4 +139,3 @@ for _base, _struct in TABLES:
 
 print("\n=== DQ SETUP COMPLETE ===")
 print(f"Tables: {', '.join(f'{_schema}.{name}' for name, _ in TABLES)}")
-print(f"Dry-run twins: {', '.join(f'{_schema}.{name}_tmp' for name, _ in TABLES)}")

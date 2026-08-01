@@ -36,8 +36,6 @@ Core capabilities:
   stable engine code, rules managed as YAML catalogs in `rules/`.
 - Observable runs:
   each execution logs status, timing, retryability, and targets.
-- Safer rollout:
-  dry-run writes to temporary tables.
 - Predictable schema setup:
   setup is rerunnable, generates its DDL from the engine schemas, and reports a
   pre-existing table whose shape has drifted instead of migrating it in place.
@@ -95,8 +93,6 @@ The engine will raise a clear error if either file is missing.
 
 ### Key runtime toggles
 
-- DRY_RUN:
-  write to temporary targets with _tmp suffix.
 - FAIL_ON_EMPTY_SOURCE:
   fail if a configured source table is empty.
 - MAX_RETRIES and RETRYABLE_ERROR_MARKERS:
@@ -107,7 +103,7 @@ The engine will raise a clear error if either file is missing.
 ## Execution Flow
 
 1. Load config/runtime modules and validate required keys.
-2. Resolve output targets (production or dry-run).
+2. Resolve output targets.
 3. Load rules directly from the YAML catalogs in `rules/`.
 4. For each rule group:
   - Read source table from Spark metastore.
@@ -242,8 +238,7 @@ Before promoting changes:
 1. `python -m pytest tests/ -v`
 2. `python -m py_compile engine/*.py nb_dq_*.py`
 3. Run `scripts/preflight_checks.py` — catches missing tables and unresolvable predicates.
-4. Run `scripts/run_validation.py` with `DRY_RUN = True` — full run against
-   `_tmp` output tables without touching production data.
+4. Run `scripts/run_validation.py` in the target environment and verify outputs.
 
 ---
 

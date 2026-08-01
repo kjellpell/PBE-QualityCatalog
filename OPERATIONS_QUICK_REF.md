@@ -32,8 +32,6 @@ Use this checklist to run, verify, and triage the Quality Catalog quickly.
 
 Set in config/QualityCatalogRuntime.py.
 
-- DRY_RUN:
-  write to temporary output tables with _tmp suffix.
 - FAIL_ON_EMPTY_SOURCE:
   fail if a source table is empty.
 - MAX_RULE_RETRIES:

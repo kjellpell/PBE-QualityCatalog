@@ -42,24 +42,16 @@ Notes:
 
 Current fields:
 
-- `DRY_RUN`
 - `FAIL_ON_EMPTY_SOURCE`
 - `MAX_RULE_RETRIES`
 - `RULE_TIMEOUT_SECONDS`
 - `RETRYABLE_ERROR_MARKERS`
 - `CATALOG_FILTER_OVERRIDES`
 
-When `DRY_RUN = True`:
-
-- results are written to `dq_run_results_tmp`
-- violations are written to `dq_violations_tmp`
-- execution metrics are written to `default.dq_execution_metrics_tmp`
-
 ## Validation checklist
 
 1. Confirm both config files exist in `/lakehouse/default/Files/Configs/`.
 2. Run `scripts/setup_dq_tables.py` if the environment is new.
 3. Run `scripts/preflight_checks.py`.
-4. Execute one dry run.
+4. Execute one validation run in the target environment.
 5. Verify output counts and error-free summary.
-6. Switch `DRY_RUN = False` before production scheduling.
