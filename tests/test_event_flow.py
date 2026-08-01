@@ -176,6 +176,81 @@ def test_gate_scopes_which_groups_are_evaluated(spark):
     assert [r.primary_key_value for r in violations.collect()] == ["gated"]
 
 
+def test_gate_falls_back_to_ends_with_when_never_reached(spark):
+    """
+    The case this exists for: a handler never sets the gate milestone, but the
+    case still reaches its actual closing event. That group must not be
+    skipped forever — it is evaluated once, at the point it closed, and an
+    unclosed pass surfaces exactly as it would for a gated-in group.
+    """
+    rows = [
+        ("no_gate_but_closed", "A", date(2024, 1, 1)),   # unclosed pass
+        ("no_gate_but_closed", "end", date(2024, 1, 2)),
+        ("still_open", "A", date(2024, 1, 1)),           # never closes, no gate either
+    ]
+    df = spark.createDataFrame(rows, "grp string, ev string, d date")
+    rule = {"event_flow": {
+        **FLOW, "starts_with": None,
+        "completion_gate": {"event_column": "ev", "value": "opened", "order_column": "d"},
+    }}
+    result, violations = run_rule(rule, df, spark)
+
+    assert result["total_rows"] == 1     # only the closed case is evaluated
+    assert [r.primary_key_value for r in violations.collect()] == ["no_gate_but_closed"]
+
+
+def test_gate_reached_is_evaluated_even_without_ends_with_reached(spark):
+    """Gate-in-progress behaviour from before the fallback existed is unchanged."""
+    rows = [
+        ("gated", "opened", date(2024, 1, 1)),
+        ("gated", "A", date(2024, 1, 2)),        # unclosed pass -> should fail
+        ("ungated", "A", date(2024, 1, 2)),      # same problem, but out of scope
+    ]
+    df = spark.createDataFrame(rows, "grp string, ev string, d date")
+    rule = {"event_flow": {
+        **FLOW, "starts_with": None,
+        "completion_gate": {"event_column": "ev", "value": "opened", "order_column": "d"},
+    }}
+    result, violations = run_rule(rule, df, spark)
+
+    assert result["total_rows"] == 1
+    assert [r.primary_key_value for r in violations.collect()] == ["gated"]
+
+
+def test_gate_without_ends_with_configured_stays_strict(spark):
+    """No ends_with means no fallback: a group that never reaches the gate is
+    excluded even if the flow itself has no configured closing event at all."""
+    rows = [
+        ("gated", "opened", date(2024, 1, 1)), ("gated", "A", date(2024, 1, 2)),
+        ("never_gated", "A", date(2024, 1, 2)),
+    ]
+    df = spark.createDataFrame(rows, "grp string, ev string, d date")
+    rule = {"event_flow": {
+        "event_column": "ev", "group_column": "grp", "order_column": "d",
+        "cycle": ["A", "B"],
+        "completion_gate": {"event_column": "ev", "value": "opened", "order_column": "d"},
+    }}
+    result, violations = run_rule(rule, df, spark)
+
+    assert result["total_rows"] == 1
+    assert [r.primary_key_value for r in violations.collect()] == ["gated"]
+
+
+def test_ends_with_alone_does_not_act_as_a_gate(spark):
+    """Declaring ends_with without completion_gate stays fully ungated."""
+    rows = [
+        ("g1", "A", date(2024, 1, 1)),           # unclosed pass, never reaches end
+        ("g2", "A", date(2024, 1, 1)), ("g2", "B", date(2024, 1, 2)),
+        ("g2", "end", date(2024, 1, 3)),
+    ]
+    df = spark.createDataFrame(rows, "grp string, ev string, d date")
+    rule = {"event_flow": {**FLOW, "starts_with": None}}
+    result, violations = run_rule(rule, df, spark)
+
+    assert result["total_rows"] == 2     # both groups evaluated, no gate at all
+    assert [r.primary_key_value for r in violations.collect()] == ["g1"]
+
+
 def test_gate_accepts_several_values(spark):
     rows = [
         ("g1", "opened_a", date(2024, 1, 1)), ("g1", "A", date(2024, 1, 2)),

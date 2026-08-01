@@ -167,9 +167,25 @@ def _gate_predicate(gate: dict):
     return predicate
 
 
-def _resolve_gate_groups(df: DataFrame, gate: dict, group_column: str) -> DataFrame:
+def _resolve_gate_groups(
+    df: DataFrame,
+    gate: dict,
+    group_column: str,
+    fallback_column: str | None = None,
+    fallback_values: list | None = None,
+) -> DataFrame:
     """
-    Narrow to rows belonging to groups that have reached the gate event.
+    Narrow to rows belonging to groups that have reached the gate event — or,
+    for a group the gate never fired on, one that reached `fallback_values`
+    instead (the flow's own `ends_with`).
+
+    A handler does not always remember to set the gate milestone. Without the
+    fallback, a group that never got gated in is excluded forever, even after
+    it has genuinely closed — silently dropping coverage rather than merely
+    delaying it. `ends_with` already means "the event(s) that close this
+    flow", so reusing it here is the same concept read twice, not a second
+    one: once a case reaches its own closing event it is evaluated regardless
+    of whether the gate fired first.
 
     An absent or incomplete gate leaves the frame untouched, so an
     ungated rule evaluates every group.
@@ -179,8 +195,14 @@ def _resolve_gate_groups(df: DataFrame, gate: dict, group_column: str) -> DataFr
 
     _require_columns(df, gate.get("event_column"), gate.get("order_column"))
 
-    complete = df.filter(_gate_predicate(gate)).select(group_column).distinct()
-    return df.join(complete, on=group_column, how="inner")
+    ready = df.filter(_gate_predicate(gate)).select(group_column).distinct()
+    if fallback_column and fallback_values:
+        closed = (
+            df.filter(F.col(fallback_column).isin(fallback_values))
+            .select(group_column).distinct()
+        )
+        ready = ready.unionByName(closed).distinct()
+    return df.join(ready, on=group_column, how="inner")
 
 
 _AGGREGATE_FUNCTIONS = {
@@ -367,7 +389,10 @@ def _build_event_flow(ctx: Context) -> Evaluation:
     ) + [(v, i + 1) for i, v in enumerate(cycle)] + [(v, END_RANK) for v in ends_with]:
         rank = F.when(F.col(event_column) == value, F.lit(position)).otherwise(rank)
 
-    df = _resolve_gate_groups(ctx.df, gate, group_column)
+    df = _resolve_gate_groups(
+        ctx.df, gate, group_column,
+        fallback_column=event_column, fallback_values=ends_with,
+    )
     listed = (
         df.filter(
             F.col(group_column).isNotNull()
