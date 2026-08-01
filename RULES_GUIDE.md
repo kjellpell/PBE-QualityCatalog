@@ -188,6 +188,16 @@ occur.
 so work still legitimately in progress is not flagged. Its `value:` accepts a
 scalar or a list.
 
+A handler does not always remember to set the gate milestone, so a group can
+never fire it and still run its whole cycle to completion. If `ends_with` is
+also declared, a group that reaches it is evaluated too, even without the
+gate — `ends_with` already means "the event(s) that close this flow", so this
+is the same concept read twice, not a second one. The gate stays the earlier,
+preferred trigger; `ends_with` is the safety net that catches a case at the
+point it actually closed, rather than skipping it forever because the gate
+milestone was never set. A `completion_gate` with no `ends_with` declared
+keeps the strict behaviour: only gated-in groups are evaluated.
+
 Events on the **same date** are read in declared order, so a group whose
 milestones share a timestamp gives the same verdict every run.
 
