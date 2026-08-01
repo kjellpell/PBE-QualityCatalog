@@ -56,7 +56,7 @@ spark.sql("SET spark.sql.ansi.enabled = false")
 
 _cfg_mod, _cfg_path = load_config_module("QualityCatalogConfig")
 
-_schema = getattr(_cfg_mod, "DEFAULT_SCHEMA", "qualitycatalog")
+_schema = getattr(_cfg_mod, "DEFAULT_SCHEMA", "datakvalitet")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {_schema}")
 print(f"Spark ready. Target schema: {_schema}  (config: {_cfg_path})")
 
