@@ -117,7 +117,7 @@ def _apply_resolution_tracking(
     ----------
     current_violations_df : Spark DataFrame matching VIOLATION_SCHEMA
     spark_session         : active SparkSession
-    violations_table      : fully-qualified table name (e.g. "qualitycatalog.dq_violations")
+    violations_table      : fully-qualified table name (e.g. "datakvalitet.dq_violations")
     run_timestamp         : timestamp to record for resolutions
                             (defaults to datetime.now(timezone.utc))
     """
