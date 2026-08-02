@@ -63,6 +63,15 @@ def test_check_passes(spark):
     assert result["success_pct"] == 100.0
 
 
+def test_check_violation_detail_explains_comparison(spark):
+    df = spark.createDataFrame([(1, 1, 2)], "id int, a int, b int")
+    result, violations = run_rule({"check": "a >= b"}, df, spark, pk_column="id")
+
+    assert result["failed_rows"] == 1
+    row = violations.collect()[0]
+    assert row.violation_detail == "a = 1; expected a >= b; a 1 is less than the required value b"
+
+
 def test_when_narrows_the_denominator(spark):
     """`when:` must narrow what is evaluated, not merely mask violations."""
     df = spark.createDataFrame(

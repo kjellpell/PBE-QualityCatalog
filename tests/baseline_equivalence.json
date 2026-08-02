@@ -553,7 +553,7 @@
       "violated_column": "milestone_title",
       "actual_value": null,
       "expected_condition": "Events must follow: (Merknader oversendt, Mottatt revidert planforslag)*",
-      "violation_detail": "Incomplete pass within to_stage_recno=11.",
+      "violation_detail": "A flow started but did not complete; expected (Merknader oversendt, Mottatt revidert planforslag)* within to_stage_recno=11.",
       "issue_status": "Active",
       "violation_scope": "group"
     },
@@ -566,7 +566,7 @@
       "violated_column": "milestone_title",
       "actual_value": "Mottatt revidert planforslag",
       "expected_condition": "Events must follow: (Merknader oversendt, Mottatt revidert planforslag)*",
-      "violation_detail": "'Mottatt revidert planforslag' breaks the flow within to_stage_recno=13.",
+      "violation_detail": "Unexpected event 'Mottatt revidert planforslag' in the sequence; expected (Merknader oversendt, Mottatt revidert planforslag)* within to_stage_recno=13.",
       "issue_status": "Active",
       "violation_scope": "group"
     },
@@ -579,7 +579,7 @@
       "violated_column": "milestone_title",
       "actual_value": null,
       "expected_condition": "Events must follow: (Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon)*",
-      "violation_detail": "Incomplete pass within to_stage_recno=20.",
+      "violation_detail": "A flow started but did not complete; expected (Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon)* within to_stage_recno=20.",
       "issue_status": "Active",
       "violation_scope": "group"
     },
@@ -592,7 +592,7 @@
       "violated_column": "milestone_title",
       "actual_value": null,
       "expected_condition": "Events must follow: (Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon)*",
-      "violation_detail": "Incomplete pass within to_stage_recno=30.",
+      "violation_detail": "A flow started but did not complete; expected (Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon)* within to_stage_recno=30.",
       "issue_status": "Active",
       "violation_scope": "group"
     }

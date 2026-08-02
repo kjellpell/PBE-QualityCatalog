@@ -109,6 +109,44 @@ def test_group_with_no_listed_events_passes(spark):
     assert result["failed_rows"] == 0
 
 
+def test_violation_detail_explains_out_of_order_events(spark):
+    rows = [("g1", "B", date(2024, 1, 1))]
+    df = spark.createDataFrame(rows, "grp string, ev string, d date")
+    result, violations = run_rule({"event_flow": FLOW}, df, spark)
+
+    assert result["status"] == "FAILED"
+    row = violations.collect()[0]
+    assert "Unexpected event" in row.violation_detail
+    assert "expected the next event" in row.violation_detail
+    assert "within" not in row.violation_detail.lower()
+
+
+def test_violation_detail_explains_incomplete_passes(spark):
+    rows = [("g1", "A", date(2024, 1, 1))]
+    df = spark.createDataFrame(rows, "grp string, ev string, d date")
+    result, violations = run_rule({"event_flow": {**FLOW, "starts_with": None, "ends_with": None}}, df, spark)
+
+    assert result["status"] == "FAILED"
+    row = violations.collect()[0]
+    assert "did not complete" in row.violation_detail.lower()
+    assert "continue as" in row.violation_detail.lower()
+    assert "within" not in row.violation_detail.lower()
+
+
+def test_violation_detail_reports_expected_next_event_after_repeated_passes(spark):
+    rows = [
+        ("g1", "A", date(2024, 1, 1)),
+        ("g1", "B", date(2024, 1, 2)),
+        ("g1", "A", date(2024, 1, 3)),
+    ]
+    df = spark.createDataFrame(rows, "grp string, ev string, d date")
+    result, violations = run_rule({"event_flow": {**FLOW, "starts_with": None, "ends_with": None}}, df, spark)
+
+    assert result["status"] == "FAILED"
+    row = violations.collect()[0]
+    assert "expected the next event to be 'B'" in row.violation_detail
+
+
 def test_single_event_cycle_allows_any_number_of_repeats(spark):
     result, _ = _run(spark, ["start", "A", "A", "A", "end"], cycle=["A"])
     assert result["status"] == "PASSED"

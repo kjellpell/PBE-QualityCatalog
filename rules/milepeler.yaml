@@ -40,6 +40,8 @@ rules:
 # Formålet med completion_gate er å angi en milepæl som må være nådd for at event_flow skal gjelde. 
 # Dette er nyttig når man har flere sett med milepæler i samme fase, men hvor man kun ønsker å evaluere dem når den spesifiserte milepælen er nådd, i stedet for å vente på sluttmilepælen.
 
+# Jeg har i disse reglene ikke brukt starts_with og ends_with, men motoren ville da sjekket om disse kom i riktig rekkefølge
+
 - rule_id: MIL-004
   name: Oppstartsmøte, milepæler for tilleggsdokumentasjon må komme parvis
   when: indikator = 'Oppstartsmøte'

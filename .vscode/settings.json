@@ -1,0 +1,4 @@
+{
+  "python.defaultInterpreterPath": "/Users/kjellgautegrude/Documents/GitHub/.venv311/bin/python",
+  "python.envFile": "${workspaceFolder}/.env"
+}

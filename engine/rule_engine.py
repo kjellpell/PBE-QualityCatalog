@@ -35,8 +35,9 @@
 # between rule types.
 # =============================================================================
 
+import re
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
@@ -112,7 +113,9 @@ def predicate_columns(expression: str) -> list[str]:
     caller falls back to a NULL violated_column rather than failing the rule.
     """
     try:
-        node = F.expr(expression)._jc.expr()
+        expr = F.expr(expression)
+        jc = getattr(expr, "_jc", None)
+        node = jc.expr() if jc is not None else None
     except Exception:
         return []
 
@@ -140,6 +143,25 @@ def _predicate_subject(expression: str) -> str | None:
     return columns[0] if columns else None
 
 
+def _comparison_parts(expression: str) -> tuple[str, str] | None:
+    """Return the operator and RHS for a simple comparison predicate."""
+    match = re.match(r"^\s*([A-Za-z_][\w\.]*)\s*(>=|<=|>|<|=|!=)\s*(.+?)\s*$", expression)
+    if not match:
+        return None
+    return match.group(2), match.group(3).strip()
+
+
+def _comparison_phrase(operator: str) -> str:
+    return {
+        ">=": "is less than the required value",
+        ">": "is less than or equal to the required value",
+        "<=": "is greater than the required value",
+        "<": "is greater than or equal to the required value",
+        "=": "does not match the required value",
+        "!=": "matches the required value",
+    }.get(operator, "does not satisfy the required value")
+
+
 def _as_list(raw) -> list:
     """
     Accept a scalar or a list wherever several values are permitted.
@@ -160,6 +182,9 @@ def _gate_predicate(gate: dict):
     event_column = gate.get("event_column")
     values = _as_list(gate.get("value"))
     order_column = gate.get("order_column")
+
+    if not isinstance(event_column, str) or not event_column:
+        raise RuleConfigError("completion_gate.event_column must be a non-empty string.")
 
     predicate = F.col(event_column).isin(values)
     if order_column:
@@ -193,7 +218,14 @@ def _resolve_gate_groups(
     if not gate or not gate.get("event_column") or not _as_list(gate.get("value")):
         return df
 
-    _require_columns(df, gate.get("event_column"), gate.get("order_column"))
+    event_column = gate.get("event_column")
+    order_column = gate.get("order_column")
+    if not isinstance(event_column, str) or not event_column:
+        raise RuleConfigError("completion_gate.event_column must be a non-empty string.")
+    if order_column is not None and not isinstance(order_column, str):
+        raise RuleConfigError("completion_gate.order_column must be a string if provided.")
+
+    _require_columns(df, *(c for c in (event_column, order_column) if c))
 
     ready = df.filter(_gate_predicate(gate)).select(group_column).distinct()
     if fallback_column and fallback_values:
@@ -219,7 +251,7 @@ class Context:
     """Everything a builder needs. Assembled by the driver."""
     df: DataFrame           # already narrowed by catalog `where:` and rule `when:`
     cfg: object             # the value of the rule-type key
-    spark: object
+    spark: Any
     pk_column: str | None
 
 
@@ -243,6 +275,9 @@ class Evaluation:
 
 def _build_check(ctx: Context) -> Evaluation:
     """A single boolean predicate, evaluated per row with SQL CHECK semantics."""
+    if ctx.pk_column is None:
+        raise RuleConfigError("Missing pk_column configuration.")
+
     expression = ctx.cfg
     if not isinstance(expression, str) or not expression.strip():
         raise RuleConfigError("'check' must be a non-empty SQL predicate.")
@@ -259,8 +294,21 @@ def _build_check(ctx: Context) -> Evaluation:
         actual = _as_str(subject)
         detail = F.concat(
             F.lit(f"{subject} = "), _str_or_null(subject),
-            F.lit(f"; expected {expression}"),
+            F.lit("; expected "),
+            F.lit(expression),
         )
+        comparison = _comparison_parts(expression)
+        if comparison is not None:
+            operator, rhs = comparison
+            detail = F.concat(
+                detail,
+                F.lit("; "),
+                F.lit(subject),
+                F.lit(" "),
+                _str_or_null(subject),
+                F.lit(f" {_comparison_phrase(operator)} "),
+                F.lit(rhs),
+            )
     else:
         actual = F.lit(None).cast("string")
         detail = F.lit(f"Row does not satisfy {expression}")
@@ -277,6 +325,9 @@ def _build_check(ctx: Context) -> Evaluation:
 
 def _build_unique(ctx: Context) -> Evaluation:
     """Every combination of the listed columns must occur at most once."""
+    if ctx.pk_column is None:
+        raise RuleConfigError("Missing pk_column configuration.")
+
     columns = ctx.cfg
     if isinstance(columns, str):
         columns = [columns]
@@ -360,6 +411,12 @@ def _build_event_flow(ctx: Context) -> Evaluation:
     event_column, group_column, order_column = _require(
         cfg, "event_column", "group_column", "order_column"
     )
+    if not isinstance(event_column, str) or not event_column:
+        raise RuleConfigError("'event_column' must be a non-empty string.")
+    if not isinstance(group_column, str) or not group_column:
+        raise RuleConfigError("'group_column' must be a non-empty string.")
+    if not isinstance(order_column, str) or not order_column:
+        raise RuleConfigError("'order_column' must be a non-empty string.")
     cycle = [str(v) for v in (cfg.get("cycle") or [])]
     if not cycle:
         raise RuleConfigError("'cycle' must list at least one event.")
@@ -428,11 +485,29 @@ def _build_event_flow(ctx: Context) -> Evaluation:
         | ((F.col("_rank") == END_RANK) & (F.col("_pos") != F.col("_last")))
     )
 
+    expected_event_for_cycle = F.lit(None).cast("string")
+    for idx, value in enumerate(cycle):
+        expected_event_for_cycle = F.when(
+            (((F.col("_cpos") - 1) % F.lit(width)) + 1) == idx + 1,
+            F.lit(value),
+        ).otherwise(expected_event_for_cycle)
+
+    next_expected_event = F.lit(None).cast("string")
+    for idx, value in enumerate(cycle):
+        next_value = cycle[(idx + 1) % width]
+        next_expected_event = F.when(
+            (((F.col("_cpos") - 1) % F.lit(width)) + 1) == idx + 1,
+            F.lit(next_value),
+        ).otherwise(next_expected_event)
+
     offenders = (
         positioned.filter(anchor_problem)
-        .select(group_column, order_column, event_column)
+        .withColumn("_expected_event", F.lit(None).cast("string"))
+        .select(group_column, order_column, event_column, "_expected_event")
         .unionByName(
-            cycle_only.filter(misplaced).select(group_column, order_column, event_column)
+            cycle_only.filter(misplaced)
+            .withColumn("_expected_event", expected_event_for_cycle)
+            .select(group_column, order_column, event_column, "_expected_event")
         )
     )
 
@@ -451,17 +526,38 @@ def _build_event_flow(ctx: Context) -> Evaluation:
         | (F.col("_cycle_events") % F.lit(width) != 0)   # an unclosed pass
     ).select(group_column)
 
+    structural_expectations = (
+        cycle_only.withColumn("_expected_event", next_expected_event)
+        .withColumn("_row_number", F.row_number().over(Window.partitionBy(group_column).orderBy(*ordering)))
+        .withColumn("_last_row_number", F.max("_row_number").over(Window.partitionBy(group_column)))
+        .filter(F.col("_row_number") == F.col("_last_row_number"))
+        .select(group_column, "_expected_event")
+        .join(structural, on=group_column, how="inner")
+        .select(group_column, F.col("_expected_event").alias("_structural_expected_event"))
+    )
+
     # One row per failing group, naming the earliest event that broke the flow.
     first_offender = (
         offenders.groupBy(group_column)
-        .agg(F.min(F.struct(F.col(order_column), F.col(event_column))).alias("_first"))
-        .select(group_column, F.col(f"_first.{event_column}").alias("_bad_event"))
+        .agg(
+            F.min(F.struct(F.col(order_column), F.col(event_column), F.col("_expected_event"))).alias("_first")
+        )
+        .select(
+            group_column,
+            F.col(f"_first.{event_column}").alias("_bad_event"),
+            F.col("_first._expected_event").alias("_expected_event"),
+        )
     )
     violating = (
         offenders.select(group_column)
         .unionByName(structural)
         .distinct()
         .join(first_offender, on=group_column, how="left")
+        .join(structural_expectations, on=group_column, how="left")
+        .withColumn(
+            "_expected_event",
+            F.coalesce(F.col("_expected_event"), F.col("_structural_expected_event")),
+        )
     )
 
     flow = " → ".join(
@@ -475,14 +571,38 @@ def _build_event_flow(ctx: Context) -> Evaluation:
         F.lit(event_column).alias("violated_column"),
         _as_str("_bad_event").alias("actual_value"),
         F.lit(condition).alias("expected_condition"),
-        F.concat(
-            F.coalesce(
-                F.concat(F.lit("'"), _as_str("_bad_event"), F.lit("' breaks the flow")),
-                F.lit("Incomplete pass"),
+        F.when(
+            F.col("_bad_event").isNotNull() & F.col("_expected_event").isNotNull(),
+            F.concat(
+                F.lit("Unexpected event '"),
+                _as_str("_bad_event"),
+                F.lit("' in the sequence; expected the next event to be '"),
+                _as_str("_expected_event"),
+                F.lit("'."),
             ),
-            F.lit(f" within {group_column}="),
-            _str_or_null(group_column),
-            F.lit("."),
+        ).when(
+            F.col("_expected_event").isNotNull() & F.col("_bad_event").isNull(),
+            F.concat(
+                F.lit("A flow started but did not complete; expected to continue as "),
+                F.lit(flow),
+                F.lit("; expected the next event to be '"),
+                _as_str("_expected_event"),
+                F.lit("'."),
+            ),
+        ).when(
+            F.col("_bad_event").isNotNull(),
+            F.concat(
+                F.lit("Unexpected event '"),
+                _as_str("_bad_event"),
+                F.lit("' in the sequence; expected "),
+                F.lit(flow),
+            ),
+        ).otherwise(
+            F.concat(
+                F.lit("A flow started but did not complete; expected to continue as "),
+                F.lit(flow),
+                F.lit("."),
+            )
         ).alias("violation_detail"),
     )
     return Evaluation(evaluated, violations, condition)
@@ -497,7 +617,13 @@ def _build_required_event(ctx: Context) -> Evaluation:
         cfg, "event_column", "group_column", "value"
     )
     order_column = cfg.get("order_column")
-    _require_columns(ctx.df, event_column, group_column, order_column)
+    if not isinstance(event_column, str) or not event_column:
+        raise RuleConfigError("'event_column' must be a non-empty string.")
+    if not isinstance(group_column, str) or not group_column:
+        raise RuleConfigError("'group_column' must be a non-empty string.")
+    if order_column is not None and not isinstance(order_column, str):
+        raise RuleConfigError("'order_column' must be a string if provided.")
+    _require_columns(ctx.df, event_column, group_column, *(c for c in (order_column,) if c))
 
     grouped = ctx.df.filter(F.col(group_column).isNotNull())
     evaluated = grouped.select(group_column).distinct()
