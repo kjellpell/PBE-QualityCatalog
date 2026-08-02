@@ -4,7 +4,7 @@
 #
 # Expected Lakehouse layout:
 #   /lakehouse/default/Files/engine/
-#   /lakehouse/default/Files/Configs/
+#   /lakehouse/default/Files/configs/
 #   /lakehouse/default/Files/rules/
 # =============================================================================
 
@@ -17,9 +17,25 @@ from pathlib import Path
 
 from pyspark.sql import SparkSession
 
-ENGINE_DIR = Path("/lakehouse/default/Files/engine")
-CONFIG_DIR = Path("/lakehouse/default/Files/Configs")
-RULES_DIR = Path("/lakehouse/default/Files/rules")
+BOOTSTRAP_CONFIG_DIR = Path("/lakehouse/default/Files/configs")
+
+
+def _load_config(module_name: str):
+    module_path = BOOTSTRAP_CONFIG_DIR / f"{module_name}.py"
+    spec = importlib.util.spec_from_file_location(module_name, str(module_path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load configuration module from: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module, module_path
+
+
+CONFIG, CONFIG_PATH = _load_config("QualityCatalogConfig")
+
+LAKEHOUSE_FILES_DIR = Path(CONFIG.LAKEHOUSE_FILES_DIR)
+ENGINE_DIR = Path(CONFIG.ENGINE_DIR)
+CONFIG_DIR = Path(CONFIG.CONFIGS_DIR)
+RULES_DIR = LAKEHOUSE_FILES_DIR / CONFIG.RULES_DIR
 RUNNER_PATH = ENGINE_DIR / "runner.py"
 
 spark = SparkSession.builder.getOrCreate()
@@ -134,16 +150,13 @@ print(f"Duration seconds: {(finished - started).total_seconds():.1f}")
 # -----------------------------------------------------------------------------
 # STEP 3: Show latest run evidence
 # -----------------------------------------------------------------------------
-_cfg_spec = importlib.util.spec_from_file_location("QualityCatalogConfig", str(CONFIG_DIR / "QualityCatalogConfig.py"))
-_cfg_mod = importlib.util.module_from_spec(_cfg_spec); _cfg_spec.loader.exec_module(_cfg_mod)
-
-_schema = getattr(_cfg_mod, "DEFAULT_SCHEMA", "default")
+_schema = getattr(CONFIG, "DEFAULT_SCHEMA", "default")
 _q = lambda t: f"{_schema}.{t}"
 
-results_candidates = [_q(_cfg_mod.DQ_RESULTS_TABLE)]
-violations_candidates = [_q(_cfg_mod.DQ_VIOLATIONS_TABLE)]
-metrics_candidates = [_q(_cfg_mod.DQ_EXECUTION_METRICS_TABLE)]
-metrics_bare_name = getattr(_cfg_mod, "DQ_EXECUTION_METRICS_TABLE", "dq_execution_metrics")
+results_candidates = [_q(CONFIG.DQ_RESULTS_TABLE)]
+violations_candidates = [_q(CONFIG.DQ_VIOLATIONS_TABLE)]
+metrics_candidates = [_q(CONFIG.DQ_EXECUTION_METRICS_TABLE)]
+metrics_bare_name = getattr(CONFIG, "DQ_EXECUTION_METRICS_TABLE", "dq_execution_metrics")
 if metrics_bare_name not in metrics_candidates:
     metrics_candidates.append(metrics_bare_name)
 

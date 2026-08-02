@@ -86,8 +86,8 @@ PBE-QualityCatalog/
 
 Config files must be uploaded to the Lakehouse at:
 
-    /lakehouse/default/Files/Configs/QualityCatalogConfig.py
-    /lakehouse/default/Files/Configs/QualityCatalogRuntime.py
+    /lakehouse/default/Files/configs/QualityCatalogConfig.py
+    /lakehouse/default/Files/configs/QualityCatalogRuntime.py
 
 The engine will raise a clear error if either file is missing.
 
@@ -199,7 +199,7 @@ For a one-page checklist, see OPERATIONS_QUICK_REF.md.
 - Missing source tables:
   run preflight and confirm metastore names.
 - Config loading failures:
-  verify Lakehouse config path — ensure both config files exist at /lakehouse/default/Files/Configs/.
+  verify Lakehouse config path — ensure both config files exist at /lakehouse/default/Files/configs/.
 - Violation write failures:
   rerun nb_dq_00_setup.py and verify Delta support.
 - Rule configuration errors:

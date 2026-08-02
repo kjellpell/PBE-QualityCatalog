@@ -2,45 +2,39 @@ rule_group: Faser
 table: faser
 database: saksbehandling
 description: Validering av datakvalitet for faser
-pk_column: stage_recno
+pk_column: pk_faser
 
 # Jeg har valgt å kun se på PB360-saker per nå
 where: fagsystem = 'PB360'
 
-# I de fleste tilfeller trenger vi å koble oss til saksbehandling.saker.
-joins:
-- table: saksbehandling.saker
-  left_on: to_case_recno
-  right_on: case_recno
-  how: left
-  select:
-  - case_recno
-  - saksnummer
-  - saksansvarlig_kode
+# joins:
+#- table: saksbehandling.saker
+#  left_on: to_case_recno
+#  right_on: case_recno
+#  how: left
+#  select:
+#  - case_recno
+#  - saksnummer
+#  - saksansvarlig_kode
 
 rules:
 
 # Én regel per kolonne, slik at rule_id peker på nøyaktig én feil.
 - rule_id: FAS-001
-  name: to_case_recno mangler
-  description: 'Alle rader må være knyttet til en sak.'
-  check: to_case_recno IS NOT NULL
+  name: pk_faser mangler
+  check: pk_faser IS NOT NULL
 
 - rule_id: FAS-002
-  name: stage_recno mangler
-  description: 'Alle rader må ha en fase-id.'
-  check: stage_recno IS NOT NULL
+  name: fk_saker mangler
+  check: fk_saker IS NOT NULL
 
-# Dette er muligens en sjekk som allerede gjøres ved ingestion
+# Sjekk om stage_recno er unik
 - rule_id: FAS-003
-  name: stage_recno må være unik på tvers av alle faser
-  description: 'Dupliserte stage_recnoer indikerer et problem med dataregistrering.'
+  name: pk_fkaser må være unik på tvers av alle faser
   unique:
-  - stage_recno
+  - pk_faser
 
 # when: avgrenser hvilke rader regelen gjelder for. Her: kun lukkede faser.
-# Merk at tidligste_startmilepael_dato tidligere ble sjekket to ganger
-# (FAS-001a og FAS-003); duplikatet er fjernet.
 - rule_id: FAS-004
   name: Lukket fase mangler fase_lukket_dato
   description: 'Når siste milepæl er satt, må fasen også være lukket.'
@@ -55,11 +49,11 @@ rules:
 
 # Formålet med denne regelen er å unngå at det finnes åpne faser i en sak,
 # uten at saken har en saksbehandler.
-- rule_id: FAS-006
-  name: Åpen fase mangler saksbehandler
-  description: 'Alle faser hvor sluttdato er null må være tildelt en saksbehandler.'
-  when: seneste_stoppmilepael_dato IS NULL
-  check: saksansvarlig_kode IS NOT NULL
+#- rule_id: FAS-006
+#  name: Åpen fase mangler saksbehandler
+#  description: 'Alle faser hvor sluttdato er null må være tildelt en saksbehandler.'
+#  when: seneste_stoppmilepael_dato IS NULL
+#  check: saksansvarlig_kode IS NOT NULL
 
 # Dette er en viktig regel, for å sikre at tidsbruk blir beregnet riktig
 - rule_id: FAS-007
@@ -79,7 +73,15 @@ rules:
   description: 'Negativ bransjetid er et tegn på feil registrering av start- eller sluttdato.'
   check: bransjetid >= 0
 
-# Fordi det ikke er noen begrensning på fristforlengelse i PB360, må vi sjekke de
+# Denne sjekker om fristforlengelsen er lengre enn tillatt
+- rule_id: FAS-010
+  name: Forlenget frist kan ikke være lengre enn 126 dager for saker til politisk behandling
+  description: 'Forlenget frist kan ikke være lengre enn 126 dager for saker til politisk behandling.'
+  when: indikator IN ('Til politisk behandling')
+  check: frist_dager <= 126
+
+
+  # Fordi det ikke er noen begrensning på fristforlengelse i PB360, må vi sjekke de
 # indikatorene som normalt _ikke_ skal ha fristforlengelse. Se også regelen under.
 - rule_id: FAS-010
   name: Opprinnelig frist og frist_dager må være lik for indikatorer uten fristforlengelse
@@ -90,16 +92,9 @@ rules:
                   'Brukstillatelse', 'Ferdigattest', 'Seksjonering', 'Reseksjonering',
                   'Oppstartsmøte')
   check: opprinnelig_frist_dager = frist_dager
-
-# Denne sjekker om fristforlengelsen er lengre enn tillatt
-- rule_id: FAS-011
-  name: Forlenget frist kan ikke være lengre enn 126 dager for saker til politisk behandling
-  description: 'Forlenget frist kan ikke være lengre enn 126 dager for saker til politisk behandling.'
-  when: indikator IN ('Til politisk behandling')
-  check: frist_dager <= 126
-
+  
 # Her er det en del avvik, og det stusser jeg litt på
-- rule_id: FAS-012
+- rule_id: FAS-011
   name: decisiondate kan ikke være lavere enn sluttdato
   description: 'For ferdige faser må decisiondate ikke være tidligere enn sluttdato.'
   check: decisiondate >= seneste_stoppmilepael_dato

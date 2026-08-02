@@ -1,4 +1,4 @@
-# Template / reference copy — deploy to /lakehouse/default/Files/Configs/ on Fabric.
+# Template / reference copy — deploy to /lakehouse/default/Files/configs/ on Fabric.
 """Runtime controls for the Quality Catalog validation runner."""
 
 FAIL_ON_EMPTY_SOURCE = True

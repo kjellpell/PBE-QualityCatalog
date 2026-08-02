@@ -10,14 +10,14 @@ Copy these files to Lakehouse Files:
 
 | Repo file | Lakehouse target |
 |---|---|
-| `config/QualityCatalogConfig.py` | `/lakehouse/default/Files/Configs/QualityCatalogConfig.py` |
-| `config/QualityCatalogRuntime.py` | `/lakehouse/default/Files/Configs/QualityCatalogRuntime.py` |
+| `config/QualityCatalogConfig.py` | `/lakehouse/default/Files/configs/QualityCatalogConfig.py` |
+| `config/QualityCatalogRuntime.py` | `/lakehouse/default/Files/configs/QualityCatalogRuntime.py` |
 | `rules/*.yaml` | `/lakehouse/default/Files/rules/*.yaml` |
 | `engine/` (all files, incl. `__init__.py`) | `/lakehouse/default/Files/engine/` |
 
 Notes:
 
-- Both config files must exist at `/lakehouse/default/Files/Configs/`.
+- Both config files must exist at `/lakehouse/default/Files/configs/`.
 - `engine/` is **required**: `scripts/run_validation.py` loads
   `/lakehouse/default/Files/engine/runner.py` and fails its
   pre-check if any engine file is missing.
@@ -50,7 +50,7 @@ Current fields:
 
 ## Validation checklist
 
-1. Confirm both config files exist in `/lakehouse/default/Files/Configs/`.
+1. Confirm both config files exist in `/lakehouse/default/Files/configs/`.
 2. Run `scripts/setup_dq_tables.py` if the environment is new.
 3. Run `scripts/preflight_checks.py`.
 4. Execute one validation run in the target environment.

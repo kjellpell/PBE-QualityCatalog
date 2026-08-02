@@ -2,23 +2,30 @@ rule_group: Milepæler
 table: milepaeler
 database: saksbehandling
 description: Datakvalitet på milepæler knyttet til saksfaser
-pk_column: milestone_recno
+pk_column: pk_milepaeler
 
 # Jeg har valgt å kun se på PB360-saker per nå
 where: fagsystem = 'PB360'
+
+# Vi trenger å joine inn faser for å få tak i indikator-kolonnen, som brukes i noen av reglene.
+joins:
+- table: saksbehandling.faser
+  left_on: fk_faser
+  right_on: pk_faser
+  how: left
+  select:
+  - indikator
 
 rules:
 
 # Én regel per kolonne, slik at rule_id peker på nøyaktig én feil.
 - rule_id: MIL-001
   name: milestone_title mangler
-  description: 'Alle milepæler må ha et navn.'
   check: milestone_title IS NOT NULL
 
 - rule_id: MIL-002
-  name: to_stage_recno mangler
-  description: 'Alle milepæler må være knyttet til en fase.'
-  check: to_stage_recno IS NOT NULL
+  name: fk_faser mangler
+  check: fk_faser IS NOT NULL
 
 # Dette er mer en teknisk sjekk
 - rule_id: MIL-003
@@ -28,68 +35,33 @@ rules:
   check: milestonedate IS NOT NULL
 
 # I PB360 er det en del par av milepæler som skal komme sammen. event_flow
-# sjekker at de kommer parvis OG i riktig rekkefølge: et par som åpnes uten å
-# lukkes er en feil, mens flere komplette runder er helt i orden.
-# Merk completion_gate, som gjør at regelen kun sjekker faser som har nådd
-# den angitte milepælen.
+# sjekker at de kommer parvis OG i riktig rekkefølge. 
+# event_flow-milepælene kan være i en loop hvor som helst i milepælslisten og ubegrenset antall ganger. Man kan ikke ha flere slike sett i samme regel.
+# Formålet med completion_gate er å angi en milepæl som må være nådd for at event_flow skal gjelde. 
+# Dette er nyttig når man har flere sett med milepæler i samme fase, men hvor man kun ønsker å evaluere dem når den spesifiserte milepælen er nådd, i stedet for å vente på sluttmilepælen.
+
 - rule_id: MIL-004
-  name: Merknader og revidert planforslag må komme parvis og i rekkefølge
-  description: 'Hver "Merknader oversendt" må følges av "Mottatt revidert planforslag".'
+  name: Oppstartsmøte, milepæler for tilleggsdokumentasjon må komme parvis
+  when: indikator = 'Oppstartsmøte'
   event_flow:
     event_column: milestone_title
-    group_column: to_stage_recno
+    group_column: fk_faser
     order_column: milestonedate
     cycle:
-    - Merknader oversendt
-    - Mottatt revidert planforslag
-    completion_gate:
-      event_column: milestone_title
-      value: Sendt til politisk behandling
-      order_column: milestonedate
+    - Anmodning om oppdatert plandokumentasjon
+    - Mottatt oppdatert plandokumentasjon
 
 - rule_id: MIL-005
-  name: Anmodning og mottatt plandokumentasjon må komme parvis for politisk behandling
-  description: 'Hver anmodning må følges av mottatt oppdatert plandokumentasjon.'
+  name: Offentlig ettersyn, milepæler for tilleggsdokumentasjon må komme parvis
+  when: indikator LIKE 'Offentlig ettersyn%'
   event_flow:
     event_column: milestone_title
-    group_column: to_stage_recno
+    group_column: fk_faser
     order_column: milestonedate
     cycle:
     - Anmodning om oppdatert plandokumentasjon
     - Mottatt oppdatert plandokumentasjon
-    completion_gate:
+    completion_gate: 
       event_column: milestone_title
-      value: Sendt til politisk behandling
-      order_column: milestonedate
-
-# Samme par, men for offentlig ettersyn
-- rule_id: MIL-006
-  name: Anmodning og mottatt plandokumentasjon må komme parvis for offentlig ettersyn
-  description: 'Hver anmodning må følges av mottatt oppdatert plandokumentasjon.'
-  event_flow:
-    event_column: milestone_title
-    group_column: to_stage_recno
-    order_column: milestonedate
-    cycle:
-    - Anmodning om oppdatert plandokumentasjon
-    - Mottatt oppdatert plandokumentasjon
-    completion_gate:
-      event_column: milestone_title
-      value: Vedtak høring og offentlig ettersyn
-      order_column: milestonedate
-
-# Samme par, men for oppstartsmøte
-- rule_id: MIL-007
-  name: Anmodning og mottatt plandokumentasjon må komme parvis for oppstartsmøte
-  description: 'Hver anmodning må følges av mottatt oppdatert plandokumentasjon.'
-  event_flow:
-    event_column: milestone_title
-    group_column: to_stage_recno
-    order_column: milestonedate
-    cycle:
-    - Anmodning om oppdatert plandokumentasjon
-    - Mottatt oppdatert plandokumentasjon
-    completion_gate:
-      event_column: milestone_title
-      value: Innkalling til oppstartsmøte
+      value: Planforslaget er komplett
       order_column: milestonedate

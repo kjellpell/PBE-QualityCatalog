@@ -47,8 +47,8 @@ Set in config/QualityCatalogRuntime.py.
 
 Config files must be uploaded to the Lakehouse at:
 
-    /lakehouse/default/Files/Configs/QualityCatalogConfig.py
-    /lakehouse/default/Files/Configs/QualityCatalogRuntime.py
+    /lakehouse/default/Files/configs/QualityCatalogConfig.py
+    /lakehouse/default/Files/configs/QualityCatalogRuntime.py
 
 The engine raises a clear error if either file is missing.
 
@@ -91,7 +91,7 @@ After each run, confirm:
 
 ### Config load failure
 
-- Verify Lakehouse config path: `/lakehouse/default/Files/Configs/`.
+- Verify Lakehouse config path: `/lakehouse/default/Files/configs/`.
 - Confirm both `QualityCatalogConfig.py` and `QualityCatalogRuntime.py` are uploaded.
 
 ### Resolution-tracking failure on dq_violations

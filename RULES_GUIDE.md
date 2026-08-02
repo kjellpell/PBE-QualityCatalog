@@ -373,15 +373,3 @@ Run it after every catalog change.
 3. Run one validation cycle in the target environment.
 4. Review the output tables.
 
-## Why not just write SQL
-
-The predicate is the same either way. What differs is everything around it:
-
-1. **Boilerplate is declared once.** The rules in `faser.yaml` share one join
-   and one filter. In SQL each check repeats both.
-2. **State, not a result set.** A query answers "what is wrong now". This engine
-   tracks each violation as `Active` until it disappears, then marks it
-   `Resolved`, preserving `first_seen_at` — so "open for 40 days" is answerable.
-   Reproducing that means a MERGE, a key strategy and lifecycle columns per check.
-3. **Validation before the run.** Predicates are checked against the real schema
-   at deploy time rather than failing in a scheduled job.

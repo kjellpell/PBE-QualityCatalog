@@ -18,7 +18,6 @@ from pyspark.sql.types import (
 
 
 LAKEHOUSE_CONFIG_DIR_CANDIDATES = (
-    Path("/lakehouse/default/Files/Configs"),
     Path("/lakehouse/default/Files/configs"),
 )
 

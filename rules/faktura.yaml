@@ -21,12 +21,10 @@ rules:
 - rule_id: FAK-003
   name: Alle fakturalinjer må ha samme sum som total
   description: 'Summen av alle linje_belop-verdier for en gitt Fakturanr må være lik
-    Faktura_belop registrert på fakturahodet (innenfor en liten toleranse). Et
-    avvik indikerer enten manglende linjer eller en oppdatering av hodet som ikke ble reflektert
-    i detaljlinjene.'
+    Faktura_belop registrert på fakturahodet (innenfor en toleranse på 1 krone).'
   aggregate_matches:
     group_column: fakturanr
     aggregate_column: linje_belop
     reference_column: fakturasum
     aggregate: sum
-    tolerance: 0.01
+    tolerance: 1
