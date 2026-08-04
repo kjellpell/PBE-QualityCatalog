@@ -73,6 +73,105 @@ PBE-QualityCatalog/
 
 ---
 
+## How the Engine Works
+
+`engine/` is the four-file core that everything else (the `scripts/` wrappers,
+the notebooks, the tests) calls into. Nothing in here talks to a rule author —
+that's `rules/*.yaml`. Nothing in here is Fabric-specific — that's
+`scripts/run_validation.py`. The split is deliberate: `engine/` is the part
+that stays the same across environments.
+
+```
+                  ┌───────────────────┐
+  rules/*.yaml ──▶│ engine/runner.py  │──▶ dq_run_results
+ source tables ──▶│  (orchestration)  │──▶ dq_violations
+                  └─────────┬─────────┘──▶ dq_execution_metrics
+                            │ calls
+        ┌───────────────────┼────────────────────┐
+        ▼                   ▼                    ▼
+ rule_engine.py        output_store.py        runtime.py
+ (what a violation      (schemas +          (config loading,
+  IS, and how to         Active/Resolved     target resolution,
+  count it)              resolution)         metrics)
+```
+
+### `engine/runner.py` — orchestration
+
+The entry point. For each YAML catalog in `rules/`, it:
+
+1. Reads the catalog's source table from the Spark metastore.
+2. Applies any `joins:` and the catalog-level `where:` filter, then caches
+   the resulting DataFrame so every rule in the catalog reads it once instead
+   of re-scanning the source table per rule.
+3. Runs each rule through `engine/rule_engine.py`, with a bounded timeout and
+   retry-on-transient-error (`RULE_TIMEOUT_SECONDS` / `MAX_RULE_RETRIES` /
+   `RETRYABLE_ERROR_MARKERS`, all from `QualityCatalogRuntime.py`).
+4. Collects one summary row and zero-or-more violation rows per rule.
+
+Once every catalog has run, it writes the combined summary rows to
+`dq_run_results`, hands the combined violations to `output_store.py` for
+resolution tracking, and records a success/failure row in
+`dq_execution_metrics` — including on the exception path, so a crashed run
+still leaves evidence of why.
+
+### `engine/rule_engine.py` — what a violation is
+
+Defines the six rule types a YAML file can declare, and the single driver,
+`run_rule()`, that executes any of them. The split matters: **rule-type
+builders only describe what counts as a violation; the driver owns everything
+that must behave identically across types** — `when:` filtering, primary-key
+resolution, counting in the correct unit, and status/details assembly — so
+that behavior can't drift between rule types.
+
+| YAML key | Scope | Checks |
+|---|---|---|
+| `check` | row | A SQL predicate (`tidsbruk >= 0`). Fails only where the predicate evaluates to FALSE — a NULL operand leaves the row unevaluated, exactly like a SQL `CHECK` constraint. |
+| `unique` | row | No duplicate values in a column (or column set). |
+| `row_count` | table | The table's row count falls within `minimum`/`maximum`. |
+| `event_flow` | group | A group's events occur in the required order/cycle; supports a `completion_gate` to scope the check to groups that have reached a given state. |
+| `required_event` | group | A group contains a required event at least once. |
+| `aggregate_matches` | group | An aggregate over a group's rows (sum, count, …) matches a reference column. |
+
+`scope` (`row` / `group` / `table`) fixes what one "unit" is when counting
+pass/fail: a `group`-scoped rule counts a group once no matter how many of its
+rows or pairs fail, so `passed_rows` can never go negative. Every rule type
+resolves to exactly one YAML key per rule — `detect_rule_type()` rejects a
+rule that declares zero or more than one.
+
+### `engine/output_store.py` — schemas and violation lifecycle
+
+Two things live here, and only here, so they're defined once instead of
+restated across the engine and `scripts/setup_dq_tables.py`:
+
+- `RESULT_SCHEMA` / `VIOLATION_SCHEMA` — the canonical Spark schemas for
+  `dq_run_results` and `dq_violations`. `scripts/setup_dq_tables.py` generates
+  its Delta DDL from these, so the table shape can't drift from what the
+  runner actually writes.
+- `_apply_resolution_tracking()` — turns each run's raw violations into
+  current state: a violation missing from this run that was previously
+  `Active` is marked `Resolved`; a still-failing violation keeps its original
+  `first_seen_at` so violation age is always answerable; a new violation is
+  inserted as `Active`. Implemented with plain DataFrame reads/writes rather
+  than a Delta `MERGE`, because Fabric's SQL engine can't resolve
+  schema-qualified metastore table names inside a `MERGE` statement.
+
+### `engine/runtime.py` — config and metrics plumbing
+
+Shared helpers that don't belong to rule evaluation itself:
+
+- Locates and loads `QualityCatalogConfig.py` / `QualityCatalogRuntime.py` from
+  the Lakehouse `Files/configs/` path, and validates required keys are present.
+- Resolves fully-qualified output table names (`resolve_targets`) and the
+  rules directory (`resolve_rules_dir`).
+- Classifies whether an error message matches a configured retryable pattern
+  (`classify_retryable_error`).
+- Writes rows to `dq_execution_metrics` (`write_execution_metric`), with a
+  fallback to an unqualified table name if the configured schema/namespace
+  isn't resolvable — so a metrics-write problem never masks the run's actual
+  pass/fail outcome.
+
+---
+
 ## Runtime Model
 
 ### Config layers
@@ -101,6 +200,8 @@ The engine will raise a clear error if either file is missing.
 ---
 
 ## Execution Flow
+
+Quick-reference version of "How the Engine Works" above:
 
 1. Load config/runtime modules and validate required keys.
 2. Resolve output targets.
@@ -201,7 +302,7 @@ For a one-page checklist, see OPERATIONS_QUICK_REF.md.
 - Config loading failures:
   verify Lakehouse config path — ensure both config files exist at /lakehouse/default/Files/configs/.
 - Violation write failures:
-  rerun nb_dq_00_setup.py and verify Delta support.
+  rerun scripts/setup_dq_tables.py and verify Delta support.
 - Rule configuration errors:
   run preflight — it resolves every `where:`, `when:` and `check:` predicate
   against the real schema and reports the offending rule.
@@ -236,7 +337,7 @@ and review the diff.
 Before promoting changes:
 
 1. `python -m pytest tests/ -v`
-2. `python -m py_compile engine/*.py nb_dq_*.py`
+2. `python -m py_compile engine/*.py scripts/*.py`
 3. Run `scripts/preflight_checks.py` — catches missing tables and unresolvable predicates.
 4. Run `scripts/run_validation.py` in the target environment and verify outputs.
 
