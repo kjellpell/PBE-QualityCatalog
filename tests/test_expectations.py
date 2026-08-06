@@ -8,14 +8,16 @@ bug, and each structured rule type.
 
 import pytest
 
-from engine.rule_engine import (
-    GROUP_SCOPED,
-    RULE_TYPES,
-    RuleConfigError,
-    detect_rule_type,
-    predicate_columns,
-    run_rule,
-)
+from tests.notebook_source import engine_namespace
+
+_ENGINE = engine_namespace()
+
+GROUP_SCOPED = _ENGINE.GROUP_SCOPED
+RULE_TYPES = _ENGINE.RULE_TYPES
+RuleConfigError = _ENGINE.RuleConfigError
+detect_rule_type = _ENGINE.detect_rule_type
+predicate_columns = _ENGINE.predicate_columns
+run_rule = _ENGINE.run_rule
 
 
 # --------------------------------------------------------------------------

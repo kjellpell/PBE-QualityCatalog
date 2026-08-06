@@ -10,13 +10,6 @@ that vanished included the failing ones. These tests pin the loud behaviour.
 import pytest
 
 
-@pytest.fixture
-def rules_dir(runner, tmp_path, monkeypatch):
-    """Point _load_all_rules at a throwaway catalog directory."""
-    monkeypatch.setattr(runner, "_resolve_rules_dir", lambda: tmp_path)
-    return tmp_path
-
-
 _GOOD = """
 rule_group: Faser
 table: faser
@@ -29,45 +22,55 @@ rules:
 """
 
 
-def test_a_valid_catalog_loads(runner, rules_dir):
-    (rules_dir / "good.yaml").write_text(_GOOD, encoding="utf-8")
-
-    catalogs = runner._load_all_rules()
+def test_a_valid_catalog_loads(runner):
+    catalogs = runner.load_rule_catalogs({"good": _GOOD})
 
     assert [c["rule_group"] for c in catalogs] == ["Faser"]
     assert len(catalogs[0]["rules"]) == 1
 
 
+def test_catalogs_load_in_key_order(runner):
+    """Run order must not depend on dict insertion order in the QC_Rules cells."""
+    catalogs = runner.load_rule_catalogs({
+        "zebra": _GOOD.replace("rule_group: Faser", "rule_group: Zebra"),
+        "alpha": _GOOD.replace("rule_group: Faser", "rule_group: Alpha"),
+    })
+
+    assert [c["rule_group"] for c in catalogs] == ["Alpha", "Zebra"]
+
+
 @pytest.mark.parametrize(
     "name,content,reason",
     [
-        ("broken.yaml", "rule_group: [unclosed\n", "could not be parsed"),
-        ("scalar.yaml", "just a string\n", "did not parse to a mapping"),
-        ("empty.yaml", "rule_group: Faser\ntable: faser\nrules: []\n", "contains no rules"),
+        ("broken", "rule_group: [unclosed\n", "could not be parsed"),
+        ("scalar", "just a string\n", "did not parse to a mapping"),
+        ("empty", "rule_group: Faser\ntable: faser\nrules: []\n", "contains no rules"),
     ],
 )
-def test_an_unusable_catalog_fails_the_run(runner, rules_dir, name, content, reason):
-    (rules_dir / name).write_text(content, encoding="utf-8")
-
+def test_an_unusable_catalog_fails_the_run(runner, name, content, reason):
     with pytest.raises(RuntimeError) as exc:
-        runner._load_all_rules()
+        runner.load_rule_catalogs({name: content})
 
     assert name in str(exc.value)
     assert reason in str(exc.value)
 
 
-def test_one_bad_catalog_fails_even_when_others_load(runner, rules_dir):
+def test_one_bad_catalog_fails_even_when_others_load(runner):
     """
     The dangerous case: the run would otherwise succeed on the good catalog and
     quietly drop the other one's rules.
     """
-    (rules_dir / "good.yaml").write_text(_GOOD, encoding="utf-8")
-    (rules_dir / "broken.yaml").write_text("rule_group: [unclosed\n", encoding="utf-8")
-
-    with pytest.raises(RuntimeError, match="broken.yaml"):
-        runner._load_all_rules()
+    with pytest.raises(RuntimeError, match="broken"):
+        runner.load_rule_catalogs({"good": _GOOD, "broken": "rule_group: [unclosed\n"})
 
 
-def test_an_empty_rules_dir_fails(runner, rules_dir):
-    with pytest.raises(RuntimeError, match="No YAML rule files found"):
-        runner._load_all_rules()
+def test_no_catalogs_at_all_fails(runner):
+    with pytest.raises(RuntimeError, match="RULE_CATALOG_SOURCES is empty"):
+        runner.load_rule_catalogs({})
+
+
+def test_the_shipped_catalogs_load(runner, rule_sources):
+    """The rule set actually shipped must survive the loader unchanged."""
+    catalogs = runner.load_rule_catalogs(rule_sources)
+
+    assert [c["rule_group"] for c in catalogs] == ["Faktura", "Faser", "Milepæler"]

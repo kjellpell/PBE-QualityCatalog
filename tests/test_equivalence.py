@@ -36,8 +36,8 @@ def _rows(df, sort_keys):
     return sorted(out, key=lambda d: tuple(str(d.get(k)) for k in sort_keys))
 
 
-def _snapshot(spark, vr):
-    results, violations = vr.main()
+def _snapshot(spark, vr, rule_sources):
+    results, violations = vr.run_quality_catalog(rule_sources)
     assert results > 0, "pipeline produced no result rows"
     schema = vr.CONFIG.DEFAULT_SCHEMA
     return {
@@ -51,8 +51,8 @@ def _snapshot(spark, vr):
     }
 
 
-def test_pipeline_matches_baseline(spark, runner):
-    snapshot = _snapshot(spark, runner)
+def test_pipeline_matches_baseline(spark, runner, rule_sources):
+    snapshot = _snapshot(spark, runner, rule_sources)
 
     if os.environ.get("DQ_UPDATE_BASELINE") or not BASELINE.exists():
         BASELINE.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n")

@@ -1,57 +1,83 @@
 # Deployment Runbook
 
-This repository runs the YAML-driven Quality Catalog validation workflow in Microsoft Fabric.
+This repository holds the Quality Catalog as six Fabric PySpark notebooks. It
+carries no Lakehouse Files: Fabric deployment pipelines do not promote the
+`Files` section of a lakehouse, so anything that lived there could not be moved
+from dev to test to production. Notebooks are first-class deployable items, so
+everything — engine, config, and the rule catalogs — lives in a notebook.
 
-## Deploy files to Lakehouse
+## The notebooks
 
-### Required for notebook-first operation
+| Notebook | Kind | Purpose |
+|---|---|---|
+| `QC_Config` | library | `QUALITY_CATALOG_CONFIG` and `QUALITY_CATALOG_RUNTIME` |
+| `QC_Rules` | library | `RULE_CATALOG_SOURCES` — one cell per rule catalog |
+| `QC_Engine` | library | the validation engine |
+| `QC_Setup_Tables` | entry point | creates the three Delta output tables |
+| `QC_Preflight` | entry point | validates the catalogs before a run is scheduled |
+| `QC_Run_Validation` | entry point | runs the catalog; schedule this one |
 
-Copy these files to Lakehouse Files:
+Library notebooks only define things. Entry-point notebooks pull them in with
+`%run`, which executes the referenced notebook in the *same* session so its
+functions and values land in the caller's namespace. The last cell of each
+entry-point notebook is the one that does the work.
 
-| Repo file | Lakehouse target |
-|---|---|
-| `config/QualityCatalogConfig.py` | `/lakehouse/default/Files/configs/QualityCatalogConfig.py` |
-| `config/QualityCatalogRuntime.py` | `/lakehouse/default/Files/configs/QualityCatalogRuntime.py` |
-| `rules/*.yaml` | `/lakehouse/default/Files/rules/*.yaml` |
-| `engine/` (all files, incl. `__init__.py`) | `/lakehouse/default/Files/engine/` |
+`%run` resolves a notebook by display name within the same workspace, so the
+references keep working in every stage without rewriting.
 
-Notes:
+## First deployment
 
-- Both config files must exist at `/lakehouse/default/Files/configs/`.
-- `engine/` is **required**: `scripts/run_validation.py` loads
-  `/lakehouse/default/Files/engine/runner.py` and fails its
-  pre-check if any engine file is missing.
-- Rule catalogs are required for `scripts/preflight_checks.py` and
-   `scripts/run_validation.py`.
-- Keep `RULES_DIR = "rules"` unless you intentionally move rule files elsewhere.
+1. Import all six `.ipynb` files from `notebooks/` into the **development**
+   workspace (Data Engineering → Import notebook → From this computer). Keep
+   the file names: `%run QC_Config` looks the notebook up by that name.
+2. Attach the default lakehouse to `QC_Setup_Tables`, `QC_Preflight` and
+   `QC_Run_Validation`. The engine reads source tables through the Spark
+   metastore, so the run resolves against whichever lakehouse is attached.
+3. Run `QC_Setup_Tables` once to create the output tables.
+4. Run `QC_Preflight` and confirm it passes.
+5. Run `QC_Run_Validation` and check the printed evidence.
+6. Add the six notebooks to the deployment pipeline and promote to test, then
+   production.
 
-## Run order
+The default lakehouse binding is per-workspace and is *not* carried in the
+notebook content. Set it in the target stage with a deployment rule, or rely on
+lakehouse auto-binding if the target workspace has an equivalent lakehouse.
+After promoting to a new stage, run `QC_Setup_Tables` there once.
 
-1. Run `scripts/setup_dq_tables.py` once per environment to create the Delta tables. It is
-   rerunnable, but applies no migration: a table whose shape has drifted is
-   reported so it can be dropped, not patched in place.
-2. Run `scripts/preflight_checks.py` before promoting runtime changes.
-3. Run `scripts/run_validation.py` after source tables refresh.
-   This notebook runner executes `/lakehouse/default/Files/engine/runner.py`
-   and prints a post-run summary.
-4. Validate `dq_run_results`, `dq_violations`, and `default.dq_execution_metrics`.
+## Promoting a change
 
-## Runtime controls
+1. Edit the notebook in the development workspace (or edit the `.ipynb` here
+   and re-import).
+2. Run `QC_Preflight` — it resolves every `where:`, `when:` and `check:`
+   predicate against the real table schemas.
+3. Promote through the deployment pipeline.
+4. Run `QC_Setup_Tables` in the target stage if the engine's output schemas
+   changed.
 
-`config/QualityCatalogRuntime.py` controls runtime behavior.
+Keep `notebooks/` in this repository in step with the workspace. The pytest
+suite runs against these files, so a change made only in Fabric is a change
+nothing tests.
 
-Current fields:
+## Changing configuration
 
+`QC_Config` holds every setting:
+
+- `DEFAULT_SCHEMA` and the three output table names.
 - `FAIL_ON_EMPTY_SOURCE`
 - `MAX_RULE_RETRIES`
 - `RULE_TIMEOUT_SECONDS`
 - `RETRYABLE_ERROR_MARKERS`
 - `CATALOG_FILTER_OVERRIDES`
 
+The values are identical in every stage, so `QC_Config` is promoted unchanged.
+If a setting ever has to differ per stage, that is a change to `QC_Config`, not
+to the engine.
+
 ## Validation checklist
 
-1. Confirm both config files exist in `/lakehouse/default/Files/configs/`.
-2. Run `scripts/setup_dq_tables.py` if the environment is new.
-3. Run `scripts/preflight_checks.py`.
-4. Execute one validation run in the target environment.
-5. Verify output counts and error-free summary.
+1. All six notebooks exist in the workspace, under their original names.
+2. A default lakehouse is attached to the three entry-point notebooks.
+3. `QC_Setup_Tables` has been run in this workspace.
+4. `QC_Preflight` passes.
+5. One `QC_Run_Validation` run completes, and `dq_run_results`,
+   `dq_violations` and `dq_execution_metrics` hold rows for it.

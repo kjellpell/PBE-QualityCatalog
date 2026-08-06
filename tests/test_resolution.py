@@ -1,12 +1,17 @@
 """
-Golden tests for the full violation resolution lifecycle in
-engine/output_store.py: new -> Active, still-active preserves first_seen_at,
-absent -> Resolved, already-Resolved carried through unchanged.
+Golden tests for the full violation resolution lifecycle: new -> Active,
+still-active preserves first_seen_at, absent -> Resolved, already-Resolved
+carried through unchanged.
 """
 
 from datetime import datetime, timezone
 
-from engine.output_store import VIOLATION_SCHEMA, _apply_resolution_tracking
+from tests.notebook_source import engine_namespace
+
+_ENGINE = engine_namespace()
+
+VIOLATION_SCHEMA = _ENGINE.VIOLATION_SCHEMA
+_apply_resolution_tracking = _ENGINE._apply_resolution_tracking
 
 TABLE_NAME = "test_dq_violations"
 

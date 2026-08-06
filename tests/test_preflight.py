@@ -7,20 +7,7 @@ caught — especially predicate typos, which the old column-name-list approach
 could not see.
 """
 
-import importlib
-import sys
-from pathlib import Path
-
 import pytest
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-
-@pytest.fixture(scope="module")
-def preflight():
-    return importlib.import_module("scripts.preflight_checks")
 
 
 @pytest.fixture
@@ -162,20 +149,20 @@ def test_duplicate_rule_id_is_caught(preflight, probe, columns):
     assert any("Duplicate rule_id" in e for e in errors)
 
 
-def test_real_catalogs_pass_preflight(preflight, spark):
+def test_real_catalogs_pass_preflight(preflight, spark, rule_sources):
     """Every shipped catalog must pass against the fixture schemas."""
     import yaml
     from tests import fixtures
 
     fixtures.create_source_tables(spark)
     all_errors = []
-    for path in sorted((REPO_ROOT / "rules").glob("*.yaml")):
-        catalog = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for name, text in sorted(rule_sources.items()):
+        catalog = yaml.safe_load(text)
         full_table = f"{catalog['database']}.{catalog['table']}"
         probe, join_errors = preflight.build_probe(spark, catalog, full_table)
         all_errors.extend(join_errors)
         all_errors.extend(
-            preflight.check_catalog(catalog, probe, set(probe.columns), path.name)
+            preflight.check_catalog(catalog, probe, set(probe.columns), name)
         )
 
     assert all_errors == [], "\n".join(all_errors)
@@ -185,12 +172,12 @@ def test_real_catalogs_pass_preflight(preflight, spark):
 # join probe
 # --------------------------------------------------------------------------
 
-def _faser_catalog():
+def _faser_catalog(rule_sources):
     import yaml
-    return yaml.safe_load((REPO_ROOT / "rules" / "faser.yaml").read_text(encoding="utf-8"))
+    return yaml.safe_load(rule_sources["faser"])
 
 
-def test_probe_carries_joined_columns_with_real_types(preflight, spark):
+def test_probe_carries_joined_columns_with_real_types(preflight, spark, rule_sources):
     """
     Joined columns must keep their real types. Synthesising them as strings
     would let a type-sensitive predicate pass preflight and fail at run time.
@@ -198,7 +185,7 @@ def test_probe_carries_joined_columns_with_real_types(preflight, spark):
     from tests import fixtures
     fixtures.create_source_tables(spark)
 
-    probe, errors = preflight.build_probe(spark, _faser_catalog(), "saksbehandling.faser")
+    probe, errors = preflight.build_probe(spark, _faser_catalog(rule_sources), "saksbehandling.faser")
     assert errors == []
     types = dict(probe.dtypes)
 
@@ -210,12 +197,12 @@ def test_probe_carries_joined_columns_with_real_types(preflight, spark):
     assert types["tidligste_startmilepael_dato"] == "date"
 
 
-def test_probe_type_checks_predicates(preflight, spark):
+def test_probe_type_checks_predicates(preflight, spark, rule_sources):
     """Predicates are resolved against real types, so a type misuse is caught."""
     from tests import fixtures
     fixtures.create_source_tables(spark)
 
-    probe, _ = preflight.build_probe(spark, _faser_catalog(), "saksbehandling.faser")
+    probe, _ = preflight.build_probe(spark, _faser_catalog(rule_sources), "saksbehandling.faser")
     # size() requires an array or map; saksansvarlig_kode is a string.
     errors = preflight.check_predicate(
         probe, "size(saksansvarlig_kode) > 0", "[t.yaml / T-1] 'check'"
