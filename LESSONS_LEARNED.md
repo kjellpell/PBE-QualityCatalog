@@ -12,14 +12,59 @@ you do.
 
 ---
 
-## 1. Most rules are a predicate. The ones that matter most are not.
+## Read this first: what the system is actually for
 
-Our rule format has two tiers, and getting clear about the boundary between
-them was one of the more useful things we did. Be warned that the two tiers
-have almost nothing in common in terms of effort.
+Everything below only makes sense against the purpose, and the purpose is not
+"data quality" in the usual sense of the phrase.
 
-**Tier one — a rule is a boolean SQL expression**, optionally scoped by a
-second one:
+**The case system has no guards.** A caseworker can register almost anything,
+in almost any order, and nothing stops them. There is no enforced sequence, no
+required combination, no validation at the point of entry. The consequence is
+not that fields are empty — it is that **cases go through the process
+incorrectly**, and nobody finds out.
+
+**So the point of this system is to tell the caseworker what they got wrong, so
+they can go and fix it.** Not to score data, not to produce a dashboard, not to
+block a pipeline. It is a feedback loop to the person who made the mistake,
+about a mistake the source system allowed them to make.
+
+That reframes what the rules are for. There are two categories, and they are
+not equally important:
+
+- **Field-level correctness** — a missing value, a negative number, a date
+  before another date. These are the majority of rules by count and they are
+  genuinely easy. They are worth having, because they cost almost nothing to
+  express. But they are not why you build a system. Each one just means someone
+  left a field blank.
+- **Process conformance** — did this case actually follow the procedure? Did
+  the milestone pairs that must occur together occur together, in order, every
+  time they occurred? Is the set of milestones this kind of case is required to
+  have actually registered?
+
+**The second category is the entire justification for the project.** It is
+where the real errors are, it is what the source system permits and nobody
+catches, and it is the only part a caseworker cannot easily see for themselves.
+It is also, by a wide margin, the hardest part to build — see §1 and §14.
+
+One thing we should be straight about: **we found the errors, but we never
+built the loop that tells the caseworker about them.** The detection half
+works. The delivery half — getting a specific, comprehensible message to the
+person who can fix a specific case — was never implemented. Finding out how
+many process errors were in there was valuable in itself, and it is why this
+document exists. But if you build this, the feedback loop is the deliverable,
+not the by-product. Plan for it as a first-class piece of work rather than
+something you get to at the end.
+
+---
+
+## 1. Two kinds of rule, and only one of them justifies the project
+
+Our rule format has two tiers. Getting clear about the boundary between them
+was one of the more useful things we did, because the two have almost nothing
+in common — not in effort, not in value, and not in what they can express.
+
+**Tier one — the easy errors — is a boolean SQL expression**, optionally
+scoped by a second one:
 
 ```
 rule:  "Time spent cannot be negative"
@@ -30,10 +75,14 @@ when:  seneste_stoppmilepael_dato IS NOT NULL
 check: fase_lukket_dato IS NOT NULL
 ```
 
-By count, most rules look like this, and this tier is close to free. It works
-because our rule authors already know SQL, and the alternative they are
-implicitly comparing against is hand-written SQL — anything more abstract than
-what they'd write by hand is a step backwards.
+By count, most rules look like this, and this tier is close to free — both to
+build and to author. It works because our rule authors already know SQL, and
+the alternative they are implicitly comparing against is hand-written SQL;
+anything more abstract than what they'd write by hand is a step backwards.
+
+Be clear-eyed about what this tier finds, though: **a blank field**. Useful,
+cheap, worth having — and not a reason to build an engine. If this were all you
+needed, a handful of queries would do.
 
 The deeper benefit is that you inherit semantics instead of inventing them.
 Every question you would otherwise have to decide, document, and defend — how
@@ -41,23 +90,33 @@ comparisons behave, how NULL propagates, what an empty set means — already has
 a standard answer your authors have internalised. Every place you deviate from
 SQL is a place you now owe someone an explanation.
 
-**Tier two — everything a row predicate structurally cannot express.**
-Uniqueness across a set of rows. An aggregate over a group compared against a
-reference value. "This group must contain at least one X." And ordering: did
-these events occur in the right sequence, as complete passes.
+**Tier two — the errors that matter — is everything a row predicate
+structurally cannot express.** Above all, the two process-conformance
+questions:
 
-No amount of cleverness collapses these into a predicate, and it is worth
-understanding exactly why: **a predicate sees one row, and every one of these
-questions is about the relationships between rows.** That is the real boundary
-in the design, and it is not a matter of taste or convenience.
+- **Did the required sequence happen?** Milestones that must occur as pairs,
+  occurring together and in the right order, however many times the pair
+  repeats. This is §14, and it is the one rule type you cannot do without.
+- **Is the required set of milestones registered at all?** Given what kind of
+  case this is, the procedure says certain milestones must exist. Do they?
+
+Alongside those sit uniqueness across a set of rows, and an aggregate over a
+group compared against a reference value.
+
+No amount of cleverness collapses any of these into a predicate, and it is
+worth understanding exactly why: **a predicate sees one row, and every one of
+these questions is about relationships between rows** — between the milestones
+of a case, or between a case and the procedure it was supposed to follow. That
+is the real boundary in the design, and it is not a matter of taste or
+convenience.
 
 **The trap is assuming tier two is a modest extension of tier one.** It is not.
 Tier one is a thin layer over the query engine. Tier two *is* the engine —
 essentially all of the implementation, all of the hard reasoning, and all of
-the bugs. §14 is about the hardest of them, and nothing in this document should
-be read as suggesting that writing checks is the easy part. Writing *simple*
-checks is the easy part. The checks that justify building an engine at all are
-the complicated ones, and they are complicated all the way down.
+the bugs. Nothing in this document should be read as suggesting that writing
+checks is the easy part. Writing *checks for missing fields* is the easy part.
+The checks that justify building this at all are complicated, and they are
+complicated all the way down.
 
 Keep the number of tier-two types small — not because they are simple, but
 because each one is expensive and permanent: documentation, tests, validation
@@ -345,9 +404,15 @@ not equal — so a violation with a NULL in its key never matches its own
 previous row, and its age resets every night for reasons nobody will find.
 Substitute a placeholder before comparing.
 
-## 12. Keep ownership, severity and notifications out of the engine
+## 12. Keep ownership, severity and delivery *mechanism* out of the engine
 
-We deliberately trialled all three inside the engine — a severity level on
+To be unambiguous, because the rest of this section could easily be misread:
+**getting the message to the caseworker is the whole point of the system.**
+Nothing here argues against that. What follows is about where that machinery
+should live, and it is the difference between a feedback loop that survives a
+reorganisation and one that doesn't.
+
+We deliberately trialled three things inside the engine — a severity level on
 every rule, an ownership/routing layer, and push notifications. The trials were
 worth running. The verdict was clear, and it went the other way from our
 starting assumption:
@@ -363,27 +428,29 @@ responsibilities move constantly. Every one of those changes became a code
 change and a deployment, to express something that was never really about data
 quality.
 
-**Notifications are a bigger commitment than they look.** We went through
-several delivery mechanisms before concluding that the real requirement was
-satisfied by putting the violation data somewhere people already look. Build
-the table first. Confirm that someone genuinely needs a message pushed at them
-before you take on the ongoing cost of a delivery channel — authentication,
-formatting, delivery logging, failure handling, and a second thing to keep
-running at 03:00.
+**The delivery channel is a bigger commitment than it looks, and it is a
+separate build.** We cycled through several delivery mechanisms wired directly
+into the engine, and each one dragged in authentication, message formatting,
+delivery logging, failure handling, and a second thing that had to keep running
+at 03:00 — none of which is data quality work, all of which competed with §14
+for time. Get the detection right and land the results somewhere durable first.
+Then build the channel deliberately, as its own piece of work, because that is
+what determines whether a caseworker acts on the message.
 
 **What survives all of that** is that the underlying questions are real. *Who
 fixes this* and *what happens when it fails* both matter — in particular, the
 distinction between "the remedy is a code or pipeline change" and "the remedy
-is a person correcting a record upstream" is genuinely important, because those
-have completely different owners and timelines, and merging them into one
-undifferentiated list makes it impossible to route work or to measure any
-team's trend independently.
+is a person correcting a case in the source system" is fundamental here, since
+the second is what this project is for. Those have completely different owners
+and timelines, and merging them into one undifferentiated list makes it
+impossible to route work or to measure anyone's trend.
 
 They are just not the *engine's* questions. Have the engine emit facts — rule,
-record, column, actual value, expected condition, first seen, resolved when.
-Let the reporting layer join those facts to whatever ownership model the
-organisation has this quarter, where it can change without touching the
-pipeline.
+record, column, actual value, expected condition, first seen, resolved when —
+and make those facts good enough to build a human-readable message from
+(see §3, which matters far more than it appears to). Let a layer above join
+them to whatever ownership model the organisation has this quarter, where it
+can change without touching the pipeline.
 
 ## 13. Completeness belongs to the load layer, not the rule engine
 
@@ -403,18 +470,26 @@ Your load layer already has the run-over-run history to judge whether today's
 volume is plausible. Decide deliberately which system owns "is all the data
 here," and do not let a hardcoded threshold become your answer by default.
 
-## 14. Sequence and ordering checks are the hardest thing you will build
+## 14. Sequence checking is the one rule type you cannot skip
 
 This is the most important section in this document, and the one where we would
 most strongly resist any attempt to make it sound simpler than it is.
 
-If you need to verify that a *sequence* of events happened in the right order —
-not "did X happen" but "did A then B then C happen, in order, possibly
-repeating" — this is disproportionately harder than every other kind of check,
-and it is also where most of the value is. It is the check that finds problems
-no other check can see. It was by a wide margin the largest, most-revised, and
-most-tested part of our engine, and we would budget for it that way from the
-start rather than discovering it.
+Every other rule type is, in the end, optional. You could drop any one of them
+and still have something worth running. **This one is the reason the project
+exists.** Verifying that a *sequence* of events happened correctly — not "did X
+happen" but "did A then B happen together, in order, every time that pair
+occurred" — is precisely where caseworkers go wrong, because it is precisely
+what the case system lets them do freely. Nothing stops someone from
+registering the second half of a pair without the first, or in the wrong order,
+or opening a pair and never closing it. Nobody notices, and no field is empty.
+
+It is also disproportionately harder than every other kind of check: by a wide
+margin the largest, most-revised and most-tested thing we built. That
+combination — indispensable *and* hardest — is the single most useful thing we
+can tell you about scheduling this work. Budget for it from the start rather
+than discovering it, and do not let it be the thing that gets squeezed at the
+end, because the easy rules finished early will not substitute for it.
 
 **Start by looking at how much behaviour hides in one small configuration.**
 Take a flow declared as a start anchor, a repeating cycle of `[A, B]`, and a
@@ -476,12 +551,40 @@ while you're looking for it.
 **Fund it properly or scope it down honestly — but do not ship an
 approximation.** A half-correct sequence check is worse than no check at all,
 because it produces confident-looking false violations, and those burn the
-credibility of every other check you built along with it. The failure mode is
-not "this check is a bit unreliable," it is "nobody trusts the quality
-dashboard any more." So either give this the time and the test coverage it
-genuinely needs, or deliberately narrow what you claim it covers and say so out
-loud. What you must not do is build eighty percent of it and present the result
-as if it were complete.
+credibility of every other check you built along with it. Remember who receives
+these: a caseworker told three times that they handled a case wrongly, who
+checks and finds they did not, will disregard the fourth message — and the
+fourth one will be real. The failure mode is not "this check is a bit
+unreliable," it is "the people we built this for stop reading it." So either
+give this the time and the test coverage it genuinely needs, or deliberately
+narrow what you claim it covers and say so out loud. What you must not do is
+build eighty percent of it and present the result as if it were complete.
+
+### The other half of process conformance: is the required set registered?
+
+Sequence checking asks whether the milestones that *did* occur were correct.
+The companion question is whether the milestones that *should* have occurred
+are there at all: given what kind of case this is, the procedure requires a
+particular set of milestones — are they registered?
+
+This one is much easier to implement and nearly as valuable, and it is worth
+building as a distinct rule type rather than trying to fold it into the
+sequence check. Three things we learned:
+
+- **Let the requirement be satisfied by any one of several events.** Different
+  procedures close the same obligation with different milestones, and forcing
+  one name per rule multiplies your rule count for no gain.
+- **Decide whether an event with no date counts as having happened.** We made
+  the date requirement optional per rule, which turned out to be the right
+  granularity: sometimes the milestone merely existing is the requirement, and
+  sometimes "registered but undated" is itself the error.
+- **Keep it clearly distinct from scoping.** We have two features that name
+  the same kind of thing for opposite purposes — one *asserts* an event is
+  present and fails the case when it isn't; the other *scopes* which cases get
+  evaluated at all and silently skips those that haven't got there yet. They
+  look nearly identical in configuration and mean opposite things. Name them so
+  that confusing the two is hard, and document the distinction where people
+  will hit it.
 
 ## 15. Budget real time for your platform fighting you
 
@@ -563,6 +666,20 @@ To be straight about which of this is experience and which is reasoning — the
 following are real questions we never answered in practice. Decide them
 deliberately; don't take them from us.
 
+**The feedback loop to the caseworker — the largest gap by far.** We built the
+half that finds the errors. We never built the half that tells the person who
+made one, in language they can act on, about the specific case they can go and
+fix. Everything we know about the hard part of that is guesswork: how to phrase
+a process violation so it reads as help rather than accusation, whether people
+respond better to a message or to a list they visit, how to avoid the same
+unresolved case nagging someone every night for a month, what happens when the
+violation is real but the caseworker disagrees. Those are the questions that
+decide whether the system changes anyone's behaviour, and we cannot answer any
+of them. Treat detection as the prerequisite and this as the actual product —
+and consider building a thin version of it early against a handful of rules,
+rather than after the engine is finished, because it will tell you things about
+the rules that no amount of engine work will.
+
 **Blocking gates.** We never built a check that stops a pipeline or a release.
 Our engine observes and reports; it does not gate anything. If you do build
 gating, our intuition — and it is only that — is that a blocking check should
@@ -597,22 +714,26 @@ trade-off may well invert, and we have no real evidence about the other side.
 
 ## In short
 
+The system exists because the case system has no guards, so caseworkers can and
+do take cases through the process incorrectly, and nobody finds out. Everything
+worth knowing follows from that.
+
 Do not let anyone tell you this is mostly plumbing around some one-line checks.
 The simple rules genuinely are simple — a predicate over a row, working on day
-one. But those are not the rules that justify building an engine. The ones that
-do — ordering, completeness of a repeating cycle, aggregates over groups — are
-hard in their own right, before you have written a single line of the
-surrounding machinery, and they stayed hard through every revision.
+one — but all they find is a blank field. The rules that justify the project
+are the ones that ask whether the procedure was actually followed, and those
+are hard in their own right, before you have written a single line of the
+surrounding machinery. They stayed hard through every revision.
 
-Budget for two separate problems: the checks that are genuinely difficult, and
-everything below.
+Budget for two separate problems: the process-conformance checks, and
+everything below them.
 
 The hard parts, in the order they cost us:
 
-1. **Sequence and ordering checks.** The largest, most-revised and
-   most-tested thing we built, and the one that finds problems nothing else
-   can. Assume it will take several attempts, and that the naive version
-   silently misses the exact case you built it for.
+1. **Sequence checking.** The largest, most-revised and most-tested thing we
+   built, the one that finds the errors this project exists to find, and the
+   only rule type you cannot do without. Assume it will take several attempts,
+   and that the naive version silently misses the exact case you built it for.
 2. **What happens to a failing check's result over time.** First-seen tracking,
    resolution state, and the identity that ties a violation to itself across
    runs. Get this right up front — nothing retrofits it, and its failure mode
@@ -623,8 +744,12 @@ The hard parts, in the order they cost us:
 4. **Validating configuration before the scheduled run**, against the real
    schema, from a contract declared in exactly one place.
 5. **Being disciplined about what does not belong in the engine.** Ownership,
-   severity, notification delivery, and completeness all felt like they
-   belonged. On inspection, none of them did.
+   severity, delivery mechanism, and completeness all felt like they belonged.
+   On inspection, none of them did.
 
-Build those parts carefully, in whatever language and style suits you. The rest
-of the engine exists to serve them.
+And the part we never reached, which we would now treat as the real deliverable
+rather than the last step: **telling the caseworker, in terms they can act on,
+what went wrong with a specific case.** Detection without that loop is a
+finding, not a fix. We think finding out how much was wrong was worth doing on
+its own — but you have the chance to build the half that actually changes
+something, and we would start it earlier than we did.
