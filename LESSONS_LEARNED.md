@@ -44,7 +44,8 @@ not equally important:
 **The second category is the entire justification for the project.** It is
 where the real errors are, it is what the source system permits and nobody
 catches, and it is the only part a caseworker cannot easily see for themselves.
-It is also, by a wide margin, the hardest part to build — see §1 and §14.
+It is also, by a wide margin, the hardest part to build. §1 and §2 are really
+one argument about that, split in two only because the second half is long.
 
 One thing we should be straight about: **we found the errors, but we never
 built the loop that tells the caseworker about them.** The detection half
@@ -96,12 +97,14 @@ questions:
 
 - **Did the required sequence happen?** Milestones that must occur as pairs,
   occurring together and in the right order, however many times the pair
-  repeats. This is §14, and it is the one rule type you cannot do without.
+  repeats.
 - **Is the required set of milestones registered at all?** Given what kind of
   case this is, the procedure says certain milestones must exist. Do they?
 
-Alongside those sit uniqueness across a set of rows, and an aggregate over a
-group compared against a reference value.
+Both are the subject of §2, which follows immediately because it is the other
+half of this section rather than a separate topic. Alongside them sit
+uniqueness across a set of rows, and an aggregate over a group compared against
+a reference value — useful, but not why you are here.
 
 No amount of cleverness collapses any of these into a predicate, and it is
 worth understanding exactly why: **a predicate sees one row, and every one of
@@ -126,351 +129,7 @@ beyond the core few was eventually removed or merged into something more
 general. Fewer, more general, properly built beats a long menu of
 half-considered ones.
 
-## 2. NULL is not a failure
-
-Decide early — deliberately, once — how a check treats a predicate that cannot
-be evaluated because one of its inputs is NULL.
-
-The tempting default is "NULL fails the check." It is almost always wrong. It
-means every optional field, and every field not yet filled in, silently
-generates a false violation the moment it is empty. You will produce a flood of
-violations that are not violations, and people stop trusting the whole system
-long before they finish working out why.
-
-The right default: a predicate that evaluates to NULL is *unevaluated*, not
-failed. It counts in neither the pass total nor the fail total. If you want to
-require that a field is present, say so explicitly (`X IS NOT NULL`) rather
-than relying on NULL propagation to catch it as a side effect.
-
-This is exactly how a SQL `CHECK` constraint behaves — a row violates it only
-when the predicate is definitively FALSE — so if you followed §1 you get it for
-free rather than implementing it.
-
-One asymmetry worth deciding consciously: the *scoping* clause and the *check*
-clause should treat NULL in opposite directions. A row is in scope only where
-the scoping condition is explicitly TRUE — an unevaluable scope excludes the
-row. An unevaluable check leaves the row unjudged. Same NULL, opposite
-handling, and both are correct.
-
-## 3. A violation needs a subject, not just a verdict
-
-Never build a check that returns only pass/fail. For every failure, capture:
-which record, which column, what the actual value was, what was expected, and
-a plain-language explanation of the gap.
-
-A check that reports only "FAILED" forces the next person to re-derive what
-went wrong. You already did that work at check time. Making someone repeat it
-is the difference between a violation list people work from and a violation
-list people ignore.
-
-If you derive "which column is this check about" automatically from the
-predicate, be careful which one you choose when there are several. The *first*
-column referenced is almost always the natural subject — `a` in `a >= b`.
-Getting it backwards makes every violation harder to read for no benefit.
-
-Two things we'd flag:
-
-- Deriving the subject is harder than it looks, because the obvious source for
-  "which columns does this expression touch" is often an unordered set. You
-  need the columns in the order they were *written*, which usually means
-  reading the expression as the author wrote it rather than as the engine
-  resolved it.
-- Make the derivation best-effort. If it fails, emit no subject rather than
-  failing the check. A convenience feature must never be able to break a rule.
-
-## 4. Decide what "one thing" is before you count anything
-
-Per check, decide what a single unit is, and count consistently in that unit.
-
-A check over individual rows counts rows. A check over a *group* of related
-rows — "did this case go through the right sequence of steps" — counts groups,
-not the rows or events inside them. If a group has five things wrong with it,
-that is one failed group, not five. Otherwise your pass rate is distorted by
-how much internal detail a group happens to contain, and the same quality
-problem scores completely differently depending on unrelated data volume.
-
-Make this a declared property of each rule type rather than a decision each
-check makes for itself, and have one shared piece of logic do all the counting.
-The invariant this buys you is worth writing a test for: **passed = total −
-failed must never be able to go negative.** When it can, you have a rule
-counting failures in one unit against a denominator in another — and nobody
-notices until a dashboard shows a negative number.
-
-## 5. Duplicate checks should return the whole colliding set
-
-Do not just flag "a duplicate exists." Return every row involved in the
-collision.
-
-Whoever has to resolve a duplicate needs to see all of them side by side to
-decide which is correct. Reporting one and leaving them to find the others
-turns a two-minute fix into a hunt.
-
-## 6. Rules must not be able to modify data — make that structural
-
-If your rule format has any path that executes caller-supplied code or SQL — a
-"just run this query" escape hatch — remove it, even if nothing currently
-misuses it.
-
-We had one. Nothing used it. We removed it anyway, and the reasoning is the
-part worth passing on: an escape hatch that runs an arbitrary statement runs it
-against the *source* environment, and no amount of care about where output goes
-protects against that. The risk was never that someone would write something
-malicious. It was that "this format is read-only" was a property nobody could
-verify — it was a convention people had to remember.
-
-Now every rule is a predicate or a declarative block, and every author-supplied
-string goes through something that builds an expression and structurally
-*cannot* carry a data-modifying statement. Read-only became a property of what
-is possible to write rather than a rule people follow.
-
-A convention gets violated eventually. A structural limitation does not.
-
-If a check needs data from another table, give it a declarative way to join and
-read that table. Never a raw execution path.
-
-## 7. Validate the configuration before the run, not during it
-
-Whatever declares a rule — a file, a form, code — should be validated against
-the real schema and against its own contract *before* a scheduled run touches
-it. Does the referenced column actually exist? Does each rule declare exactly
-one type, with everything that type requires? Are the identifiers unique?
-
-Catching a typo at review time costs two minutes. Catching it during an
-unattended overnight run costs someone their morning and a day of missing
-quality signal.
-
-Four things we learned making this actually work:
-
-**Validate predicates with the engine's own analyser, not with a hand-written
-list of "which settings contain column names."** We maintained such a list. It
-drifted from the engine within weeks. Resolving the predicate against the real
-schema catches every typo and there is no list to keep in sync.
-
-**Validate with an operation that requires a boolean.** This one bit us
-specifically. We validated expressions with an operation that accepts *any*
-expression, so a rule whose check was a bare column name — not a predicate at
-all — passed validation cleanly and then failed at 03:00 with a type error.
-Exactly the failure the whole validation step existed to prevent. Validate with
-something that will reject a non-boolean, i.e. the same operation the engine
-itself will use.
-
-**Build your validation probe from the real schema, including joins.** Take the
-actual source table, take zero rows from it, and replay the configured joins on
-it. It costs nothing and gives you every column with its *real type* — a probe
-that synthesises joined columns as text will happily accept a type-sensitive
-predicate like `joined_date >= '2024-01-01'` and let it fail in production.
-Replaying the joins also validates the join configuration itself, which nothing
-else does.
-
-**Reject unknown keys, at every level of the configuration.** A misspelled key
-in a file header is the most expensive kind of typo, because it does not error
-— it silently *drops* whatever that setting did. Misspell the row-filter key
-and every rule in the file quietly starts running against unfiltered data, and
-the run looks perfectly healthy. Rejecting keys you don't recognise is trivial
-to implement and eliminates an entire category of silent wrongness.
-
-**And declare the contract exactly once.** Each rule type's required settings,
-which of them name columns, what unit it counts in — that belongs in a single
-structure that the pre-run validation *reads*, rather than a parallel list it
-restates. We had it as two lists first. They drifted, and the drift was
-invisible until a rule that should have been rejected ran and produced
-nonsense.
-
-## 8. "The check is broken" and "the data is bad" are different statuses
-
-These are not the same failure and must never share a status.
-
-A check that could not run — a column has gone missing, a table doesn't exist,
-something timed out — is a configuration or infrastructure problem. A check
-that ran fine and found something genuinely wrong is a data problem. If both
-land in one "failed" bucket, real infrastructure failures hide inside what
-should be a clean data-quality signal, and your quality trend lies to you at
-exactly the moment your own pipeline broke.
-
-We use three statuses: passed, failed, and error. We'd suggest going one small
-step further and also recording an *error category* — infrastructure,
-configuration, or source data. It costs almost nothing at write time and means
-"our engine is unhealthy" and "someone's rule definition is wrong" become
-different queries, answerable by different people, without anyone reading
-error text by eye.
-
-## 9. Every silent failure we found made the numbers look *better*
-
-This is the pattern we'd most want you to internalise, because it tells you
-where to go looking.
-
-Every degradation we discovered that had no visible symptom made the quality
-score go *up*:
-
-- **An empty source table reports 100% passing.** Every rule validates rows
-  that exist. Zero rows means zero failures means a perfect score. Guard the
-  *run*, not the data: abort before an empty source can be reported as flawless
-  quality.
-- **A rule file that fails to load raises the score** — because the rules that
-  vanished included the failing ones. We originally logged a warning and
-  carried on. Nobody reads logs at 03:00. Now an unloadable rule file fails the
-  entire run, on the grounds that reporting a quality score over fewer rules
-  than intended is worse than reporting nothing at all.
-
-The general form: **any failure mode that makes your metric improve will never
-be reported by a human**, because nobody escalates good news. Those are the
-ones you have to find by reasoning about them in advance. Ask of every
-component: what happens to the number if this silently does nothing?
-
-## 10. Separate "what happened this run" from "what is currently wrong"
-
-Keep two outputs, not one.
-
-A run log — every check's result on every run, append-only — answers questions
-about trend and reliability. A current-state list — what is still wrong right
-now — is what someone works from. Different audiences, different questions,
-different shapes.
-
-Trying to serve both from one table means computing "what's currently open" as
-an expensive scan over your entire run history every time someone wants a work
-queue.
-
-We keep a third: a run-level execution log with start, end, duration, and
-whether a failure was retryable. It is the cheapest thing in the system and the
-first place you look when someone asks "did it even run last night?"
-
-## 11. First-seen tracking and resolution state are the actual foundation
-
-This deserves its own emphasis, separate from the point above, because it is
-easy to build the current-state list, feel finished, and not notice you have
-built something with no memory.
-
-Without this done correctly, almost nothing useful is possible later: no
-age-based triage, no "this has been open too long" escalation, no resolution
-trend, no way to answer "is this getting better or worse." All of it depends
-entirely on getting one mechanism right, up front. Nothing here retrofits.
-
-**The core idea:** every violation carries a `first_seen_at` timestamp that is
-set once, the first time it is detected, and then never touched again for as
-long as that same violation keeps recurring. Every later run *refreshes* the
-row — latest run, latest detail — but explicitly *preserves* the original
-`first_seen_at`.
-
-This sounds obvious written down, and it is still the single easiest thing in
-the entire system to get wrong. The naive implementation — recompute violations
-fresh each run, write them out — silently overwrites `first_seen_at` with "now"
-on every run. The moment that happens, every violation looks like it started
-today, forever. No error. No test failure. Nothing to signal it. It just always
-says "today," and you lose the ability to ever answer "how long has this been
-broken."
-
-**The mechanic that gets this right is a three-way diff, run every time:**
-
-1. **Still failing, already open** — refresh the row's run metadata, but copy
-   `first_seen_at` forward from the stored row rather than setting it to now.
-2. **Failing for the first time** — insert as a new open issue, `first_seen_at`
-   set to now.
-3. **Was open, no longer failing** — mark it resolved, with a resolution
-   timestamp. **Mark it, do not delete it.** A deleted row leaves no trace the
-   issue ever existed. You lose "how many things got resolved this month," you
-   lose the ability to spot a recurring issue that keeps coming back and being
-   silently re-inserted as if new, and you lose any evidence of improvement
-   over time. Keep the row, flip its status, leave it there as history.
-
-Compare *today's complete set of detected issues* against *yesterday's
-still-open set*, computed fresh each time. Do not try to update rows in place
-incrementally — that accumulates bugs the longer the system runs, and a clean
-deterministic diff is dramatically easier to reason about and to test.
-
-**Then decide, carefully, what makes two violations "the same issue" across
-runs** — which combination of fields forms its identity. This decision deserves
-real thought rather than a default grabbed without checking it. Two traps, in
-opposite directions:
-
-- **Too narrow**, and a violation whose incidental details shift slightly
-  between runs looks brand new every time, resetting its age to zero on every
-  run — which defeats the entire purpose of tracking age.
-- **Too broad**, and genuinely distinct issues collapse into a single row and
-  some of them are silently lost. Check this against how your own rule types
-  can produce *several* distinct violations from what looks like one rule — a
-  group-scoped check can easily emit one violation per failing condition within
-  the same group, and if your identity doesn't distinguish them, all but one
-  disappear.
-
-**One non-obvious constraint follows from this**, and it is worth writing down
-next to your identity definition: every field in the identity must be
-deterministic at rule level and must never contain per-record data. The moment
-you interpolate a record's own value into a field that forms part of the
-identity, every run mints a fresh identity, and all of the above quietly stops
-working with no visible symptom.
-
-Also handle NULLs in the identity explicitly. In a normal join, two NULLs are
-not equal — so a violation with a NULL in its key never matches its own
-previous row, and its age resets every night for reasons nobody will find.
-Substitute a placeholder before comparing.
-
-## 12. Keep ownership, severity and delivery *mechanism* out of the engine
-
-To be unambiguous, because the rest of this section could easily be misread:
-**getting the message to the caseworker is the whole point of the system.**
-Nothing here argues against that. What follows is about where that machinery
-should live, and it is the difference between a feedback loop that survives a
-reorganisation and one that doesn't.
-
-We deliberately trialled three things inside the engine — a severity level on
-every rule, an ownership/routing layer, and push notifications. The trials were
-worth running. The verdict was clear, and it went the other way from our
-starting assumption:
-
-**Severity never changed anything.** It sat in the output schemas, every rule
-author had to fill it in, and it never once influenced what ran, what failed,
-or what was reported. It was reporting metadata living in the engine's
-contract. A field that does not change behaviour belongs in the reporting
-layer, not in every rule definition.
-
-**Routing is an org chart embedded in a data pipeline.** Teams reorganise and
-responsibilities move constantly. Every one of those changes became a code
-change and a deployment, to express something that was never really about data
-quality.
-
-**The delivery channel is a bigger commitment than it looks, and it is a
-separate build.** We cycled through several delivery mechanisms wired directly
-into the engine, and each one dragged in authentication, message formatting,
-delivery logging, failure handling, and a second thing that had to keep running
-at 03:00 — none of which is data quality work, all of which competed with §14
-for time. Get the detection right and land the results somewhere durable first.
-Then build the channel deliberately, as its own piece of work, because that is
-what determines whether a caseworker acts on the message.
-
-**What survives all of that** is that the underlying questions are real. *Who
-fixes this* and *what happens when it fails* both matter — in particular, the
-distinction between "the remedy is a code or pipeline change" and "the remedy
-is a person correcting a case in the source system" is fundamental here, since
-the second is what this project is for. Those have completely different owners
-and timelines, and merging them into one undifferentiated list makes it
-impossible to route work or to measure anyone's trend.
-
-They are just not the *engine's* questions. Have the engine emit facts — rule,
-record, column, actual value, expected condition, first seen, resolved when —
-and make those facts good enough to build a human-readable message from
-(see §3, which matters far more than it appears to). Let a layer above join
-them to whatever ownership model the organisation has this quarter, where it
-can change without touching the pipeline.
-
-## 13. Completeness belongs to the load layer, not the rule engine
-
-Worth deciding explicitly, because the gap is real and easy to miss.
-
-Every rule you write validates rows *that exist*. This means a partial load —
-half the data missing — reports 100% passing and *raises* your quality score
-while the data actually got worse. (Same family as §9.)
-
-The instinct is to close that gap with a rule: "this table must contain between
-X and Y rows." It works, narrowly, and it is the right tool when you need a
-hard gate on volume before something downstream runs. But as a general answer
-it is weak, because a rule can only hold a fixed number that goes stale as the
-data grows, whereas the question is really about trend.
-
-Your load layer already has the run-over-run history to judge whether today's
-volume is plausible. Decide deliberately which system owns "is all the data
-here," and do not let a hardcoded threshold become your answer by default.
-
-## 14. Sequence checking is the one rule type you cannot skip
+## 2. Sequence checking is the one rule type you cannot skip
 
 This is the most important section in this document, and the one where we would
 most strongly resist any attempt to make it sound simpler than it is.
@@ -586,6 +245,350 @@ sequence check. Three things we learned:
   that confusing the two is hard, and document the distinction where people
   will hit it.
 
+## 3. NULL is not a failure
+
+Decide early — deliberately, once — how a check treats a predicate that cannot
+be evaluated because one of its inputs is NULL.
+
+The tempting default is "NULL fails the check." It is almost always wrong. It
+means every optional field, and every field not yet filled in, silently
+generates a false violation the moment it is empty. You will produce a flood of
+violations that are not violations, and people stop trusting the whole system
+long before they finish working out why.
+
+The right default: a predicate that evaluates to NULL is *unevaluated*, not
+failed. It counts in neither the pass total nor the fail total. If you want to
+require that a field is present, say so explicitly (`X IS NOT NULL`) rather
+than relying on NULL propagation to catch it as a side effect.
+
+This is exactly how a SQL `CHECK` constraint behaves — a row violates it only
+when the predicate is definitively FALSE — so if you followed §1 you get it for
+free rather than implementing it.
+
+One asymmetry worth deciding consciously: the *scoping* clause and the *check*
+clause should treat NULL in opposite directions. A row is in scope only where
+the scoping condition is explicitly TRUE — an unevaluable scope excludes the
+row. An unevaluable check leaves the row unjudged. Same NULL, opposite
+handling, and both are correct.
+
+## 4. A violation needs a subject, not just a verdict
+
+Never build a check that returns only pass/fail. For every failure, capture:
+which record, which column, what the actual value was, what was expected, and
+a plain-language explanation of the gap.
+
+A check that reports only "FAILED" forces the next person to re-derive what
+went wrong. You already did that work at check time. Making someone repeat it
+is the difference between a violation list people work from and a violation
+list people ignore.
+
+If you derive "which column is this check about" automatically from the
+predicate, be careful which one you choose when there are several. The *first*
+column referenced is almost always the natural subject — `a` in `a >= b`.
+Getting it backwards makes every violation harder to read for no benefit.
+
+Two things we'd flag:
+
+- Deriving the subject is harder than it looks, because the obvious source for
+  "which columns does this expression touch" is often an unordered set. You
+  need the columns in the order they were *written*, which usually means
+  reading the expression as the author wrote it rather than as the engine
+  resolved it.
+- Make the derivation best-effort. If it fails, emit no subject rather than
+  failing the check. A convenience feature must never be able to break a rule.
+
+## 5. Decide what "one thing" is before you count anything
+
+Per check, decide what a single unit is, and count consistently in that unit.
+
+A check over individual rows counts rows. A check over a *group* of related
+rows — "did this case go through the right sequence of steps" — counts groups,
+not the rows or events inside them. If a group has five things wrong with it,
+that is one failed group, not five. Otherwise your pass rate is distorted by
+how much internal detail a group happens to contain, and the same quality
+problem scores completely differently depending on unrelated data volume.
+
+Make this a declared property of each rule type rather than a decision each
+check makes for itself, and have one shared piece of logic do all the counting.
+The invariant this buys you is worth writing a test for: **passed = total −
+failed must never be able to go negative.** When it can, you have a rule
+counting failures in one unit against a denominator in another — and nobody
+notices until a dashboard shows a negative number.
+
+## 6. Duplicate checks should return the whole colliding set
+
+Do not just flag "a duplicate exists." Return every row involved in the
+collision.
+
+Whoever has to resolve a duplicate needs to see all of them side by side to
+decide which is correct. Reporting one and leaving them to find the others
+turns a two-minute fix into a hunt.
+
+## 7. Rules must not be able to modify data — make that structural
+
+If your rule format has any path that executes caller-supplied code or SQL — a
+"just run this query" escape hatch — remove it, even if nothing currently
+misuses it.
+
+We had one. Nothing used it. We removed it anyway, and the reasoning is the
+part worth passing on: an escape hatch that runs an arbitrary statement runs it
+against the *source* environment, and no amount of care about where output goes
+protects against that. The risk was never that someone would write something
+malicious. It was that "this format is read-only" was a property nobody could
+verify — it was a convention people had to remember.
+
+Now every rule is a predicate or a declarative block, and every author-supplied
+string goes through something that builds an expression and structurally
+*cannot* carry a data-modifying statement. Read-only became a property of what
+is possible to write rather than a rule people follow.
+
+A convention gets violated eventually. A structural limitation does not.
+
+If a check needs data from another table, give it a declarative way to join and
+read that table. Never a raw execution path.
+
+## 8. Validate the configuration before the run, not during it
+
+Whatever declares a rule — a file, a form, code — should be validated against
+the real schema and against its own contract *before* a scheduled run touches
+it. Does the referenced column actually exist? Does each rule declare exactly
+one type, with everything that type requires? Are the identifiers unique?
+
+Catching a typo at review time costs two minutes. Catching it during an
+unattended overnight run costs someone their morning and a day of missing
+quality signal.
+
+Four things we learned making this actually work:
+
+**Validate predicates with the engine's own analyser, not with a hand-written
+list of "which settings contain column names."** We maintained such a list. It
+drifted from the engine within weeks. Resolving the predicate against the real
+schema catches every typo and there is no list to keep in sync.
+
+**Validate with an operation that requires a boolean.** This one bit us
+specifically. We validated expressions with an operation that accepts *any*
+expression, so a rule whose check was a bare column name — not a predicate at
+all — passed validation cleanly and then failed at 03:00 with a type error.
+Exactly the failure the whole validation step existed to prevent. Validate with
+something that will reject a non-boolean, i.e. the same operation the engine
+itself will use.
+
+**Build your validation probe from the real schema, including joins.** Take the
+actual source table, take zero rows from it, and replay the configured joins on
+it. It costs nothing and gives you every column with its *real type* — a probe
+that synthesises joined columns as text will happily accept a type-sensitive
+predicate like `joined_date >= '2024-01-01'` and let it fail in production.
+Replaying the joins also validates the join configuration itself, which nothing
+else does.
+
+**Reject unknown keys, at every level of the configuration.** A misspelled key
+in a file header is the most expensive kind of typo, because it does not error
+— it silently *drops* whatever that setting did. Misspell the row-filter key
+and every rule in the file quietly starts running against unfiltered data, and
+the run looks perfectly healthy. Rejecting keys you don't recognise is trivial
+to implement and eliminates an entire category of silent wrongness.
+
+**And declare the contract exactly once.** Each rule type's required settings,
+which of them name columns, what unit it counts in — that belongs in a single
+structure that the pre-run validation *reads*, rather than a parallel list it
+restates. We had it as two lists first. They drifted, and the drift was
+invisible until a rule that should have been rejected ran and produced
+nonsense.
+
+## 9. "The check is broken" and "the data is bad" are different statuses
+
+These are not the same failure and must never share a status.
+
+A check that could not run — a column has gone missing, a table doesn't exist,
+something timed out — is a configuration or infrastructure problem. A check
+that ran fine and found something genuinely wrong is a data problem. If both
+land in one "failed" bucket, real infrastructure failures hide inside what
+should be a clean data-quality signal, and your quality trend lies to you at
+exactly the moment your own pipeline broke.
+
+We use three statuses: passed, failed, and error. We'd suggest going one small
+step further and also recording an *error category* — infrastructure,
+configuration, or source data. It costs almost nothing at write time and means
+"our engine is unhealthy" and "someone's rule definition is wrong" become
+different queries, answerable by different people, without anyone reading
+error text by eye.
+
+## 10. Every silent failure we found made the numbers look *better*
+
+This is the pattern we'd most want you to internalise, because it tells you
+where to go looking.
+
+Every degradation we discovered that had no visible symptom made the quality
+score go *up*:
+
+- **An empty source table reports 100% passing.** Every rule validates rows
+  that exist. Zero rows means zero failures means a perfect score. Guard the
+  *run*, not the data: abort before an empty source can be reported as flawless
+  quality.
+- **A rule file that fails to load raises the score** — because the rules that
+  vanished included the failing ones. We originally logged a warning and
+  carried on. Nobody reads logs at 03:00. Now an unloadable rule file fails the
+  entire run, on the grounds that reporting a quality score over fewer rules
+  than intended is worse than reporting nothing at all.
+
+The general form: **any failure mode that makes your metric improve will never
+be reported by a human**, because nobody escalates good news. Those are the
+ones you have to find by reasoning about them in advance. Ask of every
+component: what happens to the number if this silently does nothing?
+
+## 11. Separate "what happened this run" from "what is currently wrong"
+
+Keep two outputs, not one.
+
+A run log — every check's result on every run, append-only — answers questions
+about trend and reliability. A current-state list — what is still wrong right
+now — is what someone works from. Different audiences, different questions,
+different shapes.
+
+Trying to serve both from one table means computing "what's currently open" as
+an expensive scan over your entire run history every time someone wants a work
+queue.
+
+We keep a third: a run-level execution log with start, end, duration, and
+whether a failure was retryable. It is the cheapest thing in the system and the
+first place you look when someone asks "did it even run last night?"
+
+## 12. First-seen tracking and resolution state are the actual foundation
+
+This deserves its own emphasis, separate from the point above, because it is
+easy to build the current-state list, feel finished, and not notice you have
+built something with no memory.
+
+Without this done correctly, almost nothing useful is possible later: no
+age-based triage, no "this has been open too long" escalation, no resolution
+trend, no way to answer "is this getting better or worse." All of it depends
+entirely on getting one mechanism right, up front. Nothing here retrofits.
+
+**The core idea:** every violation carries a `first_seen_at` timestamp that is
+set once, the first time it is detected, and then never touched again for as
+long as that same violation keeps recurring. Every later run *refreshes* the
+row — latest run, latest detail — but explicitly *preserves* the original
+`first_seen_at`.
+
+This sounds obvious written down, and it is still the single easiest thing in
+the entire system to get wrong. The naive implementation — recompute violations
+fresh each run, write them out — silently overwrites `first_seen_at` with "now"
+on every run. The moment that happens, every violation looks like it started
+today, forever. No error. No test failure. Nothing to signal it. It just always
+says "today," and you lose the ability to ever answer "how long has this been
+broken."
+
+**The mechanic that gets this right is a three-way diff, run every time:**
+
+1. **Still failing, already open** — refresh the row's run metadata, but copy
+   `first_seen_at` forward from the stored row rather than setting it to now.
+2. **Failing for the first time** — insert as a new open issue, `first_seen_at`
+   set to now.
+3. **Was open, no longer failing** — mark it resolved, with a resolution
+   timestamp. **Mark it, do not delete it.** A deleted row leaves no trace the
+   issue ever existed. You lose "how many things got resolved this month," you
+   lose the ability to spot a recurring issue that keeps coming back and being
+   silently re-inserted as if new, and you lose any evidence of improvement
+   over time. Keep the row, flip its status, leave it there as history.
+
+Compare *today's complete set of detected issues* against *yesterday's
+still-open set*, computed fresh each time. Do not try to update rows in place
+incrementally — that accumulates bugs the longer the system runs, and a clean
+deterministic diff is dramatically easier to reason about and to test.
+
+**Then decide, carefully, what makes two violations "the same issue" across
+runs** — which combination of fields forms its identity. This decision deserves
+real thought rather than a default grabbed without checking it. Two traps, in
+opposite directions:
+
+- **Too narrow**, and a violation whose incidental details shift slightly
+  between runs looks brand new every time, resetting its age to zero on every
+  run — which defeats the entire purpose of tracking age.
+- **Too broad**, and genuinely distinct issues collapse into a single row and
+  some of them are silently lost. Check this against how your own rule types
+  can produce *several* distinct violations from what looks like one rule — a
+  group-scoped check can easily emit one violation per failing condition within
+  the same group, and if your identity doesn't distinguish them, all but one
+  disappear.
+
+**One non-obvious constraint follows from this**, and it is worth writing down
+next to your identity definition: every field in the identity must be
+deterministic at rule level and must never contain per-record data. The moment
+you interpolate a record's own value into a field that forms part of the
+identity, every run mints a fresh identity, and all of the above quietly stops
+working with no visible symptom.
+
+Also handle NULLs in the identity explicitly. In a normal join, two NULLs are
+not equal — so a violation with a NULL in its key never matches its own
+previous row, and its age resets every night for reasons nobody will find.
+Substitute a placeholder before comparing.
+
+## 13. Keep ownership, severity and delivery *mechanism* out of the engine
+
+To be unambiguous, because the rest of this section could easily be misread:
+**getting the message to the caseworker is the whole point of the system.**
+Nothing here argues against that. What follows is about where that machinery
+should live, and it is the difference between a feedback loop that survives a
+reorganisation and one that doesn't.
+
+We deliberately trialled three things inside the engine — a severity level on
+every rule, an ownership/routing layer, and push notifications. The trials were
+worth running. The verdict was clear, and it went the other way from our
+starting assumption:
+
+**Severity never changed anything.** It sat in the output schemas, every rule
+author had to fill it in, and it never once influenced what ran, what failed,
+or what was reported. It was reporting metadata living in the engine's
+contract. A field that does not change behaviour belongs in the reporting
+layer, not in every rule definition.
+
+**Routing is an org chart embedded in a data pipeline.** Teams reorganise and
+responsibilities move constantly. Every one of those changes became a code
+change and a deployment, to express something that was never really about data
+quality.
+
+**The delivery channel is a bigger commitment than it looks, and it is a
+separate build.** We cycled through several delivery mechanisms wired directly
+into the engine, and each one dragged in authentication, message formatting,
+delivery logging, failure handling, and a second thing that had to keep running
+at 03:00 — none of which is data quality work, all of which competed with §2
+for time. Get the detection right and land the results somewhere durable first.
+Then build the channel deliberately, as its own piece of work, because that is
+what determines whether a caseworker acts on the message.
+
+**What survives all of that** is that the underlying questions are real. *Who
+fixes this* and *what happens when it fails* both matter — in particular, the
+distinction between "the remedy is a code or pipeline change" and "the remedy
+is a person correcting a case in the source system" is fundamental here, since
+the second is what this project is for. Those have completely different owners
+and timelines, and merging them into one undifferentiated list makes it
+impossible to route work or to measure anyone's trend.
+
+They are just not the *engine's* questions. Have the engine emit facts — rule,
+record, column, actual value, expected condition, first seen, resolved when —
+and make those facts good enough to build a human-readable message from
+(see §4, which matters far more than it appears to). Let a layer above join
+them to whatever ownership model the organisation has this quarter, where it
+can change without touching the pipeline.
+
+## 14. Completeness belongs to the load layer, not the rule engine
+
+Worth deciding explicitly, because the gap is real and easy to miss.
+
+Every rule you write validates rows *that exist*. This means a partial load —
+half the data missing — reports 100% passing and *raises* your quality score
+while the data actually got worse. (Same family as §10.)
+
+The instinct is to close that gap with a rule: "this table must contain between
+X and Y rows." It works, narrowly, and it is the right tool when you need a
+hard gate on volume before something downstream runs. But as a general answer
+it is weak, because a rule can only hold a fixed number that goes stale as the
+data grows, whereas the question is really about trend.
+
+Your load layer already has the run-over-run history to judge whether today's
+volume is plausible. Decide deliberately which system owns "is all the data
+here," and do not let a hardcoded threshold become your answer by default.
+
 ## 15. Budget real time for your platform fighting you
 
 Not a design lesson, a planning one. A meaningful share of our effort went into
@@ -629,7 +632,7 @@ output diffed against a committed, known-good baseline.
 That is what catches the change you didn't think to write a targeted test for —
 a shared piece of logic you touched that quietly shifted behaviour in three
 check types away from the one you meant to change. And note that if you follow
-§4 and put all common logic in one shared place (which you should), then a
+§5 and put all common logic in one shared place (which you should), then a
 regression there touches *everything*, and the baseline diff is the only thing
 that will see it.
 
@@ -654,7 +657,7 @@ constantly. But it is worth knowing three things going in:
   than trying to avoid it.
 - The cost of a rename scales with how many rule types you have, which is one
   more argument for §1's advice to keep that number small.
-- If the contract lives in exactly one place (§7), a rename is a genuinely
+- If the contract lives in exactly one place (§8), a rename is a genuinely
   small change instead of a scavenger hunt across the engine, the validation,
   the docs, the tests, and every rule file.
 
@@ -700,7 +703,7 @@ is very hard to win back — but that is reasoning, not our experience.
 **Scale.** We ran against a small number of source tables and a modest number
 of rules. Nothing here is validated at hundreds of rules or at large volumes.
 The first thing we would expect to become a problem is the full
-read-compare-rewrite of violation state described in §11 and §15. We never
+read-compare-rewrite of violation state described in §12 and §15. We never
 found its ceiling, so we cannot tell you where it is.
 
 **Rules in version-controlled files versus rules in a database table.** We
