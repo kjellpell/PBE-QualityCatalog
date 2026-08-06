@@ -8,6 +8,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from tests.notebook_source import engine_namespace, load_notebook  # noqa: E402
+
 WAREHOUSE_DIR = REPO_ROOT / "spark-warehouse"
 
 
@@ -24,6 +26,10 @@ def spark():
             "spark.sql.catalog.spark_catalog",
             "org.apache.spark.sql.delta.catalog.DeltaCatalog",
         )
+        # Fabric's Spark defaults to Delta; the local session does not. Without
+        # this, saveAsTable() on an existing Delta table fails with a format
+        # mismatch that never happens in the environment the engine runs in.
+        .config("spark.sql.sources.default", "delta")
         .config("spark.sql.warehouse.dir", str(WAREHOUSE_DIR))
         .config("spark.sql.shuffle.partitions", "2")
         .config("spark.sql.session.timeZone", "UTC")
@@ -45,58 +51,66 @@ def spark():
 
 TEST_SCHEMA = "dqtest"
 
-_TEST_CONFIG = f'''
-DEFAULT_SCHEMA = "{TEST_SCHEMA}"
-RULES_DIR = "rules"
-DQ_RESULTS_TABLE = "dq_run_results"
-DQ_VIOLATIONS_TABLE = "dq_violations"
-DQ_EXECUTION_METRICS_TABLE = "dq_execution_metrics"
-'''
+TEST_CONFIG = {
+    "DEFAULT_SCHEMA": TEST_SCHEMA,
+    "DQ_RESULTS_TABLE": "dq_run_results",
+    "DQ_VIOLATIONS_TABLE": "dq_violations",
+    "DQ_EXECUTION_METRICS_TABLE": "dq_execution_metrics",
+}
 
 # MAX_RULE_RETRIES = 0 keeps the retry backoff (2s, 4s) out of the test run.
-_TEST_RUNTIME = '''
-FAIL_ON_EMPTY_SOURCE = True
-RETRYABLE_ERROR_MARKERS = ["timeout", "temporar", "connection", "unavailable", "throttle"]
-MAX_RULE_RETRIES = 0
-RULE_TIMEOUT_SECONDS = 300
-CATALOG_FILTER_OVERRIDES = {}
-'''
+TEST_RUNTIME = {
+    "FAIL_ON_EMPTY_SOURCE": True,
+    "RETRYABLE_ERROR_MARKERS": ["timeout", "temporar", "connection", "unavailable", "throttle"],
+    "MAX_RULE_RETRIES": 0,
+    "RULE_TIMEOUT_SECONDS": 300,
+    "CATALOG_FILTER_OVERRIDES": {},
+}
 
 
 @pytest.fixture(scope="session")
-def runner(spark, tmp_path_factory):
-    """
-    Import engine.runner against a throwaway config.
+def rule_sources():
+    """The rule catalogs, exactly as the engine receives them in Fabric."""
+    return load_notebook("QC_Rules").RULE_CATALOG_SOURCES
 
-    load_config_module() only searches the Lakehouse config directories, and
-    QualityCatalogConfig.py in this repo is explicitly a non-loaded template.
-    Rather than change that contract, point the candidate list at a temp dir
-    for the duration of the test session.
+
+@pytest.fixture(scope="session")
+def engine(spark):
+    """QC_Engine, configured against a throwaway schema.
+
+    Named `engine` because that is what the notebook is; `runner` is kept as an
+    alias so the test modules that predate the notebooks still read naturally.
     """
     from tests import fixtures
 
-    config_dir = tmp_path_factory.mktemp("configs")
-    (config_dir / "QualityCatalogConfig.py").write_text(_TEST_CONFIG)
-    (config_dir / "QualityCatalogRuntime.py").write_text(_TEST_RUNTIME)
-
-    import engine.runtime as _runtime
-    _original = _runtime.LAKEHOUSE_CONFIG_DIR_CANDIDATES
-    _runtime.LAKEHOUSE_CONFIG_DIR_CANDIDATES = (config_dir,)
-
     fixtures.create_source_tables(spark)
 
-    # Import after the config redirect: the module bootstraps config at import
-    # time. Output tables are only touched at write time, so they can follow.
-    import engine.runner as vr
+    nb = engine_namespace()
+    nb.configure(TEST_CONFIG, TEST_RUNTIME)
 
     fixtures.create_output_tables(
         spark,
         TEST_SCHEMA,
-        vr.RESULT_SCHEMA,
-        vr.VIOLATION_SCHEMA,
-        _runtime._EXECUTION_METRIC_SCHEMA,
+        nb.RESULT_SCHEMA,
+        nb.VIOLATION_SCHEMA,
+        nb._EXECUTION_METRIC_SCHEMA,
     )
 
-    yield vr
+    return nb
 
-    _runtime.LAKEHOUSE_CONFIG_DIR_CANDIDATES = _original
+
+@pytest.fixture(scope="session")
+def runner(engine):
+    return engine
+
+
+@pytest.fixture(scope="session")
+def preflight(engine):
+    """QC_Preflight composed on top of QC_Engine, the way `%run` composes them."""
+    return load_notebook("QC_Preflight", into=engine)
+
+
+@pytest.fixture(scope="session")
+def setup_tables(engine):
+    """QC_Setup_Tables composed on top of QC_Engine, the way `%run` composes them."""
+    return load_notebook("QC_Setup_Tables", into=engine)

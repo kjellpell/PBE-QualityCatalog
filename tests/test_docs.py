@@ -8,7 +8,9 @@ engine. On failure it prints the block to paste in.
 
 from pathlib import Path
 
-from engine.rule_engine import RULE_TYPES
+from tests.notebook_source import engine_namespace
+
+RULE_TYPES = engine_namespace().RULE_TYPES
 
 DOC = Path(__file__).resolve().parent.parent / "RULES_GUIDE.md"
 BEGIN = "<!-- BEGIN RULE TYPES (generated — see tests/test_docs.py) -->"
@@ -62,14 +64,13 @@ def test_no_retired_vocabulary_survives_in_docs():
         assert retired not in text, f"RULES_GUIDE.md still references '{retired}'"
 
 
-def test_rules_use_only_supported_keys():
+def test_rules_use_only_supported_keys(rule_sources):
     """Every shipped rule uses a key the engine actually understands."""
     import yaml
 
     reserved = {"rule_id", "name", "description", "when", "pk_column"}
-    root = Path(__file__).resolve().parent.parent
-    for path in sorted((root / "rules").glob("*.yaml")):
-        catalog = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for name, text in sorted(rule_sources.items()):
+        catalog = yaml.safe_load(text)
         for rule in catalog["rules"]:
             unknown = set(rule) - reserved - set(RULE_TYPES)
-            assert not unknown, f"{path.name} / {rule.get('rule_id')}: unknown keys {unknown}"
+            assert not unknown, f"{name} / {rule.get('rule_id')}: unknown keys {unknown}"

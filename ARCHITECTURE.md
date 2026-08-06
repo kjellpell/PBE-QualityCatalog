@@ -3,7 +3,7 @@
 ## Overview
 
 The PBE Quality Catalog is a data quality validation engine built on Apache
-Spark and Delta Lake, designed to run as Fabric Lakehouse notebooks.
+Spark and Delta Lake, shipped as Fabric PySpark notebooks.
 
 Rule authors are SQL-fluent engineers, and the alternative being weighed
 against is hand-written SQL. That shapes the rule format: a rule is a Spark SQL
@@ -14,13 +14,18 @@ violation lifecycle state, and schema validation before the run.
 
 ### No Great Expectations (GX)
 
-GX Core is **not used**. All validation logic lives in `engine/rule_engine.py`.
+GX Core is **not used**. All validation logic lives in the rule-type cells of
+`QC_Engine`.
 Do not add GX imports, GX dependencies, or GX-based code paths.
 
-### Rules live in YAML
+### Rules live in YAML, inside a notebook
 
-At runtime the engine loads rules directly from YAML files in `rules/`. Each
-file is a rule catalog for one rule group.
+At runtime the engine loads rules directly from the YAML documents in
+`RULE_CATALOG_SOURCES`, one cell of `QC_Rules` per rule group.
+
+The YAML lives in a notebook rather than in Lakehouse Files because Fabric
+deployment pipelines promote notebook items and do not promote the `Files`
+section of a lakehouse. Rules that cannot be promoted cannot be released.
 
 A Delta-table-based rule store (`rule_catalog`, loaded via the retired
 `nb_dq_02_migrate_rules.py`) was built and tested alongside YAML early on — both
@@ -54,7 +59,7 @@ joined columns are available to an ordinary predicate.
 
 ### One driver owns the common work
 
-`run_rule()` in `engine/rule_engine.py` owns `when:` filtering, primary-key
+`run_rule()` owns `when:` filtering, primary-key
 resolution, counting, status derivation, and building the violations frame.
 Rule-type builders only describe what a violation *is*. Anything shared lives in
 the driver so it cannot drift between rule types.
@@ -74,12 +79,12 @@ reported as 100% passing.
 ## Runtime Flow
 
 ```
-scripts/setup_dq_tables.py → Create Delta tables (run once; DDL generated from
-                              the engine's own schemas)
-scripts/preflight_checks.py → Pre-run checks (source tables exist, predicates
-                              resolve against the real schema, rule contract)
-scripts/run_validation.py   → Fabric wrapper that executes engine/runner.py:
-  1. Load rules from rules/*.yaml and *.yml
+QC_Setup_Tables    → Create Delta tables (run once; DDL generated from the
+                     engine's own schemas)
+QC_Preflight       → Pre-run checks (source tables exist, predicates resolve
+                     against the real schema, rule contract)
+QC_Run_Validation  → %run QC_Config / QC_Rules / QC_Engine, then:
+  1. Load rules from RULE_CATALOG_SOURCES
   2. Per catalog: load source table, apply joins, apply the catalog `where:`
   3. Dispatch each rule through run_rule()
   4. Write results    → dq_run_results
@@ -89,23 +94,25 @@ scripts/run_validation.py   → Fabric wrapper that executes engine/runner.py:
 
 ## File Map
 
-| File | Purpose |
+Six notebooks, three of them libraries that the other three `%run`.
+
+| Notebook | Kind | Purpose |
+|------|------|---------|
+| `QC_Config` | library | `QUALITY_CATALOG_CONFIG` and `QUALITY_CATALOG_RUNTIME` |
+| `QC_Rules` | library | `RULE_CATALOG_SOURCES` — one YAML catalog per cell |
+| `QC_Engine` | library | Runtime helpers, output schemas + Active/Resolved tracking, rule types, orchestration |
+| `QC_Setup_Tables` | entry point | Delta table DDL, generated from the engine schemas |
+| `QC_Preflight` | entry point | Pre-run checks |
+| `QC_Run_Validation` | entry point | Runs the catalog and prints the run evidence |
+
+| Directory | Purpose |
 |------|---------|
-| `engine/rule_engine.py` | Rule types, the registry, and the driver that runs a rule |
-| `engine/output_store.py` | Output schemas + violation persistence with Active/Resolved tracking |
-| `engine/runtime.py` | Config loading (Lakehouse only), target resolution, metrics writing |
-| `engine/runner.py` | Main orchestration engine |
-| `config/QualityCatalogConfig.py` | Table names and paths |
-| `config/QualityCatalogRuntime.py` | Behavior flags (dry-run, retry, fail-on-empty) |
-| `scripts/setup_dq_tables.py` | Delta table DDL, generated from the engine schemas |
-| `scripts/preflight_checks.py` | Pre-run checks |
-| `scripts/run_validation.py` | Fabric wrapper that executes `engine/runner.py` |
-| `rules/*.yaml` | Rule catalogs — one file per rule group, loaded at runtime |
-| `tests/` | Rule-type, preflight, resolution and end-to-end equivalence tests |
+| `notebooks/` | The six `.ipynb` files, as imported into Fabric |
+| `tests/` | Rule-type, preflight, resolution, notebook and equivalence tests |
 
 ## Rule Contract
 
-The contract is declared once, in `RULE_TYPES` (`engine/rule_engine.py`). Each
+The contract is declared once, in `RULE_TYPES`. Each
 entry carries the YAML key, its scope, its required config keys, which of those
 name source columns, and whether it accepts a `completion_gate`. Preflight reads
 that structure rather than restating it, so the two cannot drift.
@@ -140,14 +147,13 @@ Use these exact strings — typos silently break resolution tracking.
 
 | Table | Written by | Purpose |
 |-------|-----------|---------|
-| `dq_run_results` | `validation_runner.py` | One row per rule per run |
-| `dq_violations` | `validation_runner.py` (via `resolution.py`) | Current-state violation log (`Active`/`Resolved`) |
-| `dq_execution_metrics` | `validation_runner.py` | Run-level observability |
+| `dq_run_results` | `QC_Engine` | One row per rule per run |
+| `dq_violations` | `QC_Engine` (via `_apply_resolution_tracking`) | Current-state violation log (`Active`/`Resolved`) |
+| `dq_execution_metrics` | `QC_Engine` | Run-level observability |
 
-Schemas are defined in `engine/output_store.py` (`VIOLATION_SCHEMA`,
-`VIOLATION_SCHEMA`) and `engine/runtime.py` (`_EXECUTION_METRIC_SCHEMA`).
-`scripts/setup_dq_tables.py` generates its DDL from them, so adding a column there is
-enough.
+Schemas are defined in `QC_Engine`: `RESULT_SCHEMA`, `VIOLATION_SCHEMA` and
+`_EXECUTION_METRIC_SCHEMA`. `QC_Setup_Tables` generates its DDL from them, so
+adding a column there is enough.
 
 ### Violation persistence
 

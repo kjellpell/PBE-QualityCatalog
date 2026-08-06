@@ -353,7 +353,7 @@ expected_condition)`. A violation that disappears from a run is marked
 
 ## Preflight
 
-`scripts/preflight_checks.py` checks catalogs before anything runs:
+`QC_Preflight` checks catalogs before anything runs:
 
 - every source table exists;
 - every `where:`, `when:` and `check:` predicate resolves against the real
@@ -366,10 +366,29 @@ Run it after every catalog change.
 
 ## Fabric notebook workflow
 
-1. Update the YAML catalogs in `rules/` and deploy them to the Lakehouse
-   (`/lakehouse/default/Files/rules/`). Rules are loaded from YAML at runtime;
-   there is no Delta-based rule store.
-2. Run [scripts/preflight_checks.py](scripts/preflight_checks.py).
+Rule catalogs live in the `QC_Rules` notebook, one cell per rule group:
+
+```python
+RULE_CATALOG_SOURCES["faser"] = r"""
+rule_group: Faser
+table: faser
+database: saksbehandling
+pk_column: pk_faser
+rules:
+- rule_id: FAS-008
+  name: Tidsbruk kan ikke være negativt tall
+  check: tidsbruk >= 0
+"""
+```
+
+The YAML syntax is exactly as documented above — only its home changed. The
+dictionary key sets the run order (catalogs run in alphabetical order of key)
+and names the catalog in error messages.
+
+1. Edit the relevant cell in `QC_Rules`.
+2. Run `QC_Preflight`.
 3. Run one validation cycle in the target environment.
 4. Review the output tables.
+5. Copy the change back into `notebooks/QC_Rules.ipynb` in the repository, so
+   the tests and the deployment pipeline carry it.
 

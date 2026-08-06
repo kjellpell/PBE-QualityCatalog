@@ -1,7 +1,7 @@
 # PBE Quality Catalog
 
 Data quality validation engine for the PBE case management platform,
-built on Apache Spark and Delta Lake, designed to run as Fabric Lakehouse notebooks.
+built on Apache Spark and Delta Lake, shipped as Fabric PySpark notebooks.
 
 This README is for IT operations and maintainers.
 For rule authoring, see RULES_GUIDE.md.
@@ -16,8 +16,9 @@ The Quality Catalog runs data quality checks across Process, Milestone, and Invo
 Core capabilities:
 
 - Single validation pipeline across domains
-- Rules loaded directly from YAML catalogs in `rules/` (the `rule_catalog` Delta
-  table is a legacy migration artifact — see ARCHITECTURE.md)
+- Rules authored as YAML in the `QC_Rules` notebook and loaded directly from it
+- Everything deployable: engine, config and rules are notebook items, so a
+  Fabric deployment pipeline promotes the whole thing dev → test → production
 - Run metrics for observability and support
 - Current-state issue tracking (Active and Resolved), preserving when an issue
   was first seen so violation age is answerable
@@ -32,8 +33,10 @@ Core capabilities:
 
 - Reliable operations:
   preflight catches missing sources and config before schedule time.
+- Deployable by pipeline:
+  no Lakehouse Files to copy by hand — every part is a notebook item.
 - Maintainable design:
-  stable engine code, rules managed as YAML catalogs in `rules/`.
+  stable engine code, rules managed as YAML catalogs in `QC_Rules`.
 - Observable runs:
   each execution logs status, timing, retryability, and targets.
 - Predictable schema setup:
@@ -46,23 +49,14 @@ Core capabilities:
 
 ```
 PBE-QualityCatalog/
-├── config/
-│   ├── QualityCatalogConfig.py     (table names, paths)
-│   └── QualityCatalogRuntime.py    (behavior flags, retry/timeout)
-├── engine/
-│   ├── rule_engine.py              (rule types + the driver that runs a rule)
-│   ├── output_store.py             (output schemas, Active/Resolved tracking)
-│   ├── runtime.py                  (config loading, target resolution, metrics)
-│   └── runner.py                   (main orchestration)
-├── rules/                          (YAML rule catalogs — loaded directly by the engine)
-│   ├── faktura.yaml
-│   ├── faser.yaml
-│   └── milepeler.yaml
-├── tests/                          (pytest suite; see requirements-dev.txt)
-├── scripts/
-│   ├── setup_dq_tables.py          (Delta table DDL, generated from the schemas)
-│   ├── preflight_checks.py         (pre-run checks)
-│   └── run_validation.py           (Fabric wrapper for the engine)
+├── notebooks/                      (the deployable artifact — import into Fabric)
+│   ├── QC_Config.ipynb             library: config + runtime settings
+│   ├── QC_Rules.ipynb              library: the YAML rule catalogs, one per cell
+│   ├── QC_Engine.ipynb             library: the whole validation engine
+│   ├── QC_Setup_Tables.ipynb       entry point: create the Delta output tables
+│   ├── QC_Preflight.ipynb          entry point: pre-run checks
+│   └── QC_Run_Validation.ipynb     entry point: run the catalog (schedule this)
+├── tests/                          (pytest suite, run against the notebooks)
 ├── ARCHITECTURE.md
 ├── DAX_POWERBI.md
 ├── DEPLOY.md
@@ -71,50 +65,69 @@ PBE-QualityCatalog/
 └── RULES_GUIDE.md
 ```
 
+There is no separate `engine/` or `rules/` directory: Fabric deployment
+pipelines do not promote Lakehouse Files, so the code and the rules live inside
+notebook items, which they do promote. The notebooks are the source of truth —
+the tests read them directly.
+
 ---
 
 ## How the Engine Works
 
-`engine/` is the four-file core that everything else (the `scripts/` wrappers,
-the notebooks, the tests) calls into. Nothing in here talks to a rule author —
-that's `rules/*.yaml`. Nothing in here is Fabric-specific — that's
-`scripts/run_validation.py`. The split is deliberate: `engine/` is the part
-that stays the same across environments.
+`QC_Engine` is the core that the three entry-point notebooks and the tests call
+into. Nothing in it talks to a rule author — that's `QC_Rules`. Nothing in it
+knows about a particular workspace — that's `QC_Config`. The split is
+deliberate: `QC_Engine` is the part that stays the same across environments.
+
+An entry-point notebook composes them, one `%run` per cell, then calls in:
 
 ```
-                  ┌───────────────────┐
-  rules/*.yaml ──▶│ engine/runner.py  │──▶ dq_run_results
- source tables ──▶│  (orchestration)  │──▶ dq_violations
-                  └─────────┬─────────┘──▶ dq_execution_metrics
-                            │ calls
-        ┌───────────────────┼────────────────────┐
-        ▼                   ▼                    ▼
- rule_engine.py        output_store.py        runtime.py
- (what a violation      (schemas +          (config loading,
-  IS, and how to         Active/Resolved     target resolution,
-  count it)              resolution)         metrics)
+%run QC_Config      →  QUALITY_CATALOG_CONFIG, QUALITY_CATALOG_RUNTIME
+%run QC_Rules       →  RULE_CATALOG_SOURCES
+%run QC_Engine      →  configure(), run_with_metrics(), …
 ```
 
-### `engine/runner.py` — orchestration
+`%run` executes the referenced notebook in the same Spark session, so all three
+end up in one namespace — which is why no two notebooks may define the same
+top-level name (`tests/test_notebooks.py` enforces it).
 
-The entry point. For each YAML catalog in `rules/`, it:
+```
+    RULE_CATALOG_SOURCES ──▶┌───────────────────┐──▶ dq_run_results
+           source tables ──▶│   orchestration   │──▶ dq_violations
+                            └─────────┬─────────┘──▶ dq_execution_metrics
+                                      │ calls
+        ┌─────────────────────────────┼──────────────────────┐
+        ▼                             ▼                      ▼
+   rule types                  output schemas          runtime helpers
+ (what a violation          (+ Active/Resolved        (settings, target
+  IS, and how to               resolution)             resolution, metrics)
+  count it)
+```
+
+### Orchestration
+
+The entry point. For each YAML catalog in `RULE_CATALOG_SOURCES`, it:
 
 1. Reads the catalog's source table from the Spark metastore.
 2. Applies any `joins:` and the catalog-level `where:` filter, then caches
    the resulting DataFrame so every rule in the catalog reads it once instead
    of re-scanning the source table per rule.
-3. Runs each rule through `engine/rule_engine.py`, with a bounded timeout and
+3. Runs each rule through the rule-type registry, with a bounded timeout and
    retry-on-transient-error (`RULE_TIMEOUT_SECONDS` / `MAX_RULE_RETRIES` /
-   `RETRYABLE_ERROR_MARKERS`, all from `QualityCatalogRuntime.py`).
+   `RETRYABLE_ERROR_MARKERS`, all from `QUALITY_CATALOG_RUNTIME`).
 4. Collects one summary row and zero-or-more violation rows per rule.
 
 Once every catalog has run, it writes the combined summary rows to
-`dq_run_results`, hands the combined violations to `output_store.py` for
-resolution tracking, and records a success/failure row in
-`dq_execution_metrics` — including on the exception path, so a crashed run
-still leaves evidence of why.
+`dq_run_results`, hands the combined violations to resolution tracking, and
+records a success/failure row in `dq_execution_metrics` — including on the
+exception path, so a crashed run still leaves evidence of why.
 
-### `engine/rule_engine.py` — what a violation is
+Nothing runs when `QC_Engine` is `%run`: it defines names only.
+`configure(QUALITY_CATALOG_CONFIG, QUALITY_CATALOG_RUNTIME)` is what opens the
+Spark session and resolves the output targets, and every entry point calls it
+before anything else.
+
+### Rule types — what a violation is
 
 Defines the six rule types a YAML file can declare, and the single driver,
 `run_rule()`, that executes any of them. The split matters: **rule-type
@@ -138,15 +151,15 @@ rows or pairs fail, so `passed_rows` can never go negative. Every rule type
 resolves to exactly one YAML key per rule — `detect_rule_type()` rejects a
 rule that declares zero or more than one.
 
-### `engine/output_store.py` — schemas and violation lifecycle
+### Output schemas and violation lifecycle
 
-Two things live here, and only here, so they're defined once instead of
-restated across the engine and `scripts/setup_dq_tables.py`:
+Two things live in one cell, and only there, so they're defined once instead of
+restated across the engine and `QC_Setup_Tables`:
 
 - `RESULT_SCHEMA` / `VIOLATION_SCHEMA` — the canonical Spark schemas for
-  `dq_run_results` and `dq_violations`. `scripts/setup_dq_tables.py` generates
-  its Delta DDL from these, so the table shape can't drift from what the
-  runner actually writes.
+  `dq_run_results` and `dq_violations`. `QC_Setup_Tables` generates its Delta
+  DDL from these, so the table shape can't drift from what the runner actually
+  writes.
 - `_apply_resolution_tracking()` — turns each run's raw violations into
   current state: a violation missing from this run that was previously
   `Active` is marked `Resolved`; a still-failing violation keeps its original
@@ -155,14 +168,13 @@ restated across the engine and `scripts/setup_dq_tables.py`:
   than a Delta `MERGE`, because Fabric's SQL engine can't resolve
   schema-qualified metastore table names inside a `MERGE` statement.
 
-### `engine/runtime.py` — config and metrics plumbing
+### Runtime helpers — config and metrics plumbing
 
 Shared helpers that don't belong to rule evaluation itself:
 
-- Locates and loads `QualityCatalogConfig.py` / `QualityCatalogRuntime.py` from
-  the Lakehouse `Files/configs/` path, and validates required keys are present.
-- Resolves fully-qualified output table names (`resolve_targets`) and the
-  rules directory (`resolve_rules_dir`).
+- Validates that the config dicts carry every required key and gives them
+  attribute access (`build_settings`).
+- Resolves fully-qualified output table names (`resolve_targets`).
 - Classifies whether an error message matches a configured retryable pattern
   (`classify_retryable_error`).
 - Writes rows to `dq_execution_metrics` (`write_execution_metric`), with a
@@ -176,19 +188,16 @@ Shared helpers that don't belong to rule evaluation itself:
 
 ### Config layers
 
-- QualityCatalogConfig.py:
-  table names, paths, and execution metadata markers.
-- QualityCatalogRuntime.py:
-  behavior flags and retry markers.
+Both live in `QC_Config`, as plain dicts:
 
-### Config location
+- `QUALITY_CATALOG_CONFIG`:
+  target schema and the three output table names.
+- `QUALITY_CATALOG_RUNTIME`:
+  behavior flags, retry markers, and catalog filter overrides.
 
-Config files must be uploaded to the Lakehouse at:
-
-    /lakehouse/default/Files/configs/QualityCatalogConfig.py
-    /lakehouse/default/Files/configs/QualityCatalogRuntime.py
-
-The engine will raise a clear error if either file is missing.
+The values are the same in every stage, so `QC_Config` is promoted unchanged by
+the deployment pipeline. `configure()` raises a clear error naming any missing
+key.
 
 ### Key runtime toggles
 
@@ -203,13 +212,13 @@ The engine will raise a clear error if either file is missing.
 
 Quick-reference version of "How the Engine Works" above:
 
-1. Load config/runtime modules and validate required keys.
+1. `configure()` validates the config dicts and opens the Spark session.
 2. Resolve output targets.
-3. Load rules directly from the YAML catalogs in `rules/`.
+3. Load rules from the YAML catalogs in `RULE_CATALOG_SOURCES`.
 4. For each rule group:
   - Read source table from Spark metastore.
   - Apply optional pre-joins and the catalog `where:` filter.
-  - Run each rule through the driver in engine/rule_engine.py.
+  - Run each rule through `run_rule()`.
 5. Append summary rows to dq_run_results.
 6. Apply the issue lifecycle to dq_violations.
 7. Write execution evidence to dq_execution_metrics.
@@ -238,7 +247,7 @@ Primary uses:
 - Active issue monitoring
 - Resolution trend tracking
 
-### default.dq_execution_metrics
+### dq_execution_metrics
 
 One row per runner execution.
 
@@ -263,7 +272,7 @@ Persistence uses the DataFrame API rather than SQL `MERGE` — Fabric cannot
 resolve schema-qualified names inside a `MERGE` statement.
 
 If resolution tracking fails, the run fails with "Violations not written" — no
-partial data is committed. Rerun scripts/setup_dq_tables.py to confirm the tables exist
+partial data is committed. Rerun `QC_Setup_Tables` to confirm the tables exist
 with the expected schema, then re-run validation.
 
 ---
@@ -272,20 +281,21 @@ with the expected schema, then re-run validation.
 
 ### First-time setup
 
-1. Run scripts/setup_dq_tables.py to create Delta tables.
-2. Deploy the YAML catalogs in `rules/` to the Lakehouse (no Delta migration
-   needed — rules are loaded directly from YAML).
+1. Import the six notebooks from `notebooks/` into the workspace and attach a
+   default lakehouse to the three entry-point notebooks.
+2. Run `QC_Setup_Tables` to create the Delta tables.
+
+See DEPLOY.md for the deployment-pipeline steps.
 
 ### Preflight before promotion or scheduling
 
-1. Run scripts/preflight_checks.py.
+1. Run `QC_Preflight`.
 2. Confirm the YAML catalogs load and contain rules.
 3. Confirm all referenced source tables exist.
 
 ### Scheduled execution
 
-1. Run scripts/run_validation.py (the Fabric wrapper for
-   engine/runner.py) after source refresh.
+1. Run `QC_Run_Validation` after source refresh.
 2. Verify summary output and row counts.
 3. Confirm evidence in dq_execution_metrics.
 
@@ -296,13 +306,16 @@ For a one-page checklist, see OPERATIONS_QUICK_REF.md.
 ## Troubleshooting
 
 - No rules found:
-  verify the YAML catalogs in `rules/` are deployed and contain rules.
+  confirm `QC_Rules` was `%run` and that its cells populate
+  `RULE_CATALOG_SOURCES`.
 - Missing source tables:
   run preflight and confirm metastore names.
-- Config loading failures:
-  verify Lakehouse config path — ensure both config files exist at /lakehouse/default/Files/configs/.
+- `NameError` on `configure`, `RULE_CATALOG_SOURCES`, … :
+  a `%run` cell did not execute — run the notebook from the top.
+- Config errors:
+  `configure()` names the missing key; fix it in `QC_Config`.
 - Violation write failures:
-  rerun scripts/setup_dq_tables.py and verify Delta support.
+  rerun `QC_Setup_Tables` and verify Delta support.
 - Rule configuration errors:
   run preflight — it resolves every `where:`, `when:` and `check:` predicate
   against the real schema and reports the offending rule.
@@ -321,12 +334,21 @@ The suite runs locally against PySpark and Delta — no Fabric needed. Delta is
 required rather than plain parquet, because the resolution path does a
 read-then-overwrite that parquet rejects.
 
+The tests read the notebooks directly: `tests/notebook_source.py` executes a
+notebook's code cells into a module namespace, skipping `%run` cells and the
+`entrypoint`-tagged final cell, which is exactly what Fabric does minus the
+pressing of Run. So there is no second copy of the engine to keep in step —
+what the tests exercise is what gets deployed.
+
 | Test module | Covers |
 |---|---|
 | `test_expectations.py` | Each rule type, predicate NULL semantics, scope counting |
 | `test_preflight.py` | Rule-contract and predicate validation, incl. typo detection |
 | `test_resolution.py` | Violation lifecycle: new → Active → Resolved, `first_seen_at` |
+| `test_rule_loading.py` | Catalog loading, and that an unusable catalog fails loudly |
 | `test_equivalence.py` | Every catalog end to end, diffed against a committed baseline |
+| `test_setup_tables.py` | Output-table DDL matches the engine schemas; drift is reported |
+| `test_notebooks.py` | The notebooks compile, compose, and define no clashing names |
 | `test_docs.py` | The rule-type reference in RULES_GUIDE.md matches the engine |
 
 `test_equivalence.py` is the regression gate: it fails on any unintended change
@@ -337,9 +359,8 @@ and review the diff.
 Before promoting changes:
 
 1. `python -m pytest tests/ -v`
-2. `python -m py_compile engine/*.py scripts/*.py`
-3. Run `scripts/preflight_checks.py` — catches missing tables and unresolvable predicates.
-4. Run `scripts/run_validation.py` in the target environment and verify outputs.
+2. Run `QC_Preflight` — catches missing tables and unresolvable predicates.
+3. Run `QC_Run_Validation` in the target environment and verify outputs.
 
 ---
 

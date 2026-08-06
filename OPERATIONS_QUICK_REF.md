@@ -13,8 +13,8 @@ Use this checklist to run, verify, and triage the Quality Catalog quickly.
 ## Standard Run Sequence
 
 1. Confirm source data refresh is complete.
-2. Run preflight: scripts/preflight_checks.py.
-3. Run validation: scripts/run_validation.py (executes engine/runner.py).
+2. Run preflight: `QC_Preflight`.
+3. Run validation: `QC_Run_Validation`.
 4. Check execution evidence in dq_execution_metrics.
 5. Check latest summary rows in dq_run_results.
 6. Check issue lifecycle behavior in dq_violations.
@@ -23,14 +23,16 @@ Use this checklist to run, verify, and triage the Quality Catalog quickly.
 
 ## First-Time Or Schema-Update Setup
 
-1. Run scripts/setup_dq_tables.py.
-2. Re-run preflight before scheduling.
+1. Import the six notebooks and attach a default lakehouse to the three
+   entry-point notebooks (see DEPLOY.md).
+2. Run `QC_Setup_Tables`.
+3. Re-run preflight before scheduling.
 
 ---
 
 ## Runtime Flags
 
-Set in config/QualityCatalogRuntime.py.
+Set in `QUALITY_CATALOG_RUNTIME`, in the `QC_Config` notebook.
 
 - FAIL_ON_EMPTY_SOURCE:
   fail if a source table is empty.
@@ -45,12 +47,13 @@ Set in config/QualityCatalogRuntime.py.
 
 ## Config Location
 
-Config files must be uploaded to the Lakehouse at:
+All configuration is in the `QC_Config` notebook, as two dicts:
+`QUALITY_CATALOG_CONFIG` and `QUALITY_CATALOG_RUNTIME`. Entry-point notebooks
+pull it in with `%run QC_Config`, and `configure()` raises a clear error naming
+any missing key.
 
-    /lakehouse/default/Files/configs/QualityCatalogConfig.py
-    /lakehouse/default/Files/configs/QualityCatalogRuntime.py
-
-The engine raises a clear error if either file is missing.
+Nothing is read from Lakehouse Files: deployment pipelines do not promote that
+section of a lakehouse, which is why config lives in a notebook.
 
 ---
 
@@ -80,30 +83,31 @@ After each run, confirm:
 
 ### No rule catalogs found
 
-- Verify RULES_DIR value.
-- Verify rules folder is present and contains *.yaml files.
+- Verify the `%run QC_Rules` cell ran (run the notebook from the top).
+- Verify `QC_Rules` cells populate `RULE_CATALOG_SOURCES`.
 
 ### Missing source tables
 
 - Re-run preflight.
-- Confirm metastore object names in YAML headers.
+- Confirm metastore object names in the catalog headers in `QC_Rules`.
 - Confirm upstream load timing.
 
 ### Config load failure
 
-- Verify Lakehouse config path: `/lakehouse/default/Files/configs/`.
-- Confirm both `QualityCatalogConfig.py` and `QualityCatalogRuntime.py` are uploaded.
+- `configure()` names the missing key — add it to `QC_Config`.
+- A `NameError` on `QUALITY_CATALOG_CONFIG` means the `%run QC_Config` cell did
+  not run.
 
 ### Resolution-tracking failure on dq_violations
 
 - The run fails with "Violations not written" — no partial data is committed.
-- Re-run scripts/setup_dq_tables.py to ensure the table and columns exist.
+- Re-run `QC_Setup_Tables` to ensure the table and columns exist.
 - Confirm Delta support and table availability, then re-run validation.
 
 ### Rule execution errors
 
-- Run `scripts/preflight_checks.py` first — it resolves every `where:`, `when:` and
-  `check:` predicate against the real schema and names the offending rule.
+- Run `QC_Preflight` first — it resolves every `where:`, `when:` and `check:`
+  predicate against the real schema and names the offending rule.
 - Verify each rule declares exactly one rule type.
 - Verify referenced columns exist in source data (including joined-in columns).
 
@@ -112,7 +116,8 @@ After each run, confirm:
 ## Ownership
 
 - IT owns runtime, deployment, scheduling, support, and engine changes.
-- Rule authors own the YAML catalogs — rule intent and follow-up decisions.
+- Rule authors own the YAML catalogs in `QC_Rules` — rule intent and follow-up
+  decisions.
   Authoring assumes SQL fluency; see RULES_GUIDE.md.
 
 Business authoring reference: RULES_GUIDE.md.

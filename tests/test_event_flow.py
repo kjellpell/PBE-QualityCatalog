@@ -10,7 +10,9 @@ from datetime import date
 
 import pytest
 
-from engine.rule_engine import run_rule
+from tests.notebook_source import engine_namespace
+
+run_rule = engine_namespace().run_rule
 
 FLOW = {
     "event_column": "ev",
