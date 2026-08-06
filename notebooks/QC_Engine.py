@@ -80,16 +80,35 @@ def build_settings(mapping, required_keys: list[str], label: str) -> SimpleNames
     return SimpleNamespace(**mapping)
 
 
+def _validate_table_reference(value: str, setting: str) -> str:
+    """Check every part of a possibly schema-qualified name.
+
+    Output table names reach Spark SQL through f-strings, so this is the one
+    place they can be checked.  `_safe_table_name` was written for exactly that
+    and then only ever used on the metrics fallback path, which left a typo in
+    QUALITY_CATALOG_CONFIG to surface as a parse error deep in a query rather
+    than as a named setting at configure() time.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{setting} must be a non-empty table name.")
+    for part in value.split("."):
+        try:
+            _safe_table_name(part)
+        except ValueError as exc:
+            raise ValueError(f"{setting}: {exc}") from None
+    return value.strip()
+
+
 def _qualify(table_name: str, default_schema: str) -> str:
     """Prepend default_schema only when table_name is not already schema-qualified."""
     return table_name if "." in table_name else f"{default_schema}.{table_name}"
 
 
 def resolve_targets(config) -> dict[str, str]:
-    schema = config.DEFAULT_SCHEMA
-    results    = _qualify(config.DQ_RESULTS_TABLE,            schema)
-    violations = _qualify(config.DQ_VIOLATIONS_TABLE,         schema)
-    metrics    = _qualify(config.DQ_EXECUTION_METRICS_TABLE,  schema)
+    schema = _validate_table_reference(config.DEFAULT_SCHEMA, "DEFAULT_SCHEMA")
+    results    = _qualify(_validate_table_reference(config.DQ_RESULTS_TABLE,           "DQ_RESULTS_TABLE"),           schema)
+    violations = _qualify(_validate_table_reference(config.DQ_VIOLATIONS_TABLE,        "DQ_VIOLATIONS_TABLE"),        schema)
+    metrics    = _qualify(_validate_table_reference(config.DQ_EXECUTION_METRICS_TABLE, "DQ_EXECUTION_METRICS_TABLE"), schema)
     return {
         "results_table":           results,
         "violations_table":        violations,

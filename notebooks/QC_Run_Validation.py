@@ -67,21 +67,16 @@ def print_run_evidence(config_mapping: dict) -> None:
     """Show the latest execution metrics, rule-group summary, and open violations."""
     spark = SparkSession.builder.getOrCreate()
 
-    config = build_settings(
-        config_mapping,
-        [
-            "DEFAULT_SCHEMA",
-            "DQ_RESULTS_TABLE",
-            "DQ_VIOLATIONS_TABLE",
-            "DQ_EXECUTION_METRICS_TABLE",
-        ],
-        "QUALITY_CATALOG_CONFIG",
-    )
-    schema = config.DEFAULT_SCHEMA
+    config = build_settings(config_mapping, CONFIG_REQUIRED_KEYS, "QUALITY_CATALOG_CONFIG")
+
+    # resolve_targets, not a second set of _qualify calls: the report has to
+    # name the tables the run actually wrote to, and it validates the names
+    # before they reach the f-strings below.
+    targets = resolve_targets(config)
+    results_table = targets["results_table"]
+    violations_table = targets["violations_table"]
 
     # Each _table_exists is a Spark job, so probe once and reuse the answer.
-    results_table = _qualify(config.DQ_RESULTS_TABLE, schema)
-    violations_table = _qualify(config.DQ_VIOLATIONS_TABLE, schema)
     has_results = _table_exists(spark, results_table)
     has_violations = _table_exists(spark, violations_table)
 
@@ -91,7 +86,7 @@ def print_run_evidence(config_mapping: dict) -> None:
         (
             candidate
             for candidate in (
-                _qualify(config.DQ_EXECUTION_METRICS_TABLE, schema),
+                targets["execution_metrics_table"],
                 config.DQ_EXECUTION_METRICS_TABLE,
             )
             if _table_exists(spark, candidate)
