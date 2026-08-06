@@ -40,10 +40,14 @@ def is_entrypoint(cell: dict) -> bool:
     return "entrypoint" in cell.get("metadata", {}).get("tags", [])
 
 
-def notebook_code(name: str, include_entrypoint: bool = False) -> str:
-    """The importable Python of a notebook, as one compilable source string."""
-    blocks = []
-    for cell in notebook_cells(name):
+def executable_cells(name: str, include_entrypoint: bool = False) -> list[tuple[int, str]]:
+    """``(cell number, source)`` for each code cell the tests should run.
+
+    Cell numbers are 1-based over *all* cells, so they match what the notebook
+    shows — they are what a traceback has to name to be worth reading.
+    """
+    cells = []
+    for number, cell in enumerate(notebook_cells(name), start=1):
         if cell["cell_type"] != "code":
             continue
         source = "".join(cell["source"])
@@ -51,8 +55,17 @@ def notebook_code(name: str, include_entrypoint: bool = False) -> str:
             continue
         if is_entrypoint(cell) and not include_entrypoint:
             continue
-        blocks.append(source.rstrip("\n"))
-    return "\n\n".join(blocks) + "\n"
+        cells.append((number, source.rstrip("\n")))
+    return cells
+
+
+def cell_filename(name: str, number: int) -> str:
+    return f"{name}.ipynb[cell {number}]"
+
+
+def notebook_code(name: str, include_entrypoint: bool = False) -> str:
+    """Every executable cell as one source string, for whole-notebook analysis."""
+    return "\n\n".join(source for _, source in executable_cells(name, include_entrypoint)) + "\n"
 
 
 def load_notebook(name: str, into: types.ModuleType | None = None) -> types.ModuleType:
@@ -61,13 +74,20 @@ def load_notebook(name: str, into: types.ModuleType | None = None) -> types.Modu
     Passing ``into`` composes notebooks in a single namespace, which is what
     `%run` does in Fabric — QC_Preflight's functions expect QC_Engine's names
     to already be there.
+
+    Cells are compiled one at a time, under a filename naming the cell. That
+    matches Fabric — each cell is its own compilation unit, so a
+    ``from __future__`` import is scoped to its cell in both places — and it
+    means a traceback points at a cell somebody can open, rather than at a line
+    offset into a concatenation that exists nowhere.
     """
     module = into if into is not None else types.ModuleType(name)
     # @dataclass resolves its annotations through sys.modules[cls.__module__].
     # In Fabric the notebook namespace is __main__, which is always registered;
     # here it has to be put there deliberately.
     sys.modules.setdefault(module.__name__, module)
-    exec(compile(notebook_code(name), f"{name}.ipynb", "exec"), module.__dict__)
+    for number, source in executable_cells(name):
+        exec(compile(source, cell_filename(name, number), "exec"), module.__dict__)
     return module
 
 

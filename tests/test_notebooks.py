@@ -14,6 +14,8 @@ import pytest
 
 from tests.notebook_source import (
     NOTEBOOK_DIR,
+    cell_filename,
+    executable_cells,
     is_entrypoint,
     is_run_magic,
     notebook_cells,
@@ -87,7 +89,27 @@ def test_notebook_is_valid_and_targets_pyspark(name):
 @pytest.mark.parametrize("name", ALL_NOTEBOOKS)
 def test_every_code_cell_compiles(name):
     """A syntax error must fail here, not on the first scheduled run."""
-    compile(notebook_code(name, include_entrypoint=True), f"{name}.ipynb", "exec")
+    for number, source in executable_cells(name, include_entrypoint=True):
+        compile(source, cell_filename(name, number), "exec")
+
+
+@pytest.mark.parametrize("name", ALL_NOTEBOOKS)
+def test_a_run_cell_holds_nothing_but_the_run_magic(name):
+    """Otherwise the code sharing that cell is invisible to every test here.
+
+    The loader skips a `%run` cell whole — it has to, `%run` is not Python — so
+    a statement appended below one would never be compiled or executed by the
+    suite, while Fabric would run it happily.
+    """
+    for cell in notebook_cells(name):
+        if cell["cell_type"] != "code":
+            continue
+        source = "".join(cell["source"])
+        if not is_run_magic(source):
+            continue
+        assert len(source.strip().splitlines()) == 1, (
+            f"{name}: a %run cell also contains code, which no test can see:\n{source}"
+        )
 
 
 @pytest.mark.parametrize("name", ALL_NOTEBOOKS)

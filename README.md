@@ -347,6 +347,7 @@ what the tests exercise is what gets deployed.
 | `test_resolution.py` | Violation lifecycle: new → Active → Resolved, `first_seen_at` |
 | `test_rule_loading.py` | Catalog loading, and that an unusable catalog fails loudly |
 | `test_equivalence.py` | Every catalog end to end, diffed against a committed baseline |
+| `test_setup_tables.py` | Output-table DDL matches the engine schemas; drift is reported |
 | `test_notebooks.py` | The notebooks compile, compose, and define no clashing names |
 | `test_docs.py` | The rule-type reference in RULES_GUIDE.md matches the engine |
 
