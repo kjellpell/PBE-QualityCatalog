@@ -12,37 +12,60 @@ you do.
 
 ---
 
-## 1. Make a rule a predicate, and borrow SQL's semantics wholesale
+## 1. Most rules are a predicate. The ones that matter most are not.
 
-The single highest-leverage decision we made: a rule is a boolean SQL
-expression, optionally scoped by a second boolean SQL expression.
+Our rule format has two tiers, and getting clear about the boundary between
+them was one of the more useful things we did. Be warned that the two tiers
+have almost nothing in common in terms of effort.
+
+**Tier one — a rule is a boolean SQL expression**, optionally scoped by a
+second one:
 
 ```
-rule:  FAS-008  "Time spent cannot be negative"
+rule:  "Time spent cannot be negative"
 check: tidsbruk >= 0
 
-rule:  FAS-004  "A closed phase must have a closing date"
+rule:  "A closed phase must have a closing date"
 when:  seneste_stoppmilepael_dato IS NOT NULL
 check: fase_lukket_dato IS NOT NULL
 ```
 
-That is the entire authoring surface for the large majority of rules. It works
+By count, most rules look like this, and this tier is close to free. It works
 because our rule authors already know SQL, and the alternative they are
-implicitly comparing against is hand-written SQL. Anything more abstract than
-the thing they'd write by hand is a step backwards.
+implicitly comparing against is hand-written SQL — anything more abstract than
+what they'd write by hand is a step backwards.
 
 The deeper benefit is that you inherit semantics instead of inventing them.
 Every question you would otherwise have to decide, document, and defend — how
 comparisons behave, how NULL propagates, what an empty set means — already has
-a standard answer that your authors have already internalised. Every place you
-deviate from SQL is a place you now owe someone an explanation.
+a standard answer your authors have internalised. Every place you deviate from
+SQL is a place you now owe someone an explanation.
 
-Keep the number of rule *types* small. Each one is permanent: it needs
-documentation, tests, validation support, and a name you will probably get
-wrong the first time. We ended up with six, and six comfortably covers
-everything we actually needed. Our instinct at the start was that we'd need
-many more. That instinct was wrong, and every type we added beyond the core
-few was eventually either removed or merged into something more general.
+**Tier two — everything a row predicate structurally cannot express.**
+Uniqueness across a set of rows. An aggregate over a group compared against a
+reference value. "This group must contain at least one X." And ordering: did
+these events occur in the right sequence, as complete passes.
+
+No amount of cleverness collapses these into a predicate, and it is worth
+understanding exactly why: **a predicate sees one row, and every one of these
+questions is about the relationships between rows.** That is the real boundary
+in the design, and it is not a matter of taste or convenience.
+
+**The trap is assuming tier two is a modest extension of tier one.** It is not.
+Tier one is a thin layer over the query engine. Tier two *is* the engine —
+essentially all of the implementation, all of the hard reasoning, and all of
+the bugs. §14 is about the hardest of them, and nothing in this document should
+be read as suggesting that writing checks is the easy part. Writing *simple*
+checks is the easy part. The checks that justify building an engine at all are
+the complicated ones, and they are complicated all the way down.
+
+Keep the number of tier-two types small — not because they are simple, but
+because each one is expensive and permanent: documentation, tests, validation
+support, a name you will get wrong the first time. Our instinct at the start
+was that we would need many. We ended up with a handful, and each type we added
+beyond the core few was eventually removed or merged into something more
+general. Fewer, more general, properly built beats a long menu of
+half-considered ones.
 
 ## 2. NULL is not a failure
 
@@ -382,25 +405,54 @@ here," and do not let a hardcoded threshold become your answer by default.
 
 ## 14. Sequence and ordering checks are the hardest thing you will build
 
+This is the most important section in this document, and the one where we would
+most strongly resist any attempt to make it sound simpler than it is.
+
 If you need to verify that a *sequence* of events happened in the right order —
 not "did X happen" but "did A then B then C happen, in order, possibly
-repeating" — this is disproportionately harder than every other kind of check.
-It was by a wide margin the largest and most-revised part of our engine.
-Specific traps, learned the hard way:
+repeating" — this is disproportionately harder than every other kind of check,
+and it is also where most of the value is. It is the check that finds problems
+no other check can see. It was by a wide margin the largest, most-revised, and
+most-tested part of our engine, and we would budget for it that way from the
+start rather than discovering it.
 
-**Don't reach for general sequence checking unless there is a genuine repeating
-cycle.** If the requirement is "A must be followed by B, once," a simple
-pairwise check is enough and far easier to get right. We started with two
-separate mechanisms and eventually merged them, because a pair is just a cycle
-of length two — but reach for the general machinery only when you need the
-general case.
+**Start by looking at how much behaviour hides in one small configuration.**
+Take a flow declared as a start anchor, a repeating cycle of `[A, B]`, and a
+closing anchor — about six lines of configuration:
 
-**The valuable check is "did every pass close."** With a repeating cycle of
-`[A, B]`, the sequence `start A B A end` is wrong — the trailing A never got
-its B — while `start A B A B end` is two complete passes and correct.
-Expressing that as "the number of cycle events must divide evenly by the cycle
-length" is what catches the unclosed pass, and it is the thing this kind of
-check exists for.
+| Events, in order | Verdict | Why |
+|---|---|---|
+| `start A B end` | valid | one complete pass |
+| `start A B A B end` | valid | two complete passes |
+| `start B A end` | error | cycle out of order |
+| `B start A end` | error | cycle event before the start anchor |
+| `start A B A end` | error | the trailing `A` never closes |
+| `start A A B B end` | error | passes must alternate, not batch |
+
+Every one of those verdicts is a decision someone has to make, implement, and
+defend. And that is a *single* configuration. The anchors are optional, the
+cycle can be any length, several different events may legitimately close the
+flow, and the whole rule may be scoped to only evaluate groups that have
+reached a given point. Each combination has its own set of valid and invalid
+sequences, and a reader who is being clever can keep generating new ones for a
+long time. There is no point at which you have obviously enumerated them all —
+which is precisely why this needs a real test suite rather than a few examples.
+
+**The last two rows are the entire justification for building this.** An opened
+pass that never closes is a real data problem, and a plain "do both events
+exist?" check is structurally blind to it — `start A B A end` contains both A
+and B, so a presence check passes it happily. Expressing the requirement as
+"the number of cycle events must divide evenly by the cycle length" is what
+catches the unclosed pass. If you take one thing from this section, take that
+the naive version of this check silently misses the exact failure you built it
+for.
+
+**Reach for the general mechanism only when there is a genuine repeating
+cycle.** If the requirement really is "A must be followed by B, once," that is
+a cycle of length two with no anchors — the same machinery, configured
+trivially. We started with two separate mechanisms for these and merged them,
+which was right. But do not build the general case to serve a requirement that
+never repeats.
 
 **A person will forget to mark something as officially finished, even when it
 obviously is finished.** If your check relies on an explicit "this is now
@@ -421,11 +473,15 @@ declared position when timestamps tie. Without it, identical data produces
 different verdicts on different runs — a bug that reproduces roughly never
 while you're looking for it.
 
-**Decide up front whether this is worth building well.** A half-correct
-sequence check is worse than no check at all, because it produces
-confident-looking false violations, and those burn the credibility of every
-other check you built. A smaller set of simple pairwise checks with an
-acknowledged coverage gap is usually the better trade.
+**Fund it properly or scope it down honestly — but do not ship an
+approximation.** A half-correct sequence check is worse than no check at all,
+because it produces confident-looking false violations, and those burn the
+credibility of every other check you built along with it. The failure mode is
+not "this check is a bit unreliable," it is "nobody trusts the quality
+dashboard any more." So either give this the time and the test coverage it
+genuinely needs, or deliberately narrow what you claim it covers and say so out
+loud. What you must not do is build eighty percent of it and present the result
+as if it were complete.
 
 ## 15. Budget real time for your platform fighting you
 
@@ -541,23 +597,34 @@ trade-off may well invert, and we have no real evidence about the other side.
 
 ## In short
 
-The hard part was never writing a check. A check is one line of SQL, and that
-part worked from the very beginning.
+Do not let anyone tell you this is mostly plumbing around some one-line checks.
+The simple rules genuinely are simple — a predicate over a row, working on day
+one. But those are not the rules that justify building an engine. The ones that
+do — ordering, completeness of a repeating cycle, aggregates over groups — are
+hard in their own right, before you have written a single line of the
+surrounding machinery, and they stayed hard through every revision.
+
+Budget for two separate problems: the checks that are genuinely difficult, and
+everything below.
 
 The hard parts, in the order they cost us:
 
-1. **What happens to a failing check's result over time.** First-seen tracking,
+1. **Sequence and ordering checks.** The largest, most-revised and
+   most-tested thing we built, and the one that finds problems nothing else
+   can. Assume it will take several attempts, and that the naive version
+   silently misses the exact case you built it for.
+2. **What happens to a failing check's result over time.** First-seen tracking,
    resolution state, and the identity that ties a violation to itself across
    runs. Get this right up front — nothing retrofits it, and its failure mode
    is completely silent.
-2. **Making failures loud in the right direction.** Every silent problem we
+3. **Making failures loud in the right direction.** Every silent problem we
    found made the numbers look *better*. Those are the ones to hunt for
    deliberately, because no one will ever report them.
-3. **Validating configuration before the scheduled run**, against the real
+4. **Validating configuration before the scheduled run**, against the real
    schema, from a contract declared in exactly one place.
-4. **Being disciplined about what does not belong in the engine.** Ownership,
+5. **Being disciplined about what does not belong in the engine.** Ownership,
    severity, notification delivery, and completeness all felt like they
    belonged. On inspection, none of them did.
 
-Build those parts carefully, in whatever language and style suits you. The
-checks themselves can be as simple as you want them to be.
+Build those parts carefully, in whatever language and style suits you. The rest
+of the engine exists to serve them.
