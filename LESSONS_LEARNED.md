@@ -28,24 +28,38 @@ they can go and fix it.** Not to score data, not to produce a dashboard, not to
 block a pipeline. It is a feedback loop to the person who made the mistake,
 about a mistake the source system allowed them to make.
 
-That reframes what the rules are for. There are two categories, and they are
-not equally important:
+**That gives you the scope boundary, and it is the most important design
+decision in the whole project.** This system checks for *errors a person made
+in the case system*. It does not do mechanical data validation — datatypes,
+schema conformance, encoding, technical integrity, load volume. Those matter,
+but they are a different system's job (§14), and mixing them in makes the
+output useless to the person it is meant for. A caseworker can act on "this
+phase was closed without a closing date." Nobody can act on "column 12 is not
+castable to date."
 
-- **Field-level correctness** — a missing value, a negative number, a date
-  before another date. These are the majority of rules by count and they are
-  genuinely easy. They are worth having, because they cost almost nothing to
-  express. But they are not why you build a system. Each one just means someone
-  left a field blank.
-- **Process conformance** — did this case actually follow the procedure? Did
-  the milestone pairs that must occur together occur together, in order, every
-  time they occurred? Is the set of milestones this kind of case is required to
-  have actually registered?
+**So the test for whether a rule belongs here is: can a named person go and fix
+this in the case system?** If yes, it belongs, no matter how trivial it looks.
+If no, it belongs somewhere else, no matter how important it is. We would apply
+that test earlier and more strictly than we did.
 
-**The second category is the entire justification for the project.** It is
-where the real errors are, it is what the source system permits and nobody
-catches, and it is the only part a caseworker cannot easily see for themselves.
-It is also, by a wide margin, the hardest part to build. §1 and §2 are really
-one argument about that, split in two only because the second half is long.
+Within that scope there are two kinds of error, and both are genuinely worth
+finding:
+
+- **A field the caseworker did not fill in** — a missing value, a negative
+  number, a date before another date. The majority of rules by count. These are
+  cheap to express and cheap to run, and they are *real errors* someone needs
+  to correct — the case system asked for a value and did not get one. Build
+  them. They are not lesser rules; they are just easy ones.
+- **A procedure the caseworker did not follow** — did the milestone pairs that
+  must occur together occur together, in order, every time? Is the set of
+  milestones this kind of case is required to have actually registered?
+
+The difference between them is not importance, it is *discoverability*. A blank
+field is visible to anyone who looks at the case. A broken process is visible
+to nobody — the source system permits it, no field is empty, and it will sit
+there indefinitely. That is the part only this system can find, and it is by a
+wide margin the hardest to build. §1 and §2 are really one argument about that,
+split in two only because the second half is long.
 
 One thing we should be straight about: **we found the errors, but we never
 built the loop that tells the caseworker about them.** The detection half
@@ -64,8 +78,8 @@ Our rule format has two tiers. Getting clear about the boundary between them
 was one of the more useful things we did, because the two have almost nothing
 in common — not in effort, not in value, and not in what they can express.
 
-**Tier one — the easy errors — is a boolean SQL expression**, optionally
-scoped by a second one:
+**Tier one — the errors that are easy to *detect* — is a boolean SQL
+expression**, optionally scoped by a second one:
 
 ```
 rule:  "Time spent cannot be negative"
@@ -81,9 +95,16 @@ build and to author. It works because our rule authors already know SQL, and
 the alternative they are implicitly comparing against is hand-written SQL;
 anything more abstract than what they'd write by hand is a step backwards.
 
-Be clear-eyed about what this tier finds, though: **a blank field**. Useful,
-cheap, worth having — and not a reason to build an engine. If this were all you
-needed, a handful of queries would do.
+These rules earn their place. A field the case system asked for and did not get
+is a real error with a real person who can fix it, and expressing it costs one
+line — you should have a lot of them, and we do. What they are not is the
+*reason* you need an engine rather than a folder of queries; that reason is
+tier two. Both tiers ship. Only one of them is hard.
+
+The line that matters is not "trivial versus important" — it is the scope
+boundary above. `tidsbruk >= 0` is in scope because a person entered a wrong
+date and can go and correct it. Checking that `tidsbruk` is stored as a number
+at all is out of scope, however similar the two look when written down.
 
 The deeper benefit is that you inherit semantics instead of inventing them.
 Every question you would otherwise have to decide, document, and defend — how
@@ -91,8 +112,8 @@ comparisons behave, how NULL propagates, what an empty set means — already has
 a standard answer your authors have internalised. Every place you deviate from
 SQL is a place you now owe someone an explanation.
 
-**Tier two — the errors that matter — is everything a row predicate
-structurally cannot express.** Above all, the two process-conformance
+**Tier two — the errors nobody else will ever find — is everything a row
+predicate structurally cannot express.** Above all, the two process-conformance
 questions:
 
 - **Did the required sequence happen?** Milestones that must occur as pairs,
@@ -571,9 +592,18 @@ and make those facts good enough to build a human-readable message from
 them to whatever ownership model the organisation has this quarter, where it
 can change without touching the pipeline.
 
-## 14. Completeness belongs to the load layer, not the rule engine
+## 14. Completeness — and mechanical validation generally — belongs elsewhere
 
-Worth deciding explicitly, because the gap is real and easy to miss.
+This is the other side of the scope boundary. The engine answers "did a person
+do something wrong"; the questions in this section are about whether the *data
+arrived and is technically sound*, which has no person attached to it and no
+action a caseworker could take. Datatypes, schema conformance, encoding,
+referential integrity as a technical concern — all of that belongs to the load
+layer. Not because it is unimportant, but because a violation nobody can act on
+degrades the list for the violations that someone can.
+
+Completeness is the case worth spelling out, because the gap is real and easy
+to miss.
 
 Every rule you write validates rows *that exist*. This means a partial load —
 half the data missing — reports 100% passing and *raises* your quality score
@@ -718,15 +748,21 @@ trade-off may well invert, and we have no real evidence about the other side.
 ## In short
 
 The system exists because the case system has no guards, so caseworkers can and
-do take cases through the process incorrectly, and nobody finds out. Everything
-worth knowing follows from that.
+do register cases wrongly, and nobody finds out. Everything worth knowing
+follows from that.
 
-Do not let anyone tell you this is mostly plumbing around some one-line checks.
-The simple rules genuinely are simple — a predicate over a row, working on day
-one — but all they find is a blank field. The rules that justify the project
-are the ones that ask whether the procedure was actually followed, and those
-are hard in their own right, before you have written a single line of the
-surrounding machinery. They stayed hard through every revision.
+It checks for **mistakes people made**, not for mechanically malformed data.
+Every rule should point at something a named person can go and correct. Hold
+that line: it decides what belongs in the engine, and it decides whether the
+output is something a caseworker acts on or ignores.
+
+Within that scope, build all of it — the missing fields as well as the broken
+processes. The easy rules are real errors and cost almost nothing. But do not
+let anyone tell you the whole thing is plumbing around one-line checks. The
+rules that need an engine rather than a folder of queries are the ones asking
+whether the procedure was followed, and those are hard in their own right,
+before you have written a line of the surrounding machinery. They stayed hard
+through every revision.
 
 Budget for two separate problems: the process-conformance checks, and
 everything below them.
