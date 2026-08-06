@@ -9,13 +9,19 @@ namespace, skipping:
 
   * `%run` cells — composition is the caller's job here, exactly as it is in
     Fabric, so a test can compose QC_Engine + QC_Preflight itself;
-  * cells tagged ``entrypoint`` — those *do* the work (create tables, run the
-    catalog) and must not fire on import.
+  * the cell marked ``# ENTRYPOINT`` — that one *does* the work (creates
+    tables, runs the catalog) and must not fire on import.
+
+The notebooks are stored in Fabric's own notebook-source format: plain Python
+with ``# CELL ********************`` between cells and a ``# META`` block after
+each. That format exists to be read and pasted by a human — these notebooks are
+created in the Fabric UI and filled in by hand — and parsing it here costs
+about ten lines.
 """
 
 from __future__ import annotations
 
-import json
+import re
 import sys
 import types
 from functools import lru_cache
@@ -23,13 +29,24 @@ from pathlib import Path
 
 NOTEBOOK_DIR = Path(__file__).resolve().parent.parent / "notebooks"
 
+# Anchored on the run of asterisks, not the bare word: cell prose can and does
+# contain lines like "# CELL 6 — Main validation engine", and mistaking one for
+# a delimiter would silently truncate a cell.
+_CELL_DELIMITER = re.compile(r"^# CELL \*{4,}$", re.M)
+_META_BLOCK = re.compile(r"^# METADATA \*{4,}$.*", re.M | re.S)
+
 
 def notebook_path(name: str) -> Path:
-    return NOTEBOOK_DIR / f"{name}.ipynb"
+    return NOTEBOOK_DIR / f"{name}.py"
 
 
 def notebook_cells(name: str) -> list[dict]:
-    return json.loads(notebook_path(name).read_text(encoding="utf-8"))["cells"]
+    """Cells in notebook order, shaped like the nbformat dicts this once read."""
+    text = notebook_path(name).read_text(encoding="utf-8")
+    return [
+        {"cell_type": "code", "source": _META_BLOCK.sub("", chunk).strip("\n") + "\n"}
+        for chunk in _CELL_DELIMITER.split(text)[1:]
+    ]
 
 
 def is_run_magic(source: str) -> bool:
@@ -37,7 +54,14 @@ def is_run_magic(source: str) -> bool:
 
 
 def is_entrypoint(cell: dict) -> bool:
-    return "entrypoint" in cell.get("metadata", {}).get("tags", [])
+    """Marked by a comment, not by cell metadata.
+
+    Metadata does not survive a copy-paste into Fabric, and a marker that only
+    ever exists in the repository is a marker that tells the person deploying
+    nothing. This one names the cell that actually does something.
+    """
+    body = "".join(cell["source"]).strip()
+    return bool(body) and body.splitlines()[0].startswith("# ENTRYPOINT")
 
 
 def executable_cells(name: str, include_entrypoint: bool = False) -> list[tuple[int, str]]:

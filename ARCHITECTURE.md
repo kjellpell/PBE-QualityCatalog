@@ -107,7 +107,7 @@ Six notebooks, three of them libraries that the other three `%run`.
 
 | Directory | Purpose |
 |------|---------|
-| `notebooks/` | The six `.ipynb` files, as imported into Fabric |
+| `notebooks/` | The six notebooks, in Fabric's notebook-source format |
 | `tests/` | Rule-type, preflight, resolution, notebook and equivalence tests |
 
 ## Rule Contract

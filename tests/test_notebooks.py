@@ -8,7 +8,6 @@ have to fail here rather than in the workspace.
 """
 
 import ast
-import json
 
 import pytest
 
@@ -48,7 +47,7 @@ def _run_targets(name: str) -> list[str]:
     return [
         "".join(cell["source"]).strip().split()[1]
         for cell in notebook_cells(name)
-        if cell["cell_type"] == "code" and is_run_magic("".join(cell["source"]))
+        if is_run_magic("".join(cell["source"]))
     ]
 
 
@@ -73,17 +72,17 @@ def _top_level_names(name: str) -> set[str]:
 
 
 def test_every_notebook_is_present():
-    found = sorted(p.stem for p in NOTEBOOK_DIR.glob("*.ipynb"))
+    found = sorted(p.stem for p in NOTEBOOK_DIR.glob("*.py"))
     assert found == sorted(ALL_NOTEBOOKS)
 
 
 @pytest.mark.parametrize("name", ALL_NOTEBOOKS)
 def test_notebook_is_valid_and_targets_pyspark(name):
-    nb = json.loads(notebook_path(name).read_text(encoding="utf-8"))
+    text = notebook_path(name).read_text(encoding="utf-8")
 
-    assert nb["nbformat"] == 4
-    assert nb["metadata"]["kernelspec"]["name"] == "synapse_pyspark"
-    assert nb["cells"], "notebook has no cells"
+    assert text.startswith("# Fabric notebook source")
+    assert '# META     "name": "synapse_pyspark"' in text
+    assert notebook_cells(name), "notebook has no cells"
 
 
 @pytest.mark.parametrize("name", ALL_NOTEBOOKS)
@@ -102,8 +101,6 @@ def test_a_run_cell_holds_nothing_but_the_run_magic(name):
     suite, while Fabric would run it happily.
     """
     for cell in notebook_cells(name):
-        if cell["cell_type"] != "code":
-            continue
         source = "".join(cell["source"])
         if not is_run_magic(source):
             continue
@@ -145,10 +142,32 @@ def test_library_notebooks_have_no_entrypoint_cell(name):
 
 
 @pytest.mark.parametrize("name", ENTRY_NOTEBOOKS)
+def test_the_entrypoint_marker_is_visible_to_whoever_pastes_it(name):
+    """The marker is a comment precisely so it survives the paste."""
+    entry = [c for c in notebook_cells(name) if is_entrypoint(c)][0]
+    assert "".join(entry["source"]).startswith("# ENTRYPOINT")
+
+
+@pytest.mark.parametrize("name", ENTRY_NOTEBOOKS)
 def test_entry_notebooks_end_with_exactly_one_entrypoint_cell(name):
-    cells = [c for c in notebook_cells(name) if c["cell_type"] == "code"]
+    cells = notebook_cells(name)
     assert [is_entrypoint(c) for c in cells].count(True) == 1
     assert is_entrypoint(cells[-1]), "the entrypoint must be the last cell"
+
+
+@pytest.mark.parametrize("name", ALL_NOTEBOOKS)
+def test_a_notebook_is_one_body_cell(name):
+    """Deployment is copy-paste, so every extra cell is a manual step.
+
+    `%run` has to stand alone and the entry point has to stay separately
+    runnable; everything else belongs in one cell. Splitting the body again
+    would quietly turn a six-paste deployment back into a thirty-five-paste one.
+    """
+    body = [
+        c for c in notebook_cells(name)
+        if not is_run_magic("".join(c["source"])) and not is_entrypoint(c)
+    ]
+    assert len(body) == 1, f"{name} has {len(body)} body cells, expected 1"
 
 
 @pytest.mark.parametrize("name", ENTRY_NOTEBOOKS)

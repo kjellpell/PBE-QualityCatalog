@@ -1,0 +1,380 @@
+# Fabric notebook source
+
+# METADATA ********************
+
+# META {
+# META   "kernel_info": {
+# META     "name": "synapse_pyspark"
+# META   },
+# META   "dependencies": {}
+# META }
+
+# CELL ********************
+
+%run QC_Config
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+%run QC_Rules
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+%run QC_Engine
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+# =============================================================================
+# QC_Preflight
+#
+# Validates every rule catalog against the real table schemas before a run is
+# scheduled. Run this after editing `QC_Rules` and before promoting a change.
+# =============================================================================
+
+"""
+Preflight checks for the Quality Catalog validation runner.
+
+Catches at deploy time what would otherwise fail at 03:00 in a scheduled job:
+missing source tables, misconfigured rules, and — most usefully — predicates
+that do not resolve against the real table schema. Predicates are validated by
+Spark's own analyzer rather than a hand-maintained list of column-bearing
+parameter names, so a typo in a `check:` or `where:` fails here.
+
+The rule contract itself is read from the engine's RULE_TYPES, so it cannot
+drift from what the engine will actually run.
+"""
+
+import yaml
+from pyspark.sql import SparkSession
+
+
+PREFLIGHT_CONFIG_KEYS = [
+    "DEFAULT_SCHEMA",
+    "DQ_RESULTS_TABLE",
+    "DQ_VIOLATIONS_TABLE",
+    "DQ_EXECUTION_METRICS_TABLE",
+]
+PREFLIGHT_RUNTIME_KEYS = [
+    "FAIL_ON_EMPTY_SOURCE",
+    "RETRYABLE_ERROR_MARKERS",
+    "MAX_RULE_RETRIES",
+    "RULE_TIMEOUT_SECONDS",
+]
+
+
+def _brief(exc: Exception) -> str:
+    """First line of a Spark error, which carries the useful part."""
+    return str(exc).strip().splitlines()[0]
+
+
+def check_predicate(probe, expression: str, label: str) -> list[str]:
+    """Resolve a predicate against the real schema via Spark's analyzer.
+
+    Uses `filter`, not `selectExpr`: only `filter` requires the expression to be
+    boolean. `selectExpr` accepts any expression, so `check: saksnummer` cleared
+    preflight and then failed at run time with FILTER_NOT_BOOLEAN — the 03:00
+    failure this exists to prevent.
+    """
+    if not isinstance(expression, str) or not expression.strip():
+        return [f"{label} must be a non-empty SQL predicate."]
+    try:
+        probe.filter(expression)
+    except Exception as exc:
+        return [f"{label} does not resolve: {_brief(exc)}"]
+    return []
+
+
+def check_rule(rule: dict, probe, source_columns: set[str], where: str) -> list[str]:
+    """Validate one rule against the engine's own contract and the real schema."""
+    rule_id = rule.get("rule_id", "?")
+    prefix = f"[{where} / {rule_id}]"
+    errors: list[str] = []
+
+    if not rule.get("rule_id"):
+        errors.append(f"[{where}] A rule is missing 'rule_id'.")
+    if not rule.get("name"):
+        errors.append(f"{prefix} Missing 'name'.")
+
+    try:
+        type_name = detect_rule_type(rule)
+    except Exception as exc:
+        return errors + [f"{prefix} {exc}"]
+
+    rule_type = RULE_TYPES[type_name]
+    config = rule[type_name]
+
+    for key in PREDICATE_KEYS:
+        if key == "check" and type_name != "check":
+            continue
+        value = rule.get(key) if key != "check" else config
+        if value is not None:
+            errors.extend(check_predicate(probe, value, f"{prefix} '{key}'"))
+
+    pk_column = rule.get("pk_column")
+    if pk_column and pk_column not in source_columns:
+        errors.append(f"{prefix} pk_column '{pk_column}' not found in source table.")
+
+    if rule_type.required and not isinstance(config, dict):
+        return errors + [f"{prefix} '{type_name}' must be a mapping."]
+
+    if isinstance(config, dict):
+        missing = [k for k in rule_type.required if config.get(k) in (None, "", [])]
+        if missing:
+            errors.append(
+                f"{prefix} '{type_name}' is missing required key(s): {sorted(missing)}."
+            )
+        for key in rule_type.column_keys:
+            column = config.get(key)
+            if isinstance(column, str) and column and column not in source_columns:
+                errors.append(
+                    f"{prefix} {key} '{column}' not found in source table."
+                )
+        gate = config.get("completion_gate")
+        if gate is not None:
+            if not rule_type.gated:
+                errors.append(f"{prefix} '{type_name}' does not accept completion_gate.")
+            elif not isinstance(gate, dict):
+                errors.append(f"{prefix} completion_gate must be a mapping.")
+            else:
+                for key in ("event_column", "order_column"):
+                    column = gate.get(key)
+                    if isinstance(column, str) and column and column not in source_columns:
+                        errors.append(
+                            f"{prefix} completion_gate.{key} '{column}' not found in source table."
+                        )
+
+    if type_name == "unique":
+        columns = [config] if isinstance(config, str) else config
+        if not isinstance(columns, list) or not columns:
+            errors.append(f"{prefix} 'unique' must be a column name or a list of them.")
+        else:
+            for column in columns:
+                if column not in source_columns:
+                    errors.append(f"{prefix} unique column '{column}' not found in source table.")
+
+    unknown = sorted(set(rule) - RESERVED_RULE_KEYS - set(RULE_TYPES))
+    if unknown:
+        errors.append(f"{prefix} Unrecognised key(s): {unknown}.")
+
+    return errors
+
+
+def check_catalog(catalog: dict, probe, source_columns: set[str], where: str) -> list[str]:
+    """Validate a catalog header and every rule in it."""
+    errors: list[str] = []
+
+    # A header typo is the most expensive kind: `wehre:` silently drops the
+    # filter for every rule in the file. Rule-level keys are checked in
+    # check_rule; this is the same guard one level up.
+    unknown = sorted(set(catalog) - CATALOG_KEYS)
+    if unknown:
+        errors.append(f"[{where}] Unrecognised catalog key(s): {unknown}.")
+
+    if not catalog.get("pk_column"):
+        errors.append(
+            f"[{where}] Missing 'pk_column'. Row-scoped rules need a key to "
+            "identify offending rows."
+        )
+    elif catalog["pk_column"] not in source_columns:
+        errors.append(
+            f"[{where}] pk_column '{catalog['pk_column']}' not found in source table."
+        )
+
+    if catalog.get("where") is not None:
+        errors.extend(check_predicate(probe, catalog["where"], f"[{where}] 'where'"))
+
+    rules = catalog.get("rules") or []
+    if not rules:
+        errors.append(f"[{where}] Catalog has no rules.")
+
+    seen: set[str] = set()
+    for rule in rules:
+        if not isinstance(rule, dict):
+            errors.append(f"[{where}] Every entry under 'rules' must be a mapping.")
+            continue
+        rule_id = rule.get("rule_id")
+        if rule_id in seen:
+            errors.append(f"[{where}] Duplicate rule_id '{rule_id}'.")
+        seen.add(rule_id)
+        errors.extend(check_rule(rule, probe, source_columns, where))
+
+    return errors
+
+
+def build_probe(spark, catalog: dict, full_table: str):
+    """
+    A zero-row frame with the schema rules will actually see.
+
+    Replays the catalog's joins exactly as the runner does, on `.limit(0)`
+    frames so it costs nothing.
+    Carrying the joined columns with their *real* types matters: a probe that
+    synthesises them as strings would let a type-sensitive predicate such as
+    `joined_date >= '2024-01-01'` pass preflight and fail at run time.
+
+    Replaying the joins also validates the join config itself, which nothing
+    else checks. The runner warns and skips a bad join; preflight is the gate,
+    so the same problem is an error here.
+
+    Returns (probe_df, errors).
+    """
+    errors: list[str] = []
+    probe = spark.read.table(full_table).limit(0)
+
+    for index, join in enumerate(catalog.get("joins") or []):
+        label = f"joins[{index}]"
+        if not isinstance(join, dict):
+            errors.append(f"{label} must be a mapping.")
+            continue
+
+        table = join.get("table")
+        if not table:
+            errors.append(f"{label} is missing 'table'.")
+            continue
+        if not spark.catalog.tableExists(table):
+            errors.append(f"{label} table '{table}' not found.")
+            continue
+
+        joined = spark.read.table(table).limit(0)
+        on, left_on, right_on = join.get("on"), join.get("left_on"), join.get("right_on")
+
+        selected = join.get("select")
+        if selected:
+            columns = list(selected)
+            if right_on and right_on not in columns:
+                columns.append(right_on)          # keep the key, as the runner does
+            unknown = [c for c in columns if c not in joined.columns]
+            if unknown:
+                errors.append(f"{label} select column(s) not in {table}: {sorted(unknown)}.")
+                continue
+            joined = joined.select(*columns)
+
+        how = join.get("how", "left")
+        try:
+            if on not in (None, ""):
+                absent = (
+                    "source" if on not in probe.columns
+                    else table if on not in joined.columns
+                    else None
+                )
+                if absent:
+                    errors.append(f"{label} join column '{on}' not found in {absent}.")
+                    continue
+                probe = probe.join(joined, on=on, how=how)
+            elif left_on and right_on:
+                if left_on not in probe.columns:
+                    errors.append(f"{label} left_on '{left_on}' not found in source.")
+                    continue
+                if right_on not in joined.columns:
+                    errors.append(f"{label} right_on '{right_on}' not found in {table}.")
+                    continue
+                probe = probe.join(joined, probe[left_on] == joined[right_on], how=how)
+            else:
+                errors.append(f"{label} needs 'on', or both 'left_on' and 'right_on'.")
+        except Exception as exc:
+            errors.append(f"{label} could not be applied: {_brief(exc)}")
+
+    return probe, errors
+
+
+def run_preflight(rule_sources: dict, config_mapping: dict, runtime_mapping: dict) -> None:
+    """Validate every catalog in rule_sources against the real Spark schemas."""
+    config = build_settings(config_mapping, PREFLIGHT_CONFIG_KEYS, "QUALITY_CATALOG_CONFIG")
+    build_settings(runtime_mapping, PREFLIGHT_RUNTIME_KEYS, "QUALITY_CATALOG_RUNTIME")
+
+    targets = resolve_targets(config)
+
+    if not rule_sources:
+        raise RuntimeError(
+            "RULE_CATALOG_SOURCES is empty. Ensure the QC_Rules notebook ran "
+            "(%run QC_Rules) and defines at least one catalog."
+        )
+
+    spark = SparkSession.builder.getOrCreate()
+    missing_sources: list[str] = []
+    errors: list[str] = []
+    rule_count = 0
+
+    # Same ordering as the runner, so preflight reports catalogs in run order.
+    for name in sorted(rule_sources):
+        try:
+            catalog = yaml.safe_load(rule_sources[name])
+        except Exception as exc:
+            errors.append(f"[{name}] Catalog could not be parsed: {_brief(exc)}")
+            continue
+        if not isinstance(catalog, dict):
+            errors.append(f"[{name}] Catalog did not parse to a mapping.")
+            continue
+
+        database = catalog.get("database", "")
+        table = catalog.get("table", "")
+        full_table = f"{database}.{table}" if database else table
+        if not table:
+            errors.append(f"[{name}] Missing 'table'.")
+            continue
+        if not spark.catalog.tableExists(full_table):
+            missing_sources.append(full_table)
+            continue
+
+        try:
+            probe, join_errors = build_probe(spark, catalog, full_table)
+        except Exception as exc:
+            errors.append(f"[{name}] Could not read {full_table}: {_brief(exc)}")
+            continue
+
+        errors.extend(f"[{name}] {e}" for e in join_errors)
+        rule_count += len(catalog.get("rules") or [])
+        errors.extend(check_catalog(catalog, probe, set(probe.columns), name))
+
+    if missing_sources:
+        raise RuntimeError(f"Missing source tables: {sorted(set(missing_sources))}")
+
+    if errors:
+        raise RuntimeError(
+            "Preflight failed:\n" + "\n".join(f"  ✗ {e}" for e in errors)
+        )
+
+    print("Quality Catalog preflight passed.")
+    print(f"  Results table:    {targets['results_table']}")
+    print(f"  Violations table: {targets['violations_table']}")
+    print(f"  Metrics table:    {targets['execution_metrics_table']}")
+    print(f"  Rule catalogs:    {len(rule_sources)}")
+    print(f"  Rules:            {rule_count}")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+# ENTRYPOINT — the cell that runs this notebook.
+run_preflight(RULE_CATALOG_SOURCES, QUALITY_CATALOG_CONFIG, QUALITY_CATALOG_RUNTIME)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }

@@ -49,13 +49,13 @@ Core capabilities:
 
 ```
 PBE-QualityCatalog/
-├── notebooks/                      (the deployable artifact — import into Fabric)
-│   ├── QC_Config.ipynb             library: config + runtime settings
-│   ├── QC_Rules.ipynb              library: the YAML rule catalogs, one per cell
-│   ├── QC_Engine.ipynb             library: the whole validation engine
-│   ├── QC_Setup_Tables.ipynb       entry point: create the Delta output tables
-│   ├── QC_Preflight.ipynb          entry point: pre-run checks
-│   └── QC_Run_Validation.ipynb     entry point: run the catalog (schedule this)
+├── notebooks/                      (the deployable artifact — paste into Fabric)
+│   ├── QC_Config.py                library: config + runtime settings
+│   ├── QC_Rules.py                 library: the YAML rule catalogs
+│   ├── QC_Engine.py                library: the whole validation engine
+│   ├── QC_Setup_Tables.py          entry point: create the Delta output tables
+│   ├── QC_Preflight.py             entry point: pre-run checks
+│   └── QC_Run_Validation.py        entry point: run the catalog (schedule this)
 ├── tests/                          (pytest suite, run against the notebooks)
 ├── ARCHITECTURE.md
 ├── DAX_POWERBI.md
@@ -153,7 +153,7 @@ rule that declares zero or more than one.
 
 ### Output schemas and violation lifecycle
 
-Two things live in one cell, and only there, so they're defined once instead of
+Two things live here, and only here, so they're defined once instead of
 restated across the engine and `QC_Setup_Tables`:
 
 - `RESULT_SCHEMA` / `VIOLATION_SCHEMA` — the canonical Spark schemas for
@@ -281,8 +281,8 @@ with the expected schema, then re-run validation.
 
 ### First-time setup
 
-1. Import the six notebooks from `notebooks/` into the workspace and attach a
-   default lakehouse to the three entry-point notebooks.
+1. Create the six notebooks in the workspace by pasting the cells from
+   `notebooks/`, and attach a default lakehouse to the three entry points.
 2. Run `QC_Setup_Tables` to create the Delta tables.
 
 See DEPLOY.md for the deployment-pipeline steps.
@@ -334,11 +334,11 @@ The suite runs locally against PySpark and Delta — no Fabric needed. Delta is
 required rather than plain parquet, because the resolution path does a
 read-then-overwrite that parquet rejects.
 
-The tests read the notebooks directly: `tests/notebook_source.py` executes a
-notebook's code cells into a module namespace, skipping `%run` cells and the
-`entrypoint`-tagged final cell, which is exactly what Fabric does minus the
-pressing of Run. So there is no second copy of the engine to keep in step —
-what the tests exercise is what gets deployed.
+The tests read the notebooks directly: `tests/notebook_source.py` parses the
+`# CELL ********************` delimiters and executes each code cell into a
+module namespace, skipping `%run` cells and the `# ENTRYPOINT` cell — exactly
+what Fabric does, minus the pressing of Run. So there is no second copy of the
+engine to keep in step: what the tests exercise is what gets deployed.
 
 | Test module | Covers |
 |---|---|
