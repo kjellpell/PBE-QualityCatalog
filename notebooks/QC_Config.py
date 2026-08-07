@@ -103,10 +103,3 @@ QUALITY_CATALOG_RUNTIME = {
     # -----------------------------------------------------------------------
     "CATALOG_FILTER_OVERRIDES": {},
 }
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }

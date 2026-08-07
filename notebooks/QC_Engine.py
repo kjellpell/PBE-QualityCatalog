@@ -1916,10 +1916,3 @@ def run_with_metrics(rule_sources: dict, script_name: str) -> tuple[int, int]:
     print(f"Validation finished at {finished.isoformat()}")
     print(f"Duration seconds: {(finished - started).total_seconds():.1f}")
     return results_count, violations_count
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }

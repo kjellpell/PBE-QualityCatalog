@@ -13,34 +13,13 @@
 
 %run QC_Config
 
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
 # CELL ********************
 
 %run QC_Rules
 
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
 # CELL ********************
 
 %run QC_Engine
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
 
 # CELL ********************
 
@@ -360,21 +339,7 @@ def run_preflight(rule_sources: dict, config_mapping: dict, runtime_mapping: dic
     print(f"  Rule catalogs:    {len(rule_sources)}")
     print(f"  Rules:            {rule_count}")
 
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
 # CELL ********************
 
 # ENTRYPOINT — the cell that runs this notebook.
 run_preflight(RULE_CATALOG_SOURCES, QUALITY_CATALOG_CONFIG, QUALITY_CATALOG_RUNTIME)
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
