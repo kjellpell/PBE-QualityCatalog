@@ -8,12 +8,13 @@ have to fail here rather than in the workspace.
 """
 
 import ast
-import json
+import builtins
 
 import pytest
 
 from tests.notebook_source import (
     NOTEBOOK_DIR,
+    load_notebook,
     cell_filename,
     executable_cells,
     is_entrypoint,
@@ -48,7 +49,7 @@ def _run_targets(name: str) -> list[str]:
     return [
         "".join(cell["source"]).strip().split()[1]
         for cell in notebook_cells(name)
-        if cell["cell_type"] == "code" and is_run_magic("".join(cell["source"]))
+        if is_run_magic("".join(cell["source"]))
     ]
 
 
@@ -72,18 +73,74 @@ def _top_level_names(name: str) -> set[str]:
     return names
 
 
+def _bound_names(name: str) -> set[str]:
+    """Everything a notebook binds at top level, imports included."""
+    names = _top_level_names(name)
+    for node in ast.walk(ast.parse(notebook_code(name, include_entrypoint=True))):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add((alias.asname or alias.name).split(".")[0])
+    return names
+
+
+def _free_names(name: str) -> set[tuple[str, str]]:
+    """``(function, name)`` for every global a notebook's functions read.
+
+    Only top-level functions are analysed, and each is walked whole. A nested
+    function closes over its parent's locals, so treating it as its own scope
+    would report every closed-over name as a missing global.
+    """
+    free = set()
+    tree = ast.parse(notebook_code(name, include_entrypoint=True))
+    top_level = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            top_level.append(node)
+        elif isinstance(node, ast.ClassDef):
+            top_level.extend(
+                n for n in node.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
+
+    for function in top_level:
+        bound = set()
+        args = function.args
+        for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
+            bound.add(arg.arg)
+        for extra in (args.vararg, args.kwarg):
+            if extra:
+                bound.add(extra.arg)
+        for node in ast.walk(function):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                bound.add(node.name)
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                bound.add(node.id)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    bound.add((alias.asname or alias.name).split(".")[0])
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                bound.add(node.name)
+            elif isinstance(node, ast.arg):
+                bound.add(node.arg)
+        for node in ast.walk(function):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                if node.id not in bound:
+                    free.add((function.name, node.id))
+    return free
+
+
 def test_every_notebook_is_present():
-    found = sorted(p.stem for p in NOTEBOOK_DIR.glob("*.ipynb"))
+    found = sorted(p.stem for p in NOTEBOOK_DIR.glob("*.py"))
     assert found == sorted(ALL_NOTEBOOKS)
 
 
 @pytest.mark.parametrize("name", ALL_NOTEBOOKS)
 def test_notebook_is_valid_and_targets_pyspark(name):
-    nb = json.loads(notebook_path(name).read_text(encoding="utf-8"))
+    text = notebook_path(name).read_text(encoding="utf-8")
 
-    assert nb["nbformat"] == 4
-    assert nb["metadata"]["kernelspec"]["name"] == "synapse_pyspark"
-    assert nb["cells"], "notebook has no cells"
+    assert text.startswith("# Fabric notebook source")
+    assert '# META     "name": "synapse_pyspark"' in text
+    assert notebook_cells(name), "notebook has no cells"
 
 
 @pytest.mark.parametrize("name", ALL_NOTEBOOKS)
@@ -102,8 +159,6 @@ def test_a_run_cell_holds_nothing_but_the_run_magic(name):
     suite, while Fabric would run it happily.
     """
     for cell in notebook_cells(name):
-        if cell["cell_type"] != "code":
-            continue
         source = "".join(cell["source"])
         if not is_run_magic(source):
             continue
@@ -145,10 +200,32 @@ def test_library_notebooks_have_no_entrypoint_cell(name):
 
 
 @pytest.mark.parametrize("name", ENTRY_NOTEBOOKS)
+def test_the_entrypoint_marker_is_visible_to_whoever_pastes_it(name):
+    """The marker is a comment precisely so it survives the paste."""
+    entry = [c for c in notebook_cells(name) if is_entrypoint(c)][0]
+    assert "".join(entry["source"]).startswith("# ENTRYPOINT")
+
+
+@pytest.mark.parametrize("name", ENTRY_NOTEBOOKS)
 def test_entry_notebooks_end_with_exactly_one_entrypoint_cell(name):
-    cells = [c for c in notebook_cells(name) if c["cell_type"] == "code"]
+    cells = notebook_cells(name)
     assert [is_entrypoint(c) for c in cells].count(True) == 1
     assert is_entrypoint(cells[-1]), "the entrypoint must be the last cell"
+
+
+@pytest.mark.parametrize("name", ALL_NOTEBOOKS)
+def test_a_notebook_is_one_body_cell(name):
+    """Deployment is copy-paste, so every extra cell is a manual step.
+
+    `%run` has to stand alone and the entry point has to stay separately
+    runnable; everything else belongs in one cell. Splitting the body again
+    would quietly turn a six-paste deployment back into a thirty-five-paste one.
+    """
+    body = [
+        c for c in notebook_cells(name)
+        if not is_run_magic("".join(c["source"])) and not is_entrypoint(c)
+    ]
+    assert len(body) == 1, f"{name} has {len(body)} body cells, expected 1"
 
 
 @pytest.mark.parametrize("name", ENTRY_NOTEBOOKS)
@@ -174,3 +251,51 @@ def test_no_name_is_defined_twice_in_one_flattened_namespace(name):
                 clashes.append(f"{defined}: {seen[defined]} and {source}")
             seen[defined] = source
     assert not clashes, f"{name} composes conflicting definitions:\n  " + "\n  ".join(clashes)
+
+
+@pytest.mark.parametrize("name", ALL_NOTEBOOKS)
+def test_every_free_name_resolves_in_the_composed_namespace(name):
+    """A NameError here would only ever show up on a Fabric run.
+
+    `%run` composition means a function can legally reach for a name another
+    notebook defines — `print_run_evidence` calls `_qualify`, which lives in
+    QC_Engine. Nothing executes those functions in this suite, so without this
+    check a rename in one notebook would break another silently, and the first
+    sign of it would be a failed nightly run.
+    """
+    available = set(dir(builtins))
+    for target in _run_targets(name):
+        available |= _bound_names(target)
+    available |= _bound_names(name)
+
+    unresolved = sorted(
+        f"{function}() reads '{free}'"
+        for function, free in _free_names(name)
+        if free not in available
+    )
+    assert not unresolved, f"{name} would NameError in Fabric:\n  " + "\n  ".join(unresolved)
+
+
+def test_the_shipped_config_satisfies_the_engine():
+    """QC_Config's *values* are otherwise never checked.
+
+    The other guards here are static, and the suite runs the engine against its
+    own test config — so a key deleted from QUALITY_CATALOG_CONFIG would ship,
+    and fail at configure() on the first run in the workspace.
+    """
+    engine = load_notebook("QC_Engine")
+    config = load_notebook("QC_Config")
+
+    engine.build_settings(
+        config.QUALITY_CATALOG_CONFIG, engine.CONFIG_REQUIRED_KEYS, "QUALITY_CATALOG_CONFIG"
+    )
+    engine.build_settings(
+        config.QUALITY_CATALOG_RUNTIME, engine.RUNTIME_REQUIRED_KEYS, "QUALITY_CATALOG_RUNTIME"
+    )
+
+    # Same call configure() makes; rejects a table name that would not survive
+    # being interpolated into SQL.
+    targets = engine.resolve_targets(
+        engine.build_settings(config.QUALITY_CATALOG_CONFIG, [], "QUALITY_CATALOG_CONFIG")
+    )
+    assert set(targets) == {"results_table", "violations_table", "execution_metrics_table"}

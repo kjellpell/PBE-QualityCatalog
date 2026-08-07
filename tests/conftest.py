@@ -114,3 +114,9 @@ def preflight(engine):
 def setup_tables(engine):
     """QC_Setup_Tables composed on top of QC_Engine, the way `%run` composes them."""
     return load_notebook("QC_Setup_Tables", into=engine)
+
+
+@pytest.fixture(scope="session")
+def run_validation(engine):
+    """QC_Run_Validation composed on top of QC_Engine, the way `%run` composes them."""
+    return load_notebook("QC_Run_Validation", into=engine)

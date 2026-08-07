@@ -23,8 +23,8 @@ Use this checklist to run, verify, and triage the Quality Catalog quickly.
 
 ## First-Time Or Schema-Update Setup
 
-1. Import the six notebooks and attach a default lakehouse to the three
-   entry-point notebooks (see DEPLOY.md).
+1. Create the six notebooks by pasting the cells from `notebooks/`, and attach
+   a default lakehouse to the three entry points (see DEPLOY.md).
 2. Run `QC_Setup_Tables`.
 3. Re-run preflight before scheduling.
 
