@@ -1,24 +1,3 @@
-# Fabric notebook source
-
-# METADATA ********************
-
-# META {
-# META   "kernel_info": {
-# META     "name": "synapse_pyspark"
-# META   },
-# META   "dependencies": {}
-# META }
-
-# CELL ********************
-
-%run QC_Config
-
-# CELL ********************
-
-%run QC_Engine
-
-# CELL ********************
-
 # =============================================================================
 # QC_Setup_Tables
 #
@@ -129,8 +108,3 @@ def setup_dq_tables(config_mapping: dict) -> list[str]:
     print("\n=== DQ SETUP COMPLETE ===")
     print(f"Tables: {', '.join(created)}")
     return created
-
-# CELL ********************
-
-# ENTRYPOINT — the cell that runs this notebook.
-setup_dq_tables(QUALITY_CATALOG_CONFIG)

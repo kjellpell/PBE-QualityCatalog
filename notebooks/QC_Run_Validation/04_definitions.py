@@ -1,28 +1,3 @@
-# Fabric notebook source
-
-# METADATA ********************
-
-# META {
-# META   "kernel_info": {
-# META     "name": "synapse_pyspark"
-# META   },
-# META   "dependencies": {}
-# META }
-
-# CELL ********************
-
-%run QC_Config
-
-# CELL ********************
-
-%run QC_Rules
-
-# CELL ********************
-
-%run QC_Engine
-
-# CELL ********************
-
 # =============================================================================
 # QC_Run_Validation
 #
@@ -136,13 +111,3 @@ def print_run_evidence(config_mapping: dict) -> None:
             ORDER BY cnt DESC
             """
         ).show(truncate=False)
-
-# CELL ********************
-
-# ENTRYPOINT — the cell that runs this notebook.
-configure(QUALITY_CATALOG_CONFIG, QUALITY_CATALOG_RUNTIME)
-
-results_count, violations_count = run_with_metrics(RULE_CATALOG_SOURCES, "run_validation")
-print(f"\nResult rows: {results_count}   Violations processed: {violations_count}")
-
-print_run_evidence(QUALITY_CATALOG_CONFIG)

@@ -16,6 +16,7 @@ from tests.notebook_source import (
     NOTEBOOK_DIR,
     load_notebook,
     cell_filename,
+    cell_paths,
     executable_cells,
     is_entrypoint,
     is_run_magic,
@@ -130,17 +131,26 @@ def _free_names(name: str) -> set[tuple[str, str]]:
 
 
 def test_every_notebook_is_present():
-    found = sorted(p.stem for p in NOTEBOOK_DIR.glob("*.py"))
+    found = sorted(p.name for p in NOTEBOOK_DIR.iterdir() if p.is_dir())
     assert found == sorted(ALL_NOTEBOOKS)
 
 
 @pytest.mark.parametrize("name", ALL_NOTEBOOKS)
-def test_notebook_is_valid_and_targets_pyspark(name):
-    text = notebook_path(name).read_text(encoding="utf-8")
+def test_cell_files_are_numbered_from_01_without_gaps(name):
+    """The `NN_` prefix *is* the cell order — nothing else records it.
 
-    assert text.startswith("# Fabric notebook source")
-    assert '# META     "name": "synapse_pyspark"' in text
-    assert notebook_cells(name), "notebook has no cells"
+    Zero-padded and contiguous, so that sorting the filenames gives the order
+    the cells have to be pasted in, and a missing number is a missing cell
+    rather than a silent renumbering of everything after it.
+    """
+    paths = cell_paths(name)
+    assert paths, f"{name} has no cells"
+
+    prefixes = [p.name.split("_")[0] for p in paths]
+    assert prefixes == [f"{i:02d}" for i in range(1, len(paths) + 1)], (
+        f"{name}: cell files are not numbered 01..{len(paths):02d}: "
+        f"{[p.name for p in paths]}"
+    )
 
 
 @pytest.mark.parametrize("name", ALL_NOTEBOOKS)
@@ -170,8 +180,8 @@ def test_a_run_cell_holds_nothing_but_the_run_magic(name):
 @pytest.mark.parametrize("name", ALL_NOTEBOOKS)
 def test_no_lakehouse_files_paths_survive(name):
     """The whole point of the move: nothing may depend on Lakehouse Files."""
-    text = notebook_path(name).read_text(encoding="utf-8")
-    assert "/lakehouse/" not in text
+    for path in cell_paths(name):
+        assert "/lakehouse/" not in path.read_text(encoding="utf-8"), path
 
 
 @pytest.mark.parametrize("name", ALL_NOTEBOOKS)
@@ -215,11 +225,11 @@ def test_entry_notebooks_end_with_exactly_one_entrypoint_cell(name):
 
 @pytest.mark.parametrize("name", ALL_NOTEBOOKS)
 def test_a_notebook_is_one_body_cell(name):
-    """Deployment is copy-paste, so every extra cell is a manual step.
+    """Deployment is copy-paste, so every extra cell is another manual step.
 
     `%run` has to stand alone and the entry point has to stay separately
     runnable; everything else belongs in one cell. Splitting the body again
-    would quietly turn a six-paste deployment back into a thirty-five-paste one.
+    would quietly turn a seventeen-paste deployment into a fifty-paste one.
     """
     body = [
         c for c in notebook_cells(name)
@@ -302,23 +312,24 @@ def test_the_shipped_config_satisfies_the_engine():
 
 
 @pytest.mark.parametrize("name", ALL_NOTEBOOKS)
-def test_no_metadata_survives_past_the_first_cell_marker(name):
-    """A cell must be exactly the text between two markers, with nothing to skip.
+def test_a_cell_file_is_nothing_but_the_cell(name):
+    """A file goes into a cell whole, so it may hold nothing structural.
 
-    Fabric's own export writes a `# META` block after every cell. Anyone
-    selecting from one `# CELL` line to the next then carries those comments
-    into the cell, and a `%run` cell that picks up a comment fails with
-    MagicUsageError — which is precisely how this shipped once already.
+    Fabric's own export writes a `# Fabric notebook source` header, a
+    `# CELL ****` line between cells and a `# META` block after each one. All
+    three are instructions to the reader about where a cell begins and ends —
+    and this project has twice shipped a notebook where they were pasted *into*
+    a cell instead, killing the `%run` with MagicUsageError. There is nothing
+    left to interpret now: the file boundary is the cell boundary.
 
-    Checked against the file text rather than the parsed cells, because it is
-    the file that gets pasted.
+    Checked against the file text, because the file is what gets pasted.
     """
-    text = notebook_path(name).read_text(encoding="utf-8")
-    _, marker, body = text.partition("# CELL ")
-    assert marker, f"{name} has no cell markers"
-
-    offenders = [line for line in body.splitlines() if line.startswith("# META")]
-    assert not offenders, (
-        f"{name} carries metadata inside cell territory, which would be pasted "
-        f"into a cell:\n  " + "\n  ".join(offenders[:5])
-    )
+    for path in cell_paths(name):
+        offenders = [
+            line for line in path.read_text(encoding="utf-8").splitlines()
+            if line.startswith(("# META", "# CELL ", "# Fabric notebook source"))
+        ]
+        assert not offenders, (
+            f"{path.relative_to(NOTEBOOK_DIR.parent)} carries notebook structure "
+            f"that would be pasted into the cell:\n  " + "\n  ".join(offenders[:5])
+        )

@@ -281,8 +281,9 @@ with the expected schema, then re-run validation.
 
 ### First-time setup
 
-1. Create the six notebooks in the workspace by pasting the cells from
-   `notebooks/`, and attach a default lakehouse to the three entry points.
+1. Create the six notebooks in the workspace by pasting the cell files from
+   `notebooks/` — one file per cell, in filename order — and attach a default
+   lakehouse to the three entry points.
 2. Run `QC_Setup_Tables` to create the Delta tables.
 
 See DEPLOY.md for the deployment-pipeline steps.
@@ -334,10 +335,11 @@ The suite runs locally against PySpark and Delta — no Fabric needed. Delta is
 required rather than plain parquet, because the resolution path does a
 read-then-overwrite that parquet rejects.
 
-The tests read the notebooks directly: `tests/notebook_source.py` parses the
-`# CELL ********************` delimiters and executes each code cell into a
-module namespace, skipping `%run` cells and the `# ENTRYPOINT` cell — exactly
-what Fabric does, minus the pressing of Run. So there is no second copy of the
+The tests read the notebooks directly: each notebook is a directory under
+`notebooks/` holding one file per cell, and `tests/notebook_source.py` reads
+those files in filename order and executes each code cell into a module
+namespace, skipping `%run` cells and the `# ENTRYPOINT` cell — exactly what
+Fabric does, minus the pressing of Run. So there is no second copy of the
 engine to keep in step: what the tests exercise is what gets deployed.
 
 | Test module | Covers |

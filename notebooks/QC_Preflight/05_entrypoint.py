@@ -1,0 +1,2 @@
+# ENTRYPOINT — the cell that runs this notebook.
+run_preflight(RULE_CATALOG_SOURCES, QUALITY_CATALOG_CONFIG, QUALITY_CATALOG_RUNTIME)

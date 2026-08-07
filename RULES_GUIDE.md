@@ -389,6 +389,6 @@ and names the catalog in error messages.
 2. Run `QC_Preflight`.
 3. Run one validation cycle in the target environment.
 4. Review the output tables.
-5. Paste the changed cell back into `notebooks/QC_Rules.py` in the repository, so
-   the tests and the deployment pipeline carry it.
+5. Paste the changed cell back into `notebooks/QC_Rules/01_rules.py` in the
+   repository, so the tests and the deployment pipeline carry it.
 

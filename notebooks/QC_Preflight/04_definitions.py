@@ -1,28 +1,3 @@
-# Fabric notebook source
-
-# METADATA ********************
-
-# META {
-# META   "kernel_info": {
-# META     "name": "synapse_pyspark"
-# META   },
-# META   "dependencies": {}
-# META }
-
-# CELL ********************
-
-%run QC_Config
-
-# CELL ********************
-
-%run QC_Rules
-
-# CELL ********************
-
-%run QC_Engine
-
-# CELL ********************
-
 # =============================================================================
 # QC_Preflight
 #
@@ -338,8 +313,3 @@ def run_preflight(rule_sources: dict, config_mapping: dict, runtime_mapping: dic
     print(f"  Metrics table:    {targets['execution_metrics_table']}")
     print(f"  Rule catalogs:    {len(rule_sources)}")
     print(f"  Rules:            {rule_count}")
-
-# CELL ********************
-
-# ENTRYPOINT — the cell that runs this notebook.
-run_preflight(RULE_CATALOG_SOURCES, QUALITY_CATALOG_CONFIG, QUALITY_CATALOG_RUNTIME)
