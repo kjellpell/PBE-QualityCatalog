@@ -13,34 +13,13 @@
 
 %run QC_Config
 
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
 # CELL ********************
 
 %run QC_Rules
 
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
 # CELL ********************
 
 %run QC_Engine
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
 
 # CELL ********************
 
@@ -158,13 +137,6 @@ def print_run_evidence(config_mapping: dict) -> None:
             """
         ).show(truncate=False)
 
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
 # CELL ********************
 
 # ENTRYPOINT — the cell that runs this notebook.
@@ -174,10 +146,3 @@ results_count, violations_count = run_with_metrics(RULE_CATALOG_SOURCES, "run_va
 print(f"\nResult rows: {results_count}   Violations processed: {violations_count}")
 
 print_run_evidence(QUALITY_CATALOG_CONFIG)
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }

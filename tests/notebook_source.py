@@ -12,11 +12,13 @@ namespace, skipping:
   * the cell marked ``# ENTRYPOINT`` — that one *does* the work (creates
     tables, runs the catalog) and must not fire on import.
 
-The notebooks are stored in Fabric's own notebook-source format: plain Python
-with ``# CELL ********************`` between cells and a ``# META`` block after
-each. That format exists to be read and pasted by a human — these notebooks are
-created in the Fabric UI and filled in by hand — and parsing it here costs
-about ten lines.
+The notebooks are stored as plain Python with ``# CELL ********************``
+between cells, and nothing else: a cell is exactly the text between two
+markers. These notebooks are created in the Fabric UI and filled in by pasting
+those blocks, so anything the reader would have to skip is a paste waiting to
+go wrong — a ``%run`` cell that picks up a stray comment fails outright with
+``MagicUsageError``. This loader therefore takes the text verbatim, so what the
+tests check is what somebody pastes.
 """
 
 from __future__ import annotations
@@ -33,7 +35,6 @@ NOTEBOOK_DIR = Path(__file__).resolve().parent.parent / "notebooks"
 # contain lines like "# CELL 6 — Main validation engine", and mistaking one for
 # a delimiter would silently truncate a cell.
 _CELL_DELIMITER = re.compile(r"^# CELL \*{4,}$", re.M)
-_META_BLOCK = re.compile(r"^# METADATA \*{4,}$.*", re.M | re.S)
 
 
 def notebook_path(name: str) -> Path:
@@ -41,10 +42,15 @@ def notebook_path(name: str) -> Path:
 
 
 def notebook_cells(name: str) -> list[dict]:
-    """Cells in notebook order, shaped like the nbformat dicts this once read."""
+    """Cells in notebook order, shaped like the nbformat dicts this once read.
+
+    Verbatim: nothing is stripped. The split discards everything before the
+    first marker, which is where the file header lives — the only text that is
+    not part of a cell.
+    """
     text = notebook_path(name).read_text(encoding="utf-8")
     return [
-        {"cell_type": "code", "source": _META_BLOCK.sub("", chunk).strip("\n") + "\n"}
+        {"cell_type": "code", "source": chunk.strip("\n") + "\n"}
         for chunk in _CELL_DELIMITER.split(text)[1:]
     ]
 

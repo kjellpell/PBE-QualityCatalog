@@ -7,11 +7,12 @@ anything that lived there could not be moved from dev to test to production.
 Notebooks are first-class deployable items, so everything — engine, config, and
 the rule catalogs — lives in a notebook.
 
-The files are in Fabric's own notebook-source format: plain Python with
-`# CELL ********************` between cells. Notebooks here are created in the
-Fabric UI and filled in by pasting those cells, so each one is a block you can
-select whole. Each notebook is deliberately one code cell, plus its `%run`
-cells and its entry point — six substantial pastes for a full deployment.
+The files are plain Python with `# CELL ********************` between cells and
+nothing else, so **a cell is exactly the text between two markers** — nothing to
+skip, nothing to stop before. Notebooks here are created in the Fabric UI and
+filled in by pasting those blocks. Each notebook is deliberately one code cell,
+plus its `%run` cells and its entry point — six substantial pastes for a full
+deployment.
 
 ## The notebooks
 
@@ -40,16 +41,44 @@ For each of the six files in `notebooks/`:
    `QC_Config.py` becomes a notebook called `QC_Config`. The names have to
    match: `%run QC_Config` resolves by display name, and a typo there fails at
    run time, not at save time.
-2. Open the `.py` file. Everything between one `# CELL ********************`
-   line and the next `# METADATA ********************` line is one cell.
-3. For each of those blocks in order, add a cell in the notebook and paste the
-   block into it. Skip the `# METADATA` / `# META` lines — Fabric writes those
-   itself.
+2. Open the `.py` file. Each `# CELL ********************` line starts a cell,
+   and the cell is everything up to the next one (or the end of the file). The
+   header above the first marker is not a cell — skip it.
+3. For each block in order, add a cell in the notebook and paste the block in.
+
+So `QC_Preflight.py` reads:
+
+```
+# CELL ********************      <- cell 1
+
+%run QC_Config
+
+# CELL ********************      <- cell 2
+
+%run QC_Rules
+
+# CELL ********************      <- cell 3
+
+%run QC_Engine
+
+# CELL ********************      <- cell 4
+
+# =============================================================================
+# QC_Preflight
+...
+```
+
+That is five cells: three one-line `%run` cells, the body, and the entry point.
+
+**One `%run` per cell, and nothing else in it.** Not two `%run` lines together,
+not a `%run` with a comment above it. Fabric refuses both:
+
+```
+MagicUsageError: %run cannot run with other code or magic commands.
+```
 
 Notes:
 
-- A `%run` cell holds nothing but the `%run` line. Fabric needs it that way,
-  and each is short enough to type.
 - The last cell of `QC_Setup_Tables`, `QC_Preflight` and `QC_Run_Validation`
   starts with `# ENTRYPOINT`. That is the cell that does the work; everything
   above it only defines things.

@@ -234,10 +234,3 @@ rules:
       value: Planforslaget er komplett
       order_column: milestonedate
 """
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }

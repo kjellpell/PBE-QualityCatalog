@@ -13,23 +13,9 @@
 
 %run QC_Config
 
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
 # CELL ********************
 
 %run QC_Engine
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
 
 # CELL ********************
 
@@ -144,21 +130,7 @@ def setup_dq_tables(config_mapping: dict) -> list[str]:
     print(f"Tables: {', '.join(created)}")
     return created
 
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
 # CELL ********************
 
 # ENTRYPOINT — the cell that runs this notebook.
 setup_dq_tables(QUALITY_CATALOG_CONFIG)
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }

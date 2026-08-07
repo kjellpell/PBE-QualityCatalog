@@ -299,3 +299,26 @@ def test_the_shipped_config_satisfies_the_engine():
         engine.build_settings(config.QUALITY_CATALOG_CONFIG, [], "QUALITY_CATALOG_CONFIG")
     )
     assert set(targets) == {"results_table", "violations_table", "execution_metrics_table"}
+
+
+@pytest.mark.parametrize("name", ALL_NOTEBOOKS)
+def test_no_metadata_survives_past_the_first_cell_marker(name):
+    """A cell must be exactly the text between two markers, with nothing to skip.
+
+    Fabric's own export writes a `# META` block after every cell. Anyone
+    selecting from one `# CELL` line to the next then carries those comments
+    into the cell, and a `%run` cell that picks up a comment fails with
+    MagicUsageError — which is precisely how this shipped once already.
+
+    Checked against the file text rather than the parsed cells, because it is
+    the file that gets pasted.
+    """
+    text = notebook_path(name).read_text(encoding="utf-8")
+    _, marker, body = text.partition("# CELL ")
+    assert marker, f"{name} has no cell markers"
+
+    offenders = [line for line in body.splitlines() if line.startswith("# META")]
+    assert not offenders, (
+        f"{name} carries metadata inside cell territory, which would be pasted "
+        f"into a cell:\n  " + "\n  ".join(offenders[:5])
+    )
