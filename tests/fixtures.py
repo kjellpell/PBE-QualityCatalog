@@ -23,8 +23,8 @@ from pyspark.sql.types import (
 SOURCE_SCHEMA = "saksbehandling"
 
 _FASER_SCHEMA = StructType([
-    StructField("stage_recno", IntegerType()),
-    StructField("to_case_recno", IntegerType()),
+    StructField("pk_faser", IntegerType()),
+    StructField("fk_saker", IntegerType()),
     StructField("tidligste_startmilepael_dato", DateType()),
     StructField("seneste_stoppmilepael_dato", DateType()),
     StructField("fase_lukket_dato", DateType()),
@@ -38,15 +38,15 @@ _FASER_SCHEMA = StructType([
 ])
 
 _SAKER_SCHEMA = StructType([
-    StructField("case_recno", IntegerType()),
+    StructField("pk_saker", IntegerType()),
     StructField("saksnummer", StringType()),
     StructField("saksansvarlig_kode", StringType()),
 ])
 
 _MILEPAELER_SCHEMA = StructType([
-    StructField("milestone_recno", IntegerType()),
+    StructField("pk_milepaeler", IntegerType()),
     StructField("milestone_title", StringType()),
-    StructField("to_stage_recno", IntegerType()),
+    StructField("fk_faser", IntegerType()),
     StructField("statusdescription", StringType()),
     StructField("milestonedate", DateType()),
     StructField("fagsystem", StringType()),
@@ -56,6 +56,7 @@ _FAKTURA_SCHEMA = StructType([
     StructField("fakturanr", StringType()),
     StructField("linje_belop", DoubleType()),
     StructField("fakturasum", DoubleType()),
+    StructField("fk_faser", IntegerType()),
 ])
 
 _D0 = date(2024, 1, 1)   # default start
@@ -64,11 +65,11 @@ _D2 = date(2024, 3, 2)   # default lukket
 _D3 = date(2024, 3, 5)   # default decisiondate
 
 
-def _fase(stage_recno, **over):
+def _fase(pk_faser, **over):
     """A fully-passing faser row; override one field to induce one failure."""
     row = {
-        "stage_recno": stage_recno,
-        "to_case_recno": 100 + stage_recno,
+        "pk_faser": pk_faser,
+        "fk_saker": 100 + pk_faser,
         "tidligste_startmilepael_dato": _D0,
         "seneste_stoppmilepael_dato": _D1,
         "fase_lukket_dato": _D2,
@@ -87,7 +88,7 @@ def _fase(stage_recno, **over):
 def _faser_rows():
     return [
         _fase(1),                                              # passes everything
-        _fase(2, to_case_recno=None),                          # FAS-001 to_case_recno
+        _fase(2, fk_saker=None),                               # FAS-002 fk_saker
         _fase(3, tidligste_startmilepael_dato=None),           # FAS-001a / FAS-003
         _fase(4, fase_lukket_dato=None),                       # FAS-003 fase_lukket_dato
         _fase(5, seneste_stoppmilepael_dato=None),             # FAS-004 (open phase)
@@ -98,7 +99,7 @@ def _faser_rows():
         _fase(10, indikator="Til politisk behandling", frist_dager=200),  # FAS-009
         _fase(11, decisiondate=date(2024, 2, 1)),              # FAS-010
         _fase(12, fagsystem="ALTINN"),                         # excluded by catalog filter
-        _fase(1),                                              # FAS-002 duplicate stage_recno
+        _fase(1),                                              # FAS-003 duplicate pk_faser
         _fase(14, indikator="Delesak 3 uker"),                 # FAS-008 passing case
         _fase(15, indikator="Til politisk behandling", frist_dager=100),  # FAS-009 passing
     ]
@@ -158,12 +159,12 @@ def _milepaeler_rows():
 
 def _faktura_rows():
     return [
-        ("INV-1", 60.0, 100.0),    # INV-1 sums to 100 -> FAK-002 passes
-        ("INV-1", 40.0, 100.0),
-        ("INV-2", 60.0, 100.0),    # INV-2 sums to 90 -> FAK-002 fails
-        ("INV-2", 30.0, 100.0),
-        ("INV-3", None, 50.0),     # FAK-001 linje_belop
-        (None, 25.0, 25.0),        # FAK-001 fakturanr
+        ("INV-1", 60.0, 100.0, 1),     # INV-1 sums to 100 -> FAK-002 passes
+        ("INV-1", 40.0, 100.0, 1),
+        ("INV-2", 60.0, 100.0, 2),     # INV-2 sums to 90 -> FAK-002 fails
+        ("INV-2", 30.0, 100.0, 2),
+        ("INV-3", None, 50.0, 3),      # FAK-001 linje_belop
+        (None, 25.0, 25.0, None),      # FAK-001 fakturanr; also no fk_faser -> identifier_value NULL
     ]
 
 

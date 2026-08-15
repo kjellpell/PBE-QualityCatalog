@@ -66,7 +66,7 @@ def test_structured_type_missing_key_is_caught(preflight, probe, columns):
 def test_structured_type_bad_column_is_caught(preflight, probe, columns):
     errors = preflight.check_rule(
         _rule(event_flow={
-            "event_column": "nope", "group_column": "stage_recno",
+            "event_column": "nope", "group_column": "pk_faser",
             "order_column": "decisiondate", "cycle": ["a", "b"],
         }),
         probe, columns, "t.yaml",
@@ -87,7 +87,7 @@ def test_non_boolean_predicate_is_caught(preflight, probe, columns, expression):
 
 def test_non_boolean_when_is_caught(preflight, probe, columns):
     errors = preflight.check_rule(
-        _rule(when="stage_recno", check="tidsbruk >= 0"), probe, columns, "t.yaml"
+        _rule(when="pk_faser", check="tidsbruk >= 0"), probe, columns, "t.yaml"
     )
     assert any("'when' does not resolve" in e for e in errors), errors
 
@@ -107,7 +107,7 @@ def test_catalog_requires_pk_column(preflight, probe, columns):
 
 def test_catalog_where_is_validated(preflight, probe, columns):
     catalog = {
-        "pk_column": "stage_recno",
+        "pk_column": "pk_faser",
         "where": "nosuchcol = 'X'",
         "rules": [_rule(check="tidsbruk >= 0")],
     }
@@ -121,7 +121,7 @@ def test_misspelled_catalog_key_is_caught(preflight, probe, columns):
     header needs the same unknown-key guard the rules already have.
     """
     catalog = {
-        "pk_column": "stage_recno",
+        "pk_column": "pk_faser",
         "wehre": "fagsystem = 'PB360'",
         "rules": [_rule(check="tidsbruk >= 0")],
     }
@@ -133,16 +133,32 @@ def test_documented_catalog_keys_are_accepted(preflight, probe, columns):
     """Every key the guide documents must survive the header check."""
     catalog = {
         "rule_group": "Faser", "table": "faser", "database": "saksbehandling",
-        "description": "…", "pk_column": "stage_recno", "where": "tidsbruk >= 0",
-        "joins": [], "rules": [_rule(check="tidsbruk >= 0")],
+        "description": "…", "pk_column": "pk_faser", "identifier_column": "fk_saker",
+        "where": "tidsbruk >= 0", "joins": [], "rules": [_rule(check="tidsbruk >= 0")],
     }
     errors = preflight.check_catalog(catalog, probe, columns, "t.yaml")
     assert not any("Unrecognised catalog key" in e for e in errors), errors
 
 
+def test_identifier_column_is_optional(preflight, probe, columns):
+    """Unlike pk_column, a catalog with no identifier_column is not an error."""
+    catalog = {"pk_column": "pk_faser", "rules": [_rule(check="tidsbruk >= 0")]}
+    errors = preflight.check_catalog(catalog, probe, columns, "t.yaml")
+    assert not any("identifier_column" in e for e in errors), errors
+
+
+def test_identifier_column_must_exist(preflight, probe, columns):
+    catalog = {
+        "pk_column": "pk_faser", "identifier_column": "nosuchcol",
+        "rules": [_rule(check="tidsbruk >= 0")],
+    }
+    errors = preflight.check_catalog(catalog, probe, columns, "t.yaml")
+    assert any("identifier_column 'nosuchcol' not found" in e for e in errors), errors
+
+
 def test_duplicate_rule_id_is_caught(preflight, probe, columns):
     catalog = {
-        "pk_column": "stage_recno",
+        "pk_column": "pk_faser",
         "rules": [_rule(check="tidsbruk >= 0"), _rule(check="bransjetid >= 0")],
     }
     errors = preflight.check_catalog(catalog, probe, columns, "t.yaml")
@@ -189,10 +205,10 @@ def test_probe_carries_joined_columns_with_real_types(preflight, spark, rule_sou
     assert errors == []
     types = dict(probe.dtypes)
 
-    # case_recno is an int in saksbehandling.saker. The previous probe
-    # synthesised every joined column as a string, so this is the assertion
-    # that actually discriminates between the two approaches.
-    assert types["case_recno"] == "int"
+    # saksansvarlig_kode is a string joined in from saksbehandling.saker. The
+    # previous probe synthesised every joined column as a string, so pairing it
+    # with a native, non-string faser column is the assertion that actually
+    # discriminates between the two approaches.
     assert types["saksansvarlig_kode"] == "string"
     assert types["tidligste_startmilepael_dato"] == "date"
 
@@ -224,14 +240,14 @@ def test_probe_reports_bad_join_keys_and_select(preflight, spark):
     fixtures.create_source_tables(spark)
 
     catalog = {"joins": [{
-        "table": "saksbehandling.saker", "left_on": "nosuch", "right_on": "case_recno",
+        "table": "saksbehandling.saker", "left_on": "nosuch", "right_on": "pk_saker",
     }]}
     _, errors = preflight.build_probe(spark, catalog, "saksbehandling.faser")
     assert any("left_on 'nosuch' not found in source" in e for e in errors)
 
     catalog = {"joins": [{
-        "table": "saksbehandling.saker", "left_on": "to_case_recno",
-        "right_on": "case_recno", "select": ["nosuch"],
+        "table": "saksbehandling.saker", "left_on": "fk_saker",
+        "right_on": "pk_saker", "select": ["nosuch"],
     }]}
     _, errors = preflight.build_probe(spark, catalog, "saksbehandling.faser")
     assert any("select column(s) not in" in e for e in errors)

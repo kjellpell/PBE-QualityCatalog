@@ -57,13 +57,14 @@ by every rule in the file.
 rule_group: Faser                 # grouping dimension in Power BI
 table: faser
 database: saksbehandling
-pk_column: stage_recno            # identifies a row in violations
+pk_column: pk_faser               # identifies a row in violations
+identifier_column: saksnummer     # optional; a human-meaningful identifier
 where: fagsystem = 'PB360'        # row filter for the whole file
 
 joins:
 - table: saksbehandling.saker
-  left_on: to_case_recno
-  right_on: case_recno
+  left_on: fk_saker
+  right_on: pk_saker
   how: left                       # default: left
   select:
   - saksnummer
@@ -82,6 +83,7 @@ This reads as the SQL it compiles to:
 | `table` | yes | Source table |
 | `database` | no | Schema for `table` |
 | `pk_column` | yes | Column identifying a row, used as `primary_key_value` |
+| `identifier_column` | no | Column holding a human-meaningful identifier (e.g. `saksnummer`, native or joined-in), used as `identifier_value`. Unlike `pk_column`, never required and never used as a key |
 | `where` | no | SQL predicate narrowing the source for every rule in the file |
 | `joins` | no | Pre-joins; `select` lists the columns to bring across |
 | `rules` | yes | The rules |
@@ -122,9 +124,9 @@ uniqueness, and checks over groups of rows. A check needing a second table is a
 
 ```yaml
 - rule_id: FAS-003
-  name: stage_recno må være unik
+  name: pk_faser må være unik
   unique:
-  - stage_recno
+  - pk_faser
 ```
 
 ### row_count
@@ -151,7 +153,7 @@ anywhere are ignored, so unrelated activity in between is fine.
   name: Merknader og revidert planforslag må komme parvis og i rekkefølge
   event_flow:
     event_column: milestone_title
-    group_column: to_stage_recno
+    group_column: fk_faser
     order_column: milestonedate
     starts_with: Sendt til politisk behandling   # optional, single value, once
     cycle:                                       # required, repeats as whole passes
@@ -210,7 +212,7 @@ Every group must contain at least one row carrying the named event.
   name: Alle faser må ha godkjenning
   required_event:
     event_column: milestone_title
-    group_column: to_stage_recno
+    group_column: fk_faser
     value: Godkjent              # scalar or list; any one of them satisfies
     order_column: milestonedate  # optional; also require a non-NULL date
 ```
@@ -334,6 +336,7 @@ One row in `dq_violations` per failing unit.
 | Column | Contents |
 |---|---|
 | `primary_key_value` | Row key, or group key for group-scoped rules |
+| `identifier_value` | Human-meaningful identifier (e.g. saksnummer), from the catalog's `identifier_column`. NULL if the catalog doesn't set one, or if the value itself is NULL (e.g. an unmatched join) |
 | `violation_scope` | `row`, `group` or `table` — how to read `primary_key_value` |
 | `violated_column` | The column at fault. A real column name, or NULL if the predicate names none |
 | `actual_value` | The offending value |
@@ -360,7 +363,9 @@ expected_condition)`. A violation that disappears from a run is marked
   schema — a typo'd column or bad syntax fails here, not at 03:00;
 - each rule declares exactly one rule type, with its required keys;
 - column-valued keys name real source columns (including joined-in ones);
-- `rule_id` values are unique and `pk_column` exists.
+- `rule_id` values are unique and `pk_column` exists;
+- `identifier_column`, if set, names a real source column too — but unlike
+  `pk_column` it's not required.
 
 Run it after every catalog change.
 

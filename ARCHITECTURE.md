@@ -126,6 +126,14 @@ One convention: a rule uses its own `pk_column` if set, otherwise the catalog's.
 Group-scoped rules key violations by their `group_column` instead. A catalog
 without a `pk_column` fails preflight rather than silently defaulting.
 
+`identifier_column` is the non-identity sibling of `pk_column`: an optional,
+catalog-level-only column (native or joined-in) holding a human-meaningful
+identifier for the row — e.g. `saksnummer`, where the technical primary key
+(`pk_faser`, `fakturanr`, …) doesn't tell a person which case they're looking
+at. It's resolved the same way `pk_column` is, stored as `identifier_value`
+on every violation row, but it's never required and never used as a key —
+just enrichment. A catalog without one simply emits `NULL`.
+
 ### Predicate columns
 
 For a `check:` rule, `violated_column` is the first column referenced by the

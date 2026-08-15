@@ -32,6 +32,22 @@ database: saksbehandling
 description: Datakvalitet på fakturalinjer som kommer fra PB360
 pk_column: fakturanr
 
+joins:
+- table: saksbehandling.faser
+  left_on: fk_faser
+  right_on: pk_faser
+  how: left
+  select:
+  - fk_saker
+- table: saksbehandling.saker
+  left_on: fk_saker
+  right_on: pk_saker
+  how: left
+  select:
+  - saksnummer
+
+identifier_column: saksnummer
+
 rules:
 
 # Én regel per kolonne, slik at rule_id peker på nøyaktig én feil.
@@ -69,15 +85,16 @@ pk_column: pk_faser
 # Jeg har valgt å kun se på PB360-saker per nå
 where: fagsystem = 'PB360'
 
-# joins:
-#- table: saksbehandling.saker
-#  left_on: to_case_recno
-#  right_on: case_recno
-#  how: left
-#  select:
-#  - case_recno
-#  - saksnummer
-#  - saksansvarlig_kode
+joins:
+- table: saksbehandling.saker
+  left_on: fk_saker
+  right_on: pk_saker
+  how: left
+  select:
+  - saksnummer
+  - saksansvarlig_kode
+
+identifier_column: saksnummer
 
 rules:
 
@@ -173,7 +190,8 @@ pk_column: pk_milepaeler
 # Jeg har valgt å kun se på PB360-saker per nå
 where: fagsystem = 'PB360'
 
-# Vi trenger å joine inn faser for å få tak i indikator-kolonnen, som brukes i noen av reglene.
+# Vi trenger å joine inn faser for å få tak i indikator-kolonnen, som brukes i noen av reglene,
+# og fk_saker slik at vi kan joine videre til saker for saksnummer.
 joins:
 - table: saksbehandling.faser
   left_on: fk_faser
@@ -181,6 +199,15 @@ joins:
   how: left
   select:
   - indikator
+  - fk_saker
+- table: saksbehandling.saker
+  left_on: fk_saker
+  right_on: pk_saker
+  how: left
+  select:
+  - saksnummer
+
+identifier_column: saksnummer
 
 rules:
 

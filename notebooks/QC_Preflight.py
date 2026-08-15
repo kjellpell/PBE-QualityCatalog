@@ -179,6 +179,12 @@ def check_catalog(catalog: dict, probe, source_columns: set[str], where: str) ->
             f"[{where}] pk_column '{catalog['pk_column']}' not found in source table."
         )
 
+    identifier_column = catalog.get("identifier_column")
+    if identifier_column and identifier_column not in source_columns:
+        errors.append(
+            f"[{where}] identifier_column '{identifier_column}' not found in source table."
+        )
+
     if catalog.get("where") is not None:
         errors.extend(check_predicate(probe, catalog["where"], f"[{where}] 'where'"))
 
