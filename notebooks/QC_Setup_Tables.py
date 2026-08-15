@@ -34,11 +34,11 @@ from pyspark.sql import SparkSession
 # threads it through, rather than binding the `spark` that QC_Engine owns.
 #
 # Each output table is described once, by the schema the engine writes.
-#   dq_run_results       one row per rule per validation run (Power BI scorecard)
-#   dq_violations        one row per violation with lifecycle state
-#                        (Active / Resolved); violation_scope says whether
-#                        primary_key_value is a row key or a group key
-#   dq_execution_metrics one row per runner execution, for operator visibility
+#   kjoeringsresultater  one row per rule per validation run (Power BI scorecard)
+#   avvik                one row per violation with lifecycle state
+#                        (Aktiv / Løst); avviksomfang says whether
+#                        primaernoekkel_verdi is a row key or a group key
+#   kjoeringslogg        one row per runner execution, for operator visibility
 # -----------------------------------------------------------------------------
 _TABLE_SCHEMAS = {
     "DQ_RESULTS_TABLE": RESULT_SCHEMA,
@@ -122,7 +122,7 @@ def setup_dq_tables(config_mapping: dict) -> list[str]:
     # Performance tip: after the first significant data load, apply Z-order
     # clustering on the columns most used in WHERE / JOIN predicates:
     #
-    #   spark.sql("OPTIMIZE dq_violations ZORDER BY (rule_id, primary_key_value)")
+    #   spark.sql("OPTIMIZE avvik ZORDER BY (regel_id, primaernoekkel_verdi)")
     #
     # Re-run periodically (e.g. weekly) or after large backfills.
 

@@ -117,6 +117,22 @@ Keep `notebooks/` in this repository in step with the workspace, in both
 directions. The pytest suite runs against these files, so a change made only in
 Fabric is a change nothing tests.
 
+### One-time cutover: Norwegian output-table rename
+
+The three output tables and their columns were renamed from English
+(`dq_run_results`, `dq_violations`, `dq_execution_metrics`) to Norwegian
+(`kjoeringsresultater`, `avvik`, `kjoeringslogg`) — see `RENAME_GLOSSARY.md`
+for the full old→new mapping. `QC_Setup_Tables` has no migration path by
+design (`_ensure_table` reports a drifted table rather than patching it), and
+a *renamed* table isn't detected as drift at all — it's simply a different
+name, so `QC_Setup_Tables` creates the new Norwegian tables empty alongside
+whatever old English-named tables are already sitting in the schema. In each
+stage, after promoting this change: run `QC_Setup_Tables` to create the new
+tables, then drop the old `dq_run_results` / `dq_violations` /
+`dq_execution_metrics` tables once you've confirmed nothing else still reads
+them (dashboards, other pipelines) — there is no automatic data carry-over
+from the old tables to the new ones.
+
 ## Changing configuration
 
 `QC_Config` holds every setting:
@@ -138,5 +154,5 @@ to the engine.
 2. A default lakehouse is attached to the three entry-point notebooks.
 3. `QC_Setup_Tables` has been run in this workspace.
 4. `QC_Preflight` passes.
-5. One `QC_Run_Validation` run completes, and `dq_run_results`,
-   `dq_violations` and `dq_execution_metrics` hold rows for it.
+5. One `QC_Run_Validation` run completes, and `kjoeringsresultater`,
+   `avvik` and `kjoeringslogg` hold rows for it.

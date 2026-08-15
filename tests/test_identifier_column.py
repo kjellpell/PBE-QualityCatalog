@@ -1,5 +1,5 @@
 """
-identifier_column / identifier_value: the optional, catalog-level sibling of
+identifier_column / identifikator_verdi: the optional, catalog-level sibling of
 pk_column. Unlike pk_column it is never required, never used as a key, and
 exists purely so a violation can be traced to a human-meaningful identifier
 (e.g. saksnummer) even when the row's own primary key is a technical id.
@@ -24,17 +24,17 @@ def test_row_scoped_identifier_is_resolved(spark):
         {"check": "amount >= 0"}, df, spark,
         pk_column="id", identifier_column="saksnummer",
     )
-    assert result["status"] == "FAILED"
+    assert result["status"] == "Ikke bestått"
     row = violations.collect()[0]
-    assert row.primary_key_value == "2"
-    assert row.identifier_value == "SAK-002"
+    assert row.primaernoekkel_verdi == "2"
+    assert row.identifikator_verdi == "SAK-002"
 
 
 def test_row_scoped_identifier_defaults_to_null_when_unconfigured(spark):
     df = spark.createDataFrame([(1, -5, "SAK-001")], "id int, amount int, saksnummer string")
     result, violations = run_rule({"check": "amount >= 0"}, df, spark, pk_column="id")
     row = violations.collect()[0]
-    assert row.identifier_value is None
+    assert row.identifikator_verdi is None
 
 
 def test_row_scoped_identifier_is_null_when_the_value_itself_is_null(spark):
@@ -48,7 +48,7 @@ def test_row_scoped_identifier_is_null_when_the_value_itself_is_null(spark):
         pk_column="id", identifier_column="saksnummer",
     )
     row = violations.collect()[0]
-    assert row.identifier_value is None
+    assert row.identifikator_verdi is None
 
 
 def test_unique_identifier_is_resolved(spark):
@@ -60,13 +60,13 @@ def test_unique_identifier_is_resolved(spark):
         {"unique": ["code"]}, df, spark,
         pk_column="id", identifier_column="saksnummer",
     )
-    assert result["status"] == "FAILED"
-    identifiers = {row.identifier_value for row in violations.collect()}
+    assert result["status"] == "Ikke bestått"
+    identifiers = {row.identifikator_verdi for row in violations.collect()}
     assert identifiers == {"SAK-001", "SAK-002"}
 
 
 def test_group_scoped_identifier_is_resolved(spark):
-    """required_event: identifier_value comes from a lookup rebuilt against the
+    """required_event: identifikator_verdi comes from a lookup rebuilt against the
     group, not a direct column reference, since the group-scoped frame has
     already dropped every column but the group key by the time violations are
     assembled."""
@@ -86,10 +86,10 @@ def test_group_scoped_identifier_is_resolved(spark):
         df, spark,
         identifier_column="saksnummer",
     )
-    assert result["status"] == "FAILED"
+    assert result["status"] == "Ikke bestått"
     row = violations.collect()[0]
-    assert row.primary_key_value == "case-2"
-    assert row.identifier_value == "SAK-002"
+    assert row.primaernoekkel_verdi == "case-2"
+    assert row.identifikator_verdi == "SAK-002"
 
 
 def test_group_scoped_identifier_defaults_to_null_when_unconfigured(spark):
@@ -105,7 +105,7 @@ def test_group_scoped_identifier_defaults_to_null_when_unconfigured(spark):
         df, spark,
     )
     row = violations.collect()[0]
-    assert row.identifier_value is None
+    assert row.identifikator_verdi is None
 
 
 def test_group_scoped_identifier_is_null_when_unmatched(spark):
@@ -124,4 +124,4 @@ def test_group_scoped_identifier_is_null_when_unmatched(spark):
         identifier_column="saksnummer",
     )
     row = violations.collect()[0]
-    assert row.identifier_value is None
+    assert row.identifikator_verdi is None

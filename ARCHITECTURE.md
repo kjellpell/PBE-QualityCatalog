@@ -68,7 +68,7 @@ the driver so it cannot drift between rule types.
 
 Each rule type declares `scope` — `row`, `group`, or `table` — and the driver counts in
 that unit. A group-scoped rule counts groups in both the numerator and the
-denominator, so a group failing several pairs counts once and `passed_rows` can
+denominator, so a group failing several pairs counts once and `bestaatte_rader` can
 never go negative.
 
 Table-scoped checks are limited to bounded row-volume validation (`row_count`)
@@ -87,9 +87,9 @@ QC_Run_Validation  → %run QC_Config / QC_Rules / QC_Engine, then:
   1. Load rules from RULE_CATALOG_SOURCES
   2. Per catalog: load source table, apply joins, apply the catalog `where:`
   3. Dispatch each rule through run_rule()
-  4. Write results    → dq_run_results
-  5. Write violations → dq_violations    (DataFrame-based Active/Resolved tracking)
-  6. Write metrics    → dq_execution_metrics
+  4. Write results    → kjoeringsresultater
+  5. Write violations → avvik    (DataFrame-based Aktiv/Løst tracking)
+  6. Write metrics    → kjoeringslogg
 ```
 
 ## File Map
@@ -100,7 +100,7 @@ Six notebooks, three of them libraries that the other three `%run`.
 |------|------|---------|
 | `QC_Config` | library | `QUALITY_CATALOG_CONFIG` and `QUALITY_CATALOG_RUNTIME` |
 | `QC_Rules` | library | `RULE_CATALOG_SOURCES` — one YAML catalog per cell |
-| `QC_Engine` | library | Runtime helpers, output schemas + Active/Resolved tracking, rule types, orchestration |
+| `QC_Engine` | library | Runtime helpers, output schemas + Aktiv/Løst tracking, rule types, orchestration |
 | `QC_Setup_Tables` | entry point | Delta table DDL, generated from the engine schemas |
 | `QC_Preflight` | entry point | Pre-run checks |
 | `QC_Run_Validation` | entry point | Runs the catalog and prints the run evidence |
@@ -130,34 +130,34 @@ without a `pk_column` fails preflight rather than silently defaulting.
 catalog-level-only column (native or joined-in) holding a human-meaningful
 identifier for the row — e.g. `saksnummer`, where the technical primary key
 (`pk_faser`, `fakturanr`, …) doesn't tell a person which case they're looking
-at. It's resolved the same way `pk_column` is, stored as `identifier_value`
+at. It's resolved the same way `pk_column` is, stored as `identifikator_verdi`
 on every violation row, but it's never required and never used as a key —
 just enrichment. A catalog without one simply emits `NULL`.
 
 ### Predicate columns
 
-For a `check:` rule, `violated_column` is the first column referenced by the
+For a `check:` rule, `avvikende_kolonne` is the first column referenced by the
 predicate. It is derived by walking the *unresolved* expression tree, which
 preserves source order — Spark's analyzer reference set does not, and would
-report `a` for `b >= a`. The walk is best-effort: if it fails, `violated_column`
+report `a` for `b >= a`. The walk is best-effort: if it fails, `avvikende_kolonne`
 is NULL rather than the rule erroring.
 
 ## Status Constants
 
 Use these exact strings — typos silently break resolution tracking.
 
-- **Run result status** (`dq_run_results`): `"PASSED"`, `"FAILED"`, `"ERROR"`
-- **Violation status** (`dq_violations`): `"Active"`, `"Resolved"`
-- **Violation scope** (`dq_violations`): `"row"`, `"group"`, `"table"`
-- **Execution metric status** (`dq_execution_metrics`): `"Succeeded"`, `"Failed"`
+- **Run result status** (`kjoeringsresultater`): `"Bestått"`, `"Ikke bestått"`, `"Feil"`
+- **Violation status** (`avvik`): `"Aktiv"`, `"Løst"`
+- **Violation scope** (`avvik`): `"Rad"`, `"Gruppe"`, `"Tabell"`
+- **Execution metric status** (`kjoeringslogg`): `"Vellykket"`, `"Mislykket"`
 
 ## Delta Tables
 
 | Table | Written by | Purpose |
 |-------|-----------|---------|
-| `dq_run_results` | `QC_Engine` | One row per rule per run |
-| `dq_violations` | `QC_Engine` (via `_apply_resolution_tracking`) | Current-state violation log (`Active`/`Resolved`) |
-| `dq_execution_metrics` | `QC_Engine` | Run-level observability |
+| `kjoeringsresultater` | `QC_Engine` | One row per rule per run |
+| `avvik` | `QC_Engine` (via `_apply_resolution_tracking`) | Current-state violation log (`Aktiv`/`Løst`) |
+| `kjoeringslogg` | `QC_Engine` | Run-level observability |
 
 Schemas are defined in `QC_Engine`: `RESULT_SCHEMA`, `VIOLATION_SCHEMA` and
 `_EXECUTION_METRIC_SCHEMA`. `QC_Setup_Tables` generates its DDL from them, so
@@ -168,13 +168,13 @@ adding a column there is enough.
 `_apply_resolution_tracking()` reads the existing violations table, diffs it
 against the current run, and rewrites it:
 
-- new violation → inserted `Active`;
-- still present → run metadata refreshed, `first_seen_at` preserved;
-- previously active, now absent → `Resolved` with a resolution timestamp;
+- new violation → inserted `Aktiv`;
+- still present → run metadata refreshed, `foerst_observert_tidspunkt` preserved;
+- previously active, now absent → `Løst` with a resolution timestamp;
 - already resolved → carried through unchanged.
 
-Violations are keyed on `(rule_id, primary_key_value, violated_column,
-expected_condition)`. `expected_condition` is part of the key because a
+Violations are keyed on `(regel_id, primaernoekkel_verdi, avvikende_kolonne,
+forventet_betingelse)`. `forventet_betingelse` is part of the key because a
 group-scoped rule can emit several distinct violations for one group that differ
 only in which pair failed.
 

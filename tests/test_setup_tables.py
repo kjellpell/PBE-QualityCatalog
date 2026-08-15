@@ -16,9 +16,9 @@ OTHER_SCHEMA = "dqsetupalt"
 def _config(**over):
     config = {
         "DEFAULT_SCHEMA": SCHEMA,
-        "DQ_RESULTS_TABLE": "dq_run_results",
-        "DQ_VIOLATIONS_TABLE": "dq_violations",
-        "DQ_EXECUTION_METRICS_TABLE": "dq_execution_metrics",
+        "DQ_RESULTS_TABLE": "kjoeringsresultater",
+        "DQ_VIOLATIONS_TABLE": "avvik",
+        "DQ_EXECUTION_METRICS_TABLE": "kjoeringslogg",
     }
     config.update(over)
     return config
@@ -37,9 +37,9 @@ def test_creates_the_three_tables_and_is_rerunnable(spark, setup_tables, clean):
     created = setup_tables.setup_dq_tables(_config())
 
     assert created == [
-        f"{SCHEMA}.dq_run_results",
-        f"{SCHEMA}.dq_violations",
-        f"{SCHEMA}.dq_execution_metrics",
+        f"{SCHEMA}.kjoeringsresultater",
+        f"{SCHEMA}.avvik",
+        f"{SCHEMA}.kjoeringslogg",
     ]
     for table in created:
         assert spark.catalog.tableExists(table)
@@ -52,9 +52,9 @@ def test_columns_match_the_schemas_the_engine_writes(spark, setup_tables, engine
     setup_tables.setup_dq_tables(_config())
 
     for table, struct in (
-        (f"{SCHEMA}.dq_run_results", engine.RESULT_SCHEMA),
-        (f"{SCHEMA}.dq_violations", engine.VIOLATION_SCHEMA),
-        (f"{SCHEMA}.dq_execution_metrics", engine._EXECUTION_METRIC_SCHEMA),
+        (f"{SCHEMA}.kjoeringsresultater", engine.RESULT_SCHEMA),
+        (f"{SCHEMA}.avvik", engine.VIOLATION_SCHEMA),
+        (f"{SCHEMA}.kjoeringslogg", engine._EXECUTION_METRIC_SCHEMA),
     ):
         actual = [(f.name.lower(), f.dataType.simpleString()) for f in spark.table(table).schema.fields]
         expected = [(f.name.lower(), f.dataType.simpleString()) for f in struct.fields]
@@ -66,27 +66,27 @@ def test_a_schema_qualified_table_name_is_honoured(spark, setup_tables, clean):
 
     The engine resolves targets with `_qualify`, which leaves an already
     qualified name alone. Setup has to agree, or it creates
-    `datakvalitet.otherdb.dq_run_results` while the runner writes to
-    `otherdb.dq_run_results`.
+    `datakvalitet.otherdb.kjoeringsresultater` while the runner writes to
+    `otherdb.kjoeringsresultater`.
     """
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS {OTHER_SCHEMA}")
 
     created = setup_tables.setup_dq_tables(
-        _config(DQ_RESULTS_TABLE=f"{OTHER_SCHEMA}.dq_run_results")
+        _config(DQ_RESULTS_TABLE=f"{OTHER_SCHEMA}.kjoeringsresultater")
     )
 
-    assert created[0] == f"{OTHER_SCHEMA}.dq_run_results"
-    assert spark.catalog.tableExists(f"{OTHER_SCHEMA}.dq_run_results")
+    assert created[0] == f"{OTHER_SCHEMA}.kjoeringsresultater"
+    assert spark.catalog.tableExists(f"{OTHER_SCHEMA}.kjoeringsresultater")
 
     # Nothing landed under DEFAULT_SCHEMA for it. Asserted by listing rather
     # than tableExists, because the wrong name is three-part and Spark rejects
     # it outright instead of answering False.
-    assert "dq_run_results" not in {t.name for t in spark.catalog.listTables(SCHEMA)}
+    assert "kjoeringsresultater" not in {t.name for t in spark.catalog.listTables(SCHEMA)}
 
 
 def test_a_drifted_table_is_reported_not_migrated(spark, setup_tables, clean):
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}")
-    spark.sql(f"CREATE TABLE {SCHEMA}.dq_run_results (run_id STRING) USING DELTA")
+    spark.sql(f"CREATE TABLE {SCHEMA}.kjoeringsresultater (kjoert_id STRING) USING DELTA")
 
     with pytest.raises(RuntimeError) as exc:
         setup_tables.setup_dq_tables(_config())

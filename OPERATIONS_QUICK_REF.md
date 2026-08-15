@@ -15,9 +15,9 @@ Use this checklist to run, verify, and triage the Quality Catalog quickly.
 1. Confirm source data refresh is complete.
 2. Run preflight: `QC_Preflight`.
 3. Run validation: `QC_Run_Validation`.
-4. Check execution evidence in dq_execution_metrics.
-5. Check latest summary rows in dq_run_results.
-6. Check issue lifecycle behavior in dq_violations.
+4. Check execution evidence in kjoeringslogg.
+5. Check latest summary rows in kjoeringsresultater.
+6. Check issue lifecycle behavior in avvik.
 
 ---
 
@@ -39,7 +39,7 @@ Set in `QUALITY_CATALOG_RUNTIME`, in the `QC_Config` notebook.
 - MAX_RULE_RETRIES:
   per-rule retry budget for retryable errors.
 - RULE_TIMEOUT_SECONDS:
-  per-rule timeout; timed-out rules are recorded as ERROR and the run continues.
+  per-rule timeout; timed-out rules are recorded as Feil and the run continues.
 - RETRYABLE_ERROR_MARKERS:
   strings used to classify retryable failures.
 
@@ -59,11 +59,11 @@ section of a lakehouse, which is why config lives in a notebook.
 
 ## Core Outputs
 
-- dq_run_results:
+- kjoeringsresultater:
   one row per rule per run.
-- dq_violations:
-  current-state issue table with Active and Resolved status.
-- dq_execution_metrics:
+- avvik:
+  current-state issue table with Aktiv and Løst status.
+- kjoeringslogg:
   one row per runner execution with status and timing.
 
 ---
@@ -73,8 +73,8 @@ section of a lakehouse, which is why config lives in a notebook.
 After each run, confirm:
 
 - A new execution metrics row exists with expected status.
-- dq_run_results has rows for the current run_id.
-- dq_violations shows expected new/updated issues.
+- kjoeringsresultater has rows for the current kjoert_id.
+- avvik shows expected new/updated issues.
 - Rule groups (Faser, Milepæler, Faktura) appear in the run summary.
 
 ---
@@ -98,7 +98,7 @@ After each run, confirm:
 - A `NameError` on `QUALITY_CATALOG_CONFIG` means the `%run QC_Config` cell did
   not run.
 
-### Resolution-tracking failure on dq_violations
+### Resolution-tracking failure on avvik
 
 - The run fails with "Violations not written" — no partial data is committed.
 - Re-run `QC_Setup_Tables` to ensure the table and columns exist.

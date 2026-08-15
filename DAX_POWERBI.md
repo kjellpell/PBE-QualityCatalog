@@ -6,8 +6,8 @@ This guide contains DAX examples for the core engine outputs only.
 
 | Table | Description |
 |---|---|
-| `dq_run_results` | One row per rule per validation run |
-| `dq_violations` | One row per violation key with lifecycle state (`Active` / `Resolved`) |
+| `kjoeringsresultater` | One row per rule per validation run |
+| `avvik` | One row per violation key with lifecycle state (`Aktiv` / `Løst`) |
 
 ## Core Measures
 
@@ -17,10 +17,10 @@ This guide contains DAX examples for the core engine outputs only.
 DQ Score % =
 DIVIDE(
     CALCULATE(
-        COUNTROWS( dq_run_results ),
-        dq_run_results[status] = "PASSED"
+        COUNTROWS( kjoeringsresultater ),
+        kjoeringsresultater[status] = "Bestått"
     ),
-    COUNTROWS( dq_run_results )
+    COUNTROWS( kjoeringsresultater )
 ) * 100
 ```
 
@@ -28,7 +28,7 @@ DIVIDE(
 
 ```dax
 Total Rules =
-COUNTROWS( dq_run_results )
+COUNTROWS( kjoeringsresultater )
 ```
 
 ### Rules Passed
@@ -36,8 +36,8 @@ COUNTROWS( dq_run_results )
 ```dax
 Rules Passed =
 CALCULATE(
-    COUNTROWS( dq_run_results ),
-    dq_run_results[status] = "PASSED"
+    COUNTROWS( kjoeringsresultater ),
+    kjoeringsresultater[status] = "Bestått"
 )
 ```
 
@@ -46,8 +46,8 @@ CALCULATE(
 ```dax
 Rules Failed =
 CALCULATE(
-    COUNTROWS( dq_run_results ),
-    dq_run_results[status] = "FAILED"
+    COUNTROWS( kjoeringsresultater ),
+    kjoeringsresultater[status] = "Ikke bestått"
 )
 ```
 
@@ -56,8 +56,8 @@ CALCULATE(
 ```dax
 Rules In Error =
 CALCULATE(
-    COUNTROWS( dq_run_results ),
-    dq_run_results[status] = "ERROR"
+    COUNTROWS( kjoeringsresultater ),
+    kjoeringsresultater[status] = "Feil"
 )
 ```
 
@@ -66,8 +66,8 @@ CALCULATE(
 ```dax
 Active Violations =
 CALCULATE(
-    COUNTROWS( dq_violations ),
-    dq_violations[issue_status] = "Active"
+    COUNTROWS( avvik ),
+    avvik[avviksstatus] = "Aktiv"
 )
 ```
 
@@ -76,8 +76,8 @@ CALCULATE(
 ```dax
 Resolved Violations =
 CALCULATE(
-    COUNTROWS( dq_violations ),
-    dq_violations[issue_status] = "Resolved"
+    COUNTROWS( avvik ),
+    avvik[avviksstatus] = "Løst"
 )
 ```
 
@@ -85,7 +85,7 @@ CALCULATE(
 
 ```dax
 Latest Run Timestamp =
-MAX( dq_run_results[run_ts] )
+MAX( kjoeringsresultater[kjoert_tidspunkt] )
 ```
 
 ## Suggested Report Pages
@@ -93,23 +93,23 @@ MAX( dq_run_results[run_ts] )
 1. Run Overview:
    KPIs for DQ Score %, Total Rules, Rules Failed, Rules In Error.
 2. Rule Group Health:
-   Bar/column chart by `rule_group` and `status`.
+   Bar/column chart by `regelgruppe` and `status`.
 3. Active Violation Backlog:
-   Table filtered to `dq_violations[issue_status] = "Active"`.
-   `violated_column` is always a real column name in `table_name` (or `NULL`
+   Table filtered to `avvik[avviksstatus] = "Aktiv"`.
+   `avvikende_kolonne` is always a real column name in `tabellnavn` (or `NULL`
    when a `check:` predicate names no column, e.g. `1 = 0`) — safe to
-   group/count by. `violation_scope` tells you how to read
-   `primary_key_value`: `"row"` means it's the PK of the offending row in
-   `table_name`; `"group"` (used by `event_flow`, `required_event`,
+   group/count by. `avviksomfang` tells you how to read
+   `primaernoekkel_verdi`: `"Rad"` means it's the PK of the offending row in
+   `tabellnavn`; `"Gruppe"` (used by `event_flow`, `required_event`,
    `aggregate_matches`) means it's a group key, not a
-   row PK — don't join it back to `table_name` as if it were one.
-   `identifier_value` carries a human-meaningful identifier (saksnummer, for
-   every catalog shipped today) alongside the technical `primary_key_value` —
+   row PK — don't join it back to `tabellnavn` as if it were one.
+   `identifikator_verdi` carries a human-meaningful identifier (saksnummer, for
+   every catalog shipped today) alongside the technical `primaernoekkel_verdi` —
    add it to this table so a violation is searchable/filterable by case
    number without a manual lookup. It's `NULL` for a catalog that hasn't set
    `identifier_column`, or when the underlying join found no match.
 4. Resolution Trend:
-   Time series of `Active` vs `Resolved` by `first_seen_at` / `resolved_at`.
+   Time series of `Aktiv` vs `Løst` by `foerst_observert_tidspunkt` / `loest_tidspunkt`.
 
 ## Notes
 

@@ -19,9 +19,9 @@ SCHEMA = "dqevidence"
 
 CONFIG = {
     "DEFAULT_SCHEMA": SCHEMA,
-    "DQ_RESULTS_TABLE": "dq_run_results",
-    "DQ_VIOLATIONS_TABLE": "dq_violations",
-    "DQ_EXECUTION_METRICS_TABLE": "dq_execution_metrics",
+    "DQ_RESULTS_TABLE": "kjoeringsresultater",
+    "DQ_VIOLATIONS_TABLE": "avvik",
+    "DQ_EXECUTION_METRICS_TABLE": "kjoeringslogg",
 }
 
 
@@ -34,18 +34,18 @@ def evidence_tables(spark, setup_tables, engine):
     spark.createDataFrame(
         [(
             "run-1", now, now.date(), "Faser", "FAS-001", "test rule",
-            "faser", "check", 10, 9, 1, 90.0, "FAILED", "1 of 10 rows violate", 0.5, None,
+            "faser", "check", 10, 9, 1, 90.0, "Ikke bestått", "1 of 10 rows violate", 0.5, None,
         )],
         schema=engine.RESULT_SCHEMA,
-    ).write.mode("append").saveAsTable(f"{SCHEMA}.dq_run_results")
+    ).write.mode("append").saveAsTable(f"{SCHEMA}.kjoeringsresultater")
 
     engine.write_execution_metric(
         spark,
-        f"{SCHEMA}.dq_execution_metrics",
+        f"{SCHEMA}.kjoeringslogg",
         {
-            "script_name": "run_validation", "status": "Succeeded",
-            "output_target": f"{SCHEMA}.dq_run_results",
-            "artifact_target": f"{SCHEMA}.dq_violations",
+            "script_name": "run_validation", "status": "Vellykket",
+            "output_target": f"{SCHEMA}.kjoeringsresultater",
+            "artifact_target": f"{SCHEMA}.avvik",
             "row_count": 1, "started_at_utc": now, "finished_at_utc": now,
             "duration_seconds": 1.0, "is_retryable": False, "error_message": None,
         },
@@ -58,13 +58,13 @@ def test_evidence_reports_every_table(run_validation, evidence_tables, capsys):
     run_validation.print_run_evidence(CONFIG)
     out = capsys.readouterr().out
 
-    assert f"{SCHEMA}.dq_run_results" in out
-    assert f"{SCHEMA}.dq_violations" in out
-    assert f"{SCHEMA}.dq_execution_metrics" in out
+    assert f"{SCHEMA}.kjoeringsresultater" in out
+    assert f"{SCHEMA}.avvik" in out
+    assert f"{SCHEMA}.kjoeringslogg" in out
 
     # The rule-group summary only renders when there is a run to summarise, so
     # this is what proves the branch ran rather than being skipped.
-    assert "Rule-group summary for latest run_id: run-1" in out
+    assert "Rule-group summary for latest kjoert_id: run-1" in out
     assert "Faser" in out
 
 
