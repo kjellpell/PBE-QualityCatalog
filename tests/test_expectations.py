@@ -38,13 +38,13 @@ def test_check_counts_only_evaluable_rows(spark):
     assert result["total_rows"] == 2      # rows 3 and 4 are unevaluable
     assert result["failed_rows"] == 1
     assert result["passed_rows"] == 1
-    assert result["status"] == "FAILED"
+    assert result["status"] == "Ikke bestått"
 
     row = violations.collect()[0]
-    assert row.primary_key_value == "2"
-    assert row.violated_column == "a"     # subject = first referenced column
-    assert row.actual_value == "3"
-    assert row.expected_condition == "a >= b"
+    assert row.primaernoekkel_verdi == "2"
+    assert row.avvikende_kolonne == "a"     # subject = first referenced column
+    assert row.faktisk_verdi == "3"
+    assert row.forventet_betingelse == "a >= b"
 
 
 def test_check_is_not_null_evaluates_every_row(spark):
@@ -52,14 +52,14 @@ def test_check_is_not_null_evaluates_every_row(spark):
     result, violations = run_rule({"check": "a IS NOT NULL"}, df, spark, pk_column="id")
 
     assert (result["total_rows"], result["failed_rows"]) == (2, 1)
-    assert violations.collect()[0].violated_column == "a"
+    assert violations.collect()[0].avvikende_kolonne == "a"
 
 
 def test_check_passes(spark):
     df = spark.createDataFrame([(1, 10), (2, 20)], "id int, a int")
     result, violations = run_rule({"check": "a >= 0"}, df, spark, pk_column="id")
 
-    assert result["status"] == "PASSED"
+    assert result["status"] == "Bestått"
     assert (result["total_rows"], result["failed_rows"]) == (2, 0)
     assert violations.count() == 0
     assert result["success_pct"] == 100.0
@@ -71,7 +71,7 @@ def test_check_violation_detail_explains_comparison(spark):
 
     assert result["failed_rows"] == 1
     row = violations.collect()[0]
-    assert row.violation_detail == "a = 1; expected a >= b; a 1 is less than the required value b"
+    assert row.avviksdetaljer == "a = 1; forventet a >= b; a 1 Er mindre enn kravverdien b"
 
 
 def test_when_narrows_the_denominator(spark):
@@ -85,7 +85,7 @@ def test_when_narrows_the_denominator(spark):
 
     assert result["total_rows"] == 2      # the CLOSED row is out of scope
     assert result["failed_rows"] == 1
-    assert violations.collect()[0].primary_key_value == "1"
+    assert violations.collect()[0].primaernoekkel_verdi == "1"
 
 
 def test_when_excludes_rows_where_it_is_null(spark):
@@ -94,7 +94,7 @@ def test_when_excludes_rows_where_it_is_null(spark):
     result, _ = run_rule(rule, df, spark, pk_column="id")
 
     assert result["total_rows"] == 0
-    assert result["status"] == "PASSED"
+    assert result["status"] == "Bestått"
 
 
 # --------------------------------------------------------------------------
@@ -121,7 +121,7 @@ def test_check_without_a_column_subject_reports_null(spark):
     result, violations = run_rule({"check": "1 = 0"}, df, spark, pk_column="id")
 
     assert result["failed_rows"] == 1
-    assert violations.collect()[0].violated_column is None
+    assert violations.collect()[0].avvikende_kolonne is None
 
 
 # --------------------------------------------------------------------------
@@ -135,8 +135,8 @@ def test_unique(spark):
     result, violations = run_rule({"unique": ["a", "b"]}, df, spark, pk_column="id")
 
     assert (result["total_rows"], result["failed_rows"]) == (3, 2)
-    assert {r.violated_column for r in violations.collect()} == {"a"}
-    assert violations.collect()[0].expected_condition == "UNIQUE(a, b)"
+    assert {r.avvikende_kolonne for r in violations.collect()} == {"a"}
+    assert violations.collect()[0].forventet_betingelse == "UNIQUE(a, b)"
 
 
 class TestRowCountExpectation:
@@ -149,7 +149,7 @@ class TestRowCountExpectation:
             pk_column="id",
         )
 
-        assert result["status"] == "PASSED"
+        assert result["status"] == "Bestått"
         assert result["total_rows"] == 1
         assert result["failed_rows"] == 0
         assert violations.count() == 0
@@ -163,13 +163,13 @@ class TestRowCountExpectation:
             pk_column="id",
         )
 
-        assert result["status"] == "FAILED"
+        assert result["status"] == "Ikke bestått"
         assert result["total_rows"] == 1
         assert result["failed_rows"] == 1
         row = violations.collect()[0]
-        assert row.primary_key_value is None
-        assert row.violated_column == "row_count"
-        assert row.actual_value == "1"
+        assert row.primaernoekkel_verdi is None
+        assert row.avvikende_kolonne == "row_count"
+        assert row.faktisk_verdi == "1"
 
     def test_above_maximum(self, spark):
         df = spark.createDataFrame([(1,), (2,), (3,), (4,)], "id int")
@@ -180,9 +180,9 @@ class TestRowCountExpectation:
             pk_column="id",
         )
 
-        assert result["status"] == "FAILED"
+        assert result["status"] == "Ikke bestått"
         assert result["failed_rows"] == 1
-        assert violations.collect()[0].actual_value == "4"
+        assert violations.collect()[0].faktisk_verdi == "4"
 
     def test_missing_params(self, spark):
         df = spark.createDataFrame([(1,), (2,)], "id int")
@@ -193,7 +193,7 @@ class TestRowCountExpectation:
             pk_column="id",
         )
 
-        assert result["status"] == "ERROR"
+        assert result["status"] == "Feil"
         assert "Missing required parameter(s): maximum." in result["details"]
         assert violations.count() == 0
 
@@ -206,7 +206,7 @@ def test_required_event_counts_groups(spark):
     result, violations = run_rule(rule, df, spark)
 
     assert (result["total_rows"], result["failed_rows"]) == (2, 1)
-    assert violations.collect()[0].primary_key_value == "g2"
+    assert violations.collect()[0].primaernoekkel_verdi == "g2"
 
 
 def test_aggregate_matches(spark):
@@ -224,7 +224,7 @@ def test_aggregate_matches(spark):
     result, violations = run_rule(rule, df, spark)
 
     assert (result["total_rows"], result["failed_rows"]) == (2, 1)
-    assert violations.collect()[0].primary_key_value == "i2"
+    assert violations.collect()[0].primaernoekkel_verdi == "i2"
 
 
 # --------------------------------------------------------------------------
@@ -235,7 +235,7 @@ def test_unknown_rule_type_is_an_error(spark):
     df = spark.createDataFrame([(1,)], "id int")
     result, violations = run_rule({"not_null": ["a"]}, df, spark, pk_column="id")
 
-    assert result["status"] == "ERROR"
+    assert result["status"] == "Feil"
     assert "No rule type found" in result["details"]
     assert violations.count() == 0
 
@@ -244,7 +244,7 @@ def test_two_rule_types_is_an_error(spark):
     df = spark.createDataFrame([(1,)], "id int")
     result, _ = run_rule({"check": "id > 0", "unique": ["id"]}, df, spark, pk_column="id")
 
-    assert result["status"] == "ERROR"
+    assert result["status"] == "Feil"
     assert "more than one rule type" in result["details"]
 
 
@@ -252,7 +252,7 @@ def test_missing_primary_key_is_an_error(spark):
     df = spark.createDataFrame([(1,)], "id int")
     result, _ = run_rule({"check": "id > 0"}, df, spark, pk_column=None)
 
-    assert result["status"] == "ERROR"
+    assert result["status"] == "Feil"
     assert "primary key" in result["details"]
 
 
@@ -260,7 +260,7 @@ def test_unknown_column_is_an_error(spark):
     df = spark.createDataFrame([(1,)], "id int")
     result, _ = run_rule({"check": "id > 0"}, df, spark, pk_column="nope")
 
-    assert result["status"] == "ERROR"
+    assert result["status"] == "Feil"
     assert "not found" in result["details"]
 
 
@@ -269,7 +269,7 @@ def test_rule_level_pk_overrides_catalog(spark):
     _, violations = run_rule(
         {"check": "a IS NOT NULL", "pk_column": "other"}, df, spark, pk_column="id"
     )
-    assert violations.collect()[0].primary_key_value == "9"
+    assert violations.collect()[0].primaernoekkel_verdi == "9"
 
 
 # --------------------------------------------------------------------------
@@ -309,7 +309,7 @@ def _null_group_case(name):
 def test_null_group_key_is_neither_counted_nor_reported(spark, type_name):
     """
     A NULL group key is not a group. Counting it inflates the denominator, and
-    reporting it emits a violation whose primary_key_value cannot be joined back
+    reporting it emits a violation whose primaernoekkel_verdi cannot be joined back
     to anything. The presence check used to do the latter and the ordering rule
     the former, while the others already excluded NULLs.
     """
@@ -320,7 +320,7 @@ def test_null_group_key_is_neither_counted_nor_reported(spark, type_name):
     assert result["total_rows"] == 2, "NULL group key counted as a group"
     assert result["failed_rows"] == 1
     assert result["passed_rows"] == 1
-    keys = [r.primary_key_value for r in violations.collect()]
+    keys = [r.primaernoekkel_verdi for r in violations.collect()]
     assert None not in keys, "violation emitted for a NULL group key"
     assert keys == ["g2"]
 

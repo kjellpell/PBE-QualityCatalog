@@ -32,9 +32,9 @@ QUALITY_CATALOG_CONFIG = {
     "DEFAULT_SCHEMA": "datakvalitet",
 
     # Output tables. Created by QC_Setup_Tables from the engine's own schemas.
-    "DQ_RESULTS_TABLE": "dq_run_results",
-    "DQ_VIOLATIONS_TABLE": "dq_violations",
-    "DQ_EXECUTION_METRICS_TABLE": "dq_execution_metrics",
+    "DQ_RESULTS_TABLE": "kjoeringsresultater",
+    "DQ_VIOLATIONS_TABLE": "avvik",
+    "DQ_EXECUTION_METRICS_TABLE": "kjoeringslogg",
 }
 
 
@@ -71,7 +71,7 @@ QUALITY_CATALOG_RUNTIME = {
     # -----------------------------------------------------------------------
     # Retryable error classification.
     # RETRYABLE_ERROR_MARKERS drives two things:
-    #   1. The is_retryable flag in dq_execution_metrics (for alerting
+    #   1. The kan_proeves_igjen flag in kjoeringslogg (for alerting
     #      dashboards).
     #   2. Whether a failed rule is retried inline (up to MAX_RULE_RETRIES
     #      times).

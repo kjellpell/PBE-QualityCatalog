@@ -20,7 +20,7 @@ Core capabilities:
 - Everything deployable: engine, config and rules are notebook items, so a
   Fabric deployment pipeline promotes the whole thing dev → test → production
 - Run metrics for observability and support
-- Current-state issue tracking (Active and Resolved), preserving when an issue
+- Current-state issue tracking (Aktiv and Løst), preserving when an issue
   was first seen so violation age is answerable
 - Rules authored as Spark SQL predicates, validated against the real schema
   before a run
@@ -92,14 +92,14 @@ end up in one namespace — which is why no two notebooks may define the same
 top-level name (`tests/test_notebooks.py` enforces it).
 
 ```
-    RULE_CATALOG_SOURCES ──▶┌───────────────────┐──▶ dq_run_results
-           source tables ──▶│   orchestration   │──▶ dq_violations
-                            └─────────┬─────────┘──▶ dq_execution_metrics
+    RULE_CATALOG_SOURCES ──▶┌───────────────────┐──▶ kjoeringsresultater
+           source tables ──▶│   orchestration   │──▶ avvik
+                            └─────────┬─────────┘──▶ kjoeringslogg
                                       │ calls
         ┌─────────────────────────────┼──────────────────────┐
         ▼                             ▼                      ▼
    rule types                  output schemas          runtime helpers
- (what a violation          (+ Active/Resolved        (settings, target
+ (what a violation          (+ Aktiv/Løst            (settings, target
   IS, and how to               resolution)             resolution, metrics)
   count it)
 ```
@@ -118,8 +118,8 @@ The entry point. For each YAML catalog in `RULE_CATALOG_SOURCES`, it:
 4. Collects one summary row and zero-or-more violation rows per rule.
 
 Once every catalog has run, it writes the combined summary rows to
-`dq_run_results`, hands the combined violations to resolution tracking, and
-records a success/failure row in `dq_execution_metrics` — including on the
+`kjoeringsresultater`, hands the combined violations to resolution tracking,
+and records a success/failure row in `kjoeringslogg` — including on the
 exception path, so a crashed run still leaves evidence of why.
 
 Nothing runs when `QC_Engine` is `%run`: it defines names only.
@@ -147,7 +147,7 @@ that behavior can't drift between rule types.
 
 `scope` (`row` / `group` / `table`) fixes what one "unit" is when counting
 pass/fail: a `group`-scoped rule counts a group once no matter how many of its
-rows or pairs fail, so `passed_rows` can never go negative. Every rule type
+rows or pairs fail, so `bestaatte_rader` can never go negative. Every rule type
 resolves to exactly one YAML key per rule — `detect_rule_type()` rejects a
 rule that declares zero or more than one.
 
@@ -157,14 +157,14 @@ Two things live here, and only here, so they're defined once instead of
 restated across the engine and `QC_Setup_Tables`:
 
 - `RESULT_SCHEMA` / `VIOLATION_SCHEMA` — the canonical Spark schemas for
-  `dq_run_results` and `dq_violations`. `QC_Setup_Tables` generates its Delta
+  `kjoeringsresultater` and `avvik`. `QC_Setup_Tables` generates its Delta
   DDL from these, so the table shape can't drift from what the runner actually
   writes.
 - `_apply_resolution_tracking()` — turns each run's raw violations into
   current state: a violation missing from this run that was previously
-  `Active` is marked `Resolved`; a still-failing violation keeps its original
-  `first_seen_at` so violation age is always answerable; a new violation is
-  inserted as `Active`. Implemented with plain DataFrame reads/writes rather
+  `Aktiv` is marked `Løst`; a still-failing violation keeps its original
+  `foerst_observert_tidspunkt` so violation age is always answerable; a new
+  violation is inserted as `Aktiv`. Implemented with plain DataFrame reads/writes rather
   than a Delta `MERGE`, because Fabric's SQL engine can't resolve
   schema-qualified metastore table names inside a `MERGE` statement.
 
@@ -177,7 +177,7 @@ Shared helpers that don't belong to rule evaluation itself:
 - Resolves fully-qualified output table names (`resolve_targets`).
 - Classifies whether an error message matches a configured retryable pattern
   (`classify_retryable_error`).
-- Writes rows to `dq_execution_metrics` (`write_execution_metric`), with a
+- Writes rows to `kjoeringslogg` (`write_execution_metric`), with a
   fallback to an unqualified table name if the configured schema/namespace
   isn't resolvable — so a metrics-write problem never masks the run's actual
   pass/fail outcome.
@@ -219,15 +219,15 @@ Quick-reference version of "How the Engine Works" above:
   - Read source table from Spark metastore.
   - Apply optional pre-joins and the catalog `where:` filter.
   - Run each rule through `run_rule()`.
-5. Append summary rows to dq_run_results.
-6. Apply the issue lifecycle to dq_violations.
-7. Write execution evidence to dq_execution_metrics.
+5. Append summary rows to kjoeringsresultater.
+6. Apply the issue lifecycle to avvik.
+7. Write execution evidence to kjoeringslogg.
 
 ---
 
 ## Output Tables
 
-### dq_run_results
+### kjoeringsresultater
 
 One row per rule per run.
 
@@ -237,17 +237,17 @@ Primary uses:
 - Rule-level pass/fail/error analysis
 - Severity and category slicing
 
-### dq_violations
+### avvik
 
 One row per unique rule/key issue, maintained as current state.
 
 Primary uses:
 
 - Record-level remediation queues
-- Active issue monitoring
+- Aktiv issue monitoring
 - Resolution trend tracking
 
-### dq_execution_metrics
+### kjoeringslogg
 
 One row per runner execution.
 
@@ -263,10 +263,10 @@ Primary uses:
 
 Each run diffs the current violations against the stored ones:
 
-1. Previously Active issues missing from the current run are marked Resolved.
+1. Previously Aktiv issues missing from the current run are marked Løst.
 2. Still-active issues are refreshed with latest run metadata, keeping their
-   original `first_seen_at`.
-3. New issues are inserted as Active.
+   original `foerst_observert_tidspunkt`.
+3. New issues are inserted as Aktiv.
 
 Persistence uses the DataFrame API rather than SQL `MERGE` — Fabric cannot
 resolve schema-qualified names inside a `MERGE` statement.
@@ -297,7 +297,7 @@ See DEPLOY.md for the deployment-pipeline steps.
 
 1. Run `QC_Run_Validation` after source refresh.
 2. Verify summary output and row counts.
-3. Confirm evidence in dq_execution_metrics.
+3. Confirm evidence in kjoeringslogg.
 
 For a one-page checklist, see OPERATIONS_QUICK_REF.md.
 
@@ -344,7 +344,7 @@ engine to keep in step: what the tests exercise is what gets deployed.
 |---|---|
 | `test_expectations.py` | Each rule type, predicate NULL semantics, scope counting |
 | `test_preflight.py` | Rule-contract and predicate validation, incl. typo detection |
-| `test_resolution.py` | Violation lifecycle: new → Active → Resolved, `first_seen_at` |
+| `test_resolution.py` | Violation lifecycle: new → Aktiv → Løst, `foerst_observert_tidspunkt` |
 | `test_rule_loading.py` | Catalog loading, and that an unusable catalog fails loudly |
 | `test_equivalence.py` | Every catalog end to end, diffed against a committed baseline |
 | `test_setup_tables.py` | Output-table DDL matches the engine schemas; drift is reported |
@@ -353,7 +353,7 @@ engine to keep in step: what the tests exercise is what gets deployed.
 | `test_docs.py` | The rule-type reference in RULES_GUIDE.md matches the engine |
 
 `test_equivalence.py` is the regression gate: it fails on any unintended change
-to `dq_run_results` or `dq_violations`. When output changes are intended,
+to `kjoeringsresultater` or `avvik`. When output changes are intended,
 regenerate with `DQ_UPDATE_BASELINE=1 python -m pytest tests/test_equivalence.py`
 and review the diff.
 

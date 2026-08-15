@@ -48,7 +48,7 @@ def _run(spark, events, **overrides):
 )
 def test_worked_examples(spark, events, valid, why):
     result, violations = _run(spark, events)
-    assert result["status"] == ("PASSED" if valid else "FAILED"), why
+    assert result["status"] == ("Bestått" if valid else "Ikke bestått"), why
     assert result["total_rows"] == 1
     assert result["failed_rows"] == (0 if valid else 1)
     if not valid:
@@ -62,22 +62,22 @@ def test_worked_examples(spark, events, valid, why):
 def test_anchors_are_optional(spark):
     """A bare cycle with no anchors is how a plain pair check is expressed."""
     result, _ = _run(spark, ["A", "B"], starts_with=None, ends_with=None)
-    assert result["status"] == "PASSED"
+    assert result["status"] == "Bestått"
 
 
 def test_cycle_without_anchors_still_requires_whole_passes(spark):
     result, _ = _run(spark, ["A"], starts_with=None, ends_with=None)
-    assert result["status"] == "FAILED"
+    assert result["status"] == "Ikke bestått"
 
 
 def test_repeated_start_is_a_violation(spark):
     result, _ = _run(spark, ["start", "start", "A", "B", "end"])
-    assert result["status"] == "FAILED"
+    assert result["status"] == "Ikke bestått"
 
 
 def test_repeated_end_is_a_violation(spark):
     result, _ = _run(spark, ["start", "A", "B", "end", "end"])
-    assert result["status"] == "FAILED"
+    assert result["status"] == "Ikke bestått"
 
 
 def test_either_closing_event_may_end_the_flow(spark):
@@ -85,14 +85,14 @@ def test_either_closing_event_may_end_the_flow(spark):
         result, _ = _run(
             spark, ["start", "A", "B", closing], ends_with=["done", "withdrawn"]
         )
-        assert result["status"] == "PASSED", closing
+        assert result["status"] == "Bestått", closing
 
 
 def test_two_different_closing_events_is_a_violation(spark):
     result, _ = _run(
         spark, ["start", "A", "B", "done", "withdrawn"], ends_with=["done", "withdrawn"]
     )
-    assert result["status"] == "FAILED"
+    assert result["status"] == "Ikke bestått"
 
 
 # --------------------------------------------------------------------------
@@ -101,13 +101,13 @@ def test_two_different_closing_events_is_a_violation(spark):
 
 def test_unlisted_events_are_ignored(spark):
     result, _ = _run(spark, ["start", "noise", "A", "other", "B", "end"])
-    assert result["status"] == "PASSED"
+    assert result["status"] == "Bestått"
 
 
 def test_group_with_no_listed_events_passes(spark):
     """Zero passes is valid — this is what 'both absent is fine' reduces to."""
     result, _ = _run(spark, ["noise", "other"])
-    assert result["status"] == "PASSED"
+    assert result["status"] == "Bestått"
     assert result["failed_rows"] == 0
 
 
@@ -116,11 +116,11 @@ def test_violation_detail_explains_out_of_order_events(spark):
     df = spark.createDataFrame(rows, "grp string, ev string, d date")
     result, violations = run_rule({"event_flow": FLOW}, df, spark)
 
-    assert result["status"] == "FAILED"
+    assert result["status"] == "Ikke bestått"
     row = violations.collect()[0]
-    assert "Unexpected event" in row.violation_detail
-    assert "expected the next event" in row.violation_detail
-    assert "within" not in row.violation_detail.lower()
+    assert "Uventet hendelse" in row.avviksdetaljer
+    assert "forventet at neste hendelse" in row.avviksdetaljer
+    assert "within" not in row.avviksdetaljer.lower()
 
 
 def test_violation_detail_explains_incomplete_passes(spark):
@@ -128,11 +128,11 @@ def test_violation_detail_explains_incomplete_passes(spark):
     df = spark.createDataFrame(rows, "grp string, ev string, d date")
     result, violations = run_rule({"event_flow": {**FLOW, "starts_with": None, "ends_with": None}}, df, spark)
 
-    assert result["status"] == "FAILED"
+    assert result["status"] == "Ikke bestått"
     row = violations.collect()[0]
-    assert "did not complete" in row.violation_detail.lower()
-    assert "continue as" in row.violation_detail.lower()
-    assert "within" not in row.violation_detail.lower()
+    assert "ble ikke fullført" in row.avviksdetaljer.lower()
+    assert "fortsette som" in row.avviksdetaljer.lower()
+    assert "within" not in row.avviksdetaljer.lower()
 
 
 def test_violation_detail_reports_expected_next_event_after_repeated_passes(spark):
@@ -144,14 +144,14 @@ def test_violation_detail_reports_expected_next_event_after_repeated_passes(spar
     df = spark.createDataFrame(rows, "grp string, ev string, d date")
     result, violations = run_rule({"event_flow": {**FLOW, "starts_with": None, "ends_with": None}}, df, spark)
 
-    assert result["status"] == "FAILED"
+    assert result["status"] == "Ikke bestått"
     row = violations.collect()[0]
-    assert "expected the next event to be 'B'" in row.violation_detail
+    assert "forventet at neste hendelse skulle være 'B'" in row.avviksdetaljer
 
 
 def test_single_event_cycle_allows_any_number_of_repeats(spark):
     result, _ = _run(spark, ["start", "A", "A", "A", "end"], cycle=["A"])
-    assert result["status"] == "PASSED"
+    assert result["status"] == "Bestått"
 
 
 def test_null_group_key_is_neither_counted_nor_reported(spark):
@@ -166,7 +166,7 @@ def test_null_group_key_is_neither_counted_nor_reported(spark):
     result, violations = run_rule({"event_flow": {**FLOW, "ends_with": None}}, df, spark)
 
     assert result["total_rows"] == 2
-    keys = [r.primary_key_value for r in violations.collect()]
+    keys = [r.primaernoekkel_verdi for r in violations.collect()]
     assert None not in keys
     assert keys == ["g2"]
 
@@ -192,7 +192,7 @@ def test_same_date_events_are_read_in_declared_order(spark, reverse):
         rows = list(reversed(rows))
     df = spark.createDataFrame(rows, "grp string, ev string, d date")
     result, _ = run_rule({"event_flow": FLOW}, df, spark)
-    assert result["status"] == "PASSED"
+    assert result["status"] == "Bestått"
 
 
 # --------------------------------------------------------------------------
@@ -213,7 +213,7 @@ def test_gate_scopes_which_groups_are_evaluated(spark):
     result, violations = run_rule(rule, df, spark)
 
     assert result["total_rows"] == 1
-    assert [r.primary_key_value for r in violations.collect()] == ["gated"]
+    assert [r.primaernoekkel_verdi for r in violations.collect()] == ["gated"]
 
 
 def test_gate_falls_back_to_ends_with_when_never_reached(spark):
@@ -236,7 +236,7 @@ def test_gate_falls_back_to_ends_with_when_never_reached(spark):
     result, violations = run_rule(rule, df, spark)
 
     assert result["total_rows"] == 1     # only the closed case is evaluated
-    assert [r.primary_key_value for r in violations.collect()] == ["no_gate_but_closed"]
+    assert [r.primaernoekkel_verdi for r in violations.collect()] == ["no_gate_but_closed"]
 
 
 def test_gate_reached_is_evaluated_even_without_ends_with_reached(spark):
@@ -254,7 +254,7 @@ def test_gate_reached_is_evaluated_even_without_ends_with_reached(spark):
     result, violations = run_rule(rule, df, spark)
 
     assert result["total_rows"] == 1
-    assert [r.primary_key_value for r in violations.collect()] == ["gated"]
+    assert [r.primaernoekkel_verdi for r in violations.collect()] == ["gated"]
 
 
 def test_gate_without_ends_with_configured_stays_strict(spark):
@@ -273,7 +273,7 @@ def test_gate_without_ends_with_configured_stays_strict(spark):
     result, violations = run_rule(rule, df, spark)
 
     assert result["total_rows"] == 1
-    assert [r.primary_key_value for r in violations.collect()] == ["gated"]
+    assert [r.primaernoekkel_verdi for r in violations.collect()] == ["gated"]
 
 
 def test_ends_with_alone_does_not_act_as_a_gate(spark):
@@ -288,7 +288,7 @@ def test_ends_with_alone_does_not_act_as_a_gate(spark):
     result, violations = run_rule(rule, df, spark)
 
     assert result["total_rows"] == 2     # both groups evaluated, no gate at all
-    assert [r.primary_key_value for r in violations.collect()] == ["g1"]
+    assert [r.primaernoekkel_verdi for r in violations.collect()] == ["g1"]
 
 
 def test_gate_accepts_several_values(spark):
@@ -307,7 +307,7 @@ def test_gate_accepts_several_values(spark):
     result, violations = run_rule(rule, df, spark)
 
     assert result["total_rows"] == 2      # g3 is out of scope
-    assert sorted(r.primary_key_value for r in violations.collect()) == ["g1", "g2"]
+    assert sorted(r.primaernoekkel_verdi for r in violations.collect()) == ["g1", "g2"]
 
 
 # --------------------------------------------------------------------------
@@ -325,5 +325,5 @@ def test_gate_accepts_several_values(spark):
 )
 def test_configuration_errors(spark, cfg, fragment):
     result, _ = _run(spark, ["start", "A", "B", "end"], **cfg)
-    assert result["status"] == "ERROR"
+    assert result["status"] == "Feil"
     assert fragment in result["details"]

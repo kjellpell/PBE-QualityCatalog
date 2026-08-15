@@ -21,8 +21,8 @@ BASELINE = Path(__file__).parent / "baseline_equivalence.json"
 
 # Non-deterministic per run: identity, wall-clock, and timing.
 _VOLATILE = {
-    "run_id", "run_timestamp", "batch_date", "rule_duration_seconds",
-    "resolution_timestamp", "first_seen_at",
+    "kjoert_id", "kjoert_tidspunkt", "kjoert_dato", "regelvarighet_sekunder",
+    "loest_tidspunkt", "foerst_observert_tidspunkt",
 }
 
 
@@ -42,11 +42,11 @@ def _snapshot(spark, vr, rule_sources):
     schema = vr.CONFIG.DEFAULT_SCHEMA
     return {
         "results": _rows(
-            spark.table(f"{schema}.dq_run_results"), ["rule_group", "rule_id"]
+            spark.table(f"{schema}.kjoeringsresultater"), ["regelgruppe", "regel_id"]
         ),
         "violations": _rows(
-            spark.table(f"{schema}.dq_violations"),
-            ["rule_id", "primary_key_value", "violated_column", "expected_condition"],
+            spark.table(f"{schema}.avvik"),
+            ["regel_id", "primaernoekkel_verdi", "avvikende_kolonne", "forventet_betingelse"],
         ),
     }
 
@@ -61,13 +61,13 @@ def test_pipeline_matches_baseline(spark, runner, rule_sources):
 
     expected = json.loads(BASELINE.read_text())
 
-    got_ids = [r["rule_id"] for r in snapshot["results"]]
-    want_ids = [r["rule_id"] for r in expected["results"]]
+    got_ids = [r["regel_id"] for r in snapshot["results"]]
+    want_ids = [r["regel_id"] for r in expected["results"]]
     assert got_ids == want_ids, "rule set changed"
 
     for want, got in zip(expected["results"], snapshot["results"]):
-        assert got == want, f"result row changed for {want['rule_id']}"
+        assert got == want, f"result row changed for {want['regel_id']}"
 
     assert len(snapshot["violations"]) == len(expected["violations"]), "violation count changed"
     for want, got in zip(expected["violations"], snapshot["violations"]):
-        assert got == want, f"violation changed for {want['rule_id']}"
+        assert got == want, f"violation changed for {want['regel_id']}"

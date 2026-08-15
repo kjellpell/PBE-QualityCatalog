@@ -53,9 +53,9 @@ TEST_SCHEMA = "dqtest"
 
 TEST_CONFIG = {
     "DEFAULT_SCHEMA": TEST_SCHEMA,
-    "DQ_RESULTS_TABLE": "dq_run_results",
-    "DQ_VIOLATIONS_TABLE": "dq_violations",
-    "DQ_EXECUTION_METRICS_TABLE": "dq_execution_metrics",
+    "DQ_RESULTS_TABLE": "kjoeringsresultater",
+    "DQ_VIOLATIONS_TABLE": "avvik",
+    "DQ_EXECUTION_METRICS_TABLE": "kjoeringslogg",
 }
 
 # MAX_RULE_RETRIES = 0 keeps the retry backoff (2s, 4s) out of the test run.

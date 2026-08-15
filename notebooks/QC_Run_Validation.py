@@ -26,8 +26,8 @@
 # =============================================================================
 # QC_Run_Validation
 #
-# Runs the Quality Catalog and writes `dq_run_results`, `dq_violations` and
-# `dq_execution_metrics`. Schedule this nightly, after the source tables have
+# Runs the Quality Catalog and writes `kjoeringsresultater`, `avvik` and
+# `kjoeringslogg`. Schedule this nightly, after the source tables have
 # refreshed.
 # =============================================================================
 
@@ -83,42 +83,42 @@ def print_run_evidence(config_mapping: dict) -> None:
         spark.sql(
             f"""
             SELECT
-                script_name,
+                skriptnavn,
                 status,
-                row_count,
-                started_at_utc,
-                finished_at_utc,
-                duration_seconds,
-                is_retryable,
-                error_message
+                antall_rader,
+                starttidspunkt_utc,
+                sluttidspunkt_utc,
+                varighet_sekunder,
+                kan_proeves_igjen,
+                feilmelding
             FROM {metrics_table}
-            ORDER BY finished_at_utc DESC
+            ORDER BY sluttidspunkt_utc DESC
             LIMIT 10
             """
         ).show(truncate=False)
 
     if has_results:
         latest = spark.sql(
-            f"SELECT run_id FROM {results_table} ORDER BY run_timestamp DESC LIMIT 1"
+            f"SELECT kjoert_id FROM {results_table} ORDER BY kjoert_tidspunkt DESC LIMIT 1"
         ).collect()
         if latest:
-            run_id = latest[0]["run_id"]
-            print(f"\nRule-group summary for latest run_id: {run_id}")
+            run_id = latest[0]["kjoert_id"]
+            print(f"\nRule-group summary for latest kjoert_id: {run_id}")
             # Pass run_id via a temp view rather than string interpolation to
             # prevent second-order SQL injection from crafted values in the table.
             spark.createDataFrame([(run_id,)], ["_run_id"]).createOrReplaceTempView("_ev_run_id")
             spark.sql(
                 f"""
                 SELECT
-                    rule_group,
+                    regelgruppe,
                     COUNT(*) AS total_rules,
-                    SUM(CASE WHEN status = 'PASSED' THEN 1 ELSE 0 END) AS passed,
-                    SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed,
-                    SUM(CASE WHEN status = 'ERROR' THEN 1 ELSE 0 END) AS errors
+                    SUM(CASE WHEN status = 'Bestått' THEN 1 ELSE 0 END) AS passed,
+                    SUM(CASE WHEN status = 'Ikke bestått' THEN 1 ELSE 0 END) AS failed,
+                    SUM(CASE WHEN status = 'Feil' THEN 1 ELSE 0 END) AS errors
                 FROM {results_table}
-                WHERE run_id = (SELECT _run_id FROM _ev_run_id)
-                GROUP BY rule_group
-                ORDER BY rule_group
+                WHERE kjoert_id = (SELECT _run_id FROM _ev_run_id)
+                GROUP BY regelgruppe
+                ORDER BY regelgruppe
                 """
             ).show(truncate=False)
             try:
@@ -127,12 +127,12 @@ def print_run_evidence(config_mapping: dict) -> None:
                 pass  # best-effort cleanup; non-fatal
 
     if has_violations:
-        print("\nCurrent violations by issue_status:")
+        print("\nCurrent violations by avviksstatus:")
         spark.sql(
             f"""
-            SELECT issue_status, COUNT(*) AS cnt
+            SELECT avviksstatus, COUNT(*) AS cnt
             FROM {violations_table}
-            GROUP BY issue_status
+            GROUP BY avviksstatus
             ORDER BY cnt DESC
             """
         ).show(truncate=False)

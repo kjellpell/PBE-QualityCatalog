@@ -82,8 +82,8 @@ This reads as the SQL it compiles to:
 | `rule_group` | yes | Name of the group; stored on every result and violation row |
 | `table` | yes | Source table |
 | `database` | no | Schema for `table` |
-| `pk_column` | yes | Column identifying a row, used as `primary_key_value` |
-| `identifier_column` | no | Column holding a human-meaningful identifier (e.g. `saksnummer`, native or joined-in), used as `identifier_value`. Unlike `pk_column`, never required and never used as a key |
+| `pk_column` | yes | Column identifying a row, used as `primaernoekkel_verdi` |
+| `identifier_column` | no | Column holding a human-meaningful identifier (e.g. `saksnummer`, native or joined-in), used as `identifikator_verdi`. Unlike `pk_column`, never required and never used as a key |
 | `where` | no | SQL predicate narrowing the source for every rule in the file |
 | `joins` | no | Pre-joins; `select` lists the columns to bring across |
 | `rules` | yes | The rules |
@@ -331,28 +331,28 @@ half and then judges what is left.
 
 ## Violation output
 
-One row in `dq_violations` per failing unit.
+One row in `avvik` per failing unit.
 
 | Column | Contents |
 |---|---|
-| `primary_key_value` | Row key, or group key for group-scoped rules |
-| `identifier_value` | Human-meaningful identifier (e.g. saksnummer), from the catalog's `identifier_column`. NULL if the catalog doesn't set one, or if the value itself is NULL (e.g. an unmatched join) |
-| `violation_scope` | `row`, `group` or `table` — how to read `primary_key_value` |
-| `violated_column` | The column at fault. A real column name, or NULL if the predicate names none |
-| `actual_value` | The offending value |
-| `expected_condition` | The full predicate or condition that was required |
-| `violation_detail` | Human-readable explanation |
-| `issue_status` | `Active` while the violation persists, then `Resolved` |
-| `first_seen_at` | When first detected; preserved across runs, so age is answerable |
-| `resolution_timestamp` | When it stopped appearing |
+| `primaernoekkel_verdi` | Row key, or group key for group-scoped rules |
+| `identifikator_verdi` | Human-meaningful identifier (e.g. saksnummer), from the catalog's `identifier_column`. NULL if the catalog doesn't set one, or if the value itself is NULL (e.g. an unmatched join) |
+| `avviksomfang` | `Rad`, `Gruppe` or `Tabell` — how to read `primaernoekkel_verdi` |
+| `avvikende_kolonne` | The column at fault. A real column name, or NULL if the predicate names none |
+| `faktisk_verdi` | The offending value |
+| `forventet_betingelse` | The full predicate or condition that was required |
+| `avviksdetaljer` | Human-readable explanation |
+| `avviksstatus` | `Aktiv` while the violation persists, then `Løst` |
+| `foerst_observert_tidspunkt` | When first detected; preserved across runs, so age is answerable |
+| `loest_tidspunkt` | When it stopped appearing |
 
-For a `check:` rule, `violated_column` is the first column referenced by the
-predicate — the natural subject (`a` in `a >= b`). `expected_condition` always
+For a `check:` rule, `avvikende_kolonne` is the first column referenced by the
+predicate — the natural subject (`a` in `a >= b`). `forventet_betingelse` always
 carries the whole predicate, so nothing is lost.
 
-Violations are keyed on `(rule_id, primary_key_value, violated_column,
-expected_condition)`. A violation that disappears from a run is marked
-`Resolved` rather than deleted.
+Violations are keyed on `(regel_id, primaernoekkel_verdi, avvikende_kolonne,
+forventet_betingelse)`. A violation that disappears from a run is marked
+`Løst` rather than deleted.
 
 ## Preflight
 

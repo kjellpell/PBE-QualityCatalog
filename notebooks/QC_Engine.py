@@ -141,31 +141,31 @@ def classify_retryable_error(message: str | None, runtime_settings) -> bool:
 
 
 _EXECUTION_METRIC_SCHEMA = StructType([
-    StructField("script_name", StringType(), True),
+    StructField("skriptnavn", StringType(), True),
     StructField("status", StringType(), True),
-    StructField("output_target", StringType(), True),
-    StructField("artifact_target", StringType(), True),
-    StructField("row_count", LongType(), True),
-    StructField("started_at_utc", TimestampType(), True),
-    StructField("finished_at_utc", TimestampType(), True),
-    StructField("duration_seconds", DoubleType(), True),
-    StructField("is_retryable", BooleanType(), True),
-    StructField("error_message", StringType(), True),
+    StructField("utdestinasjon", StringType(), True),
+    StructField("maalartifakt", StringType(), True),
+    StructField("antall_rader", LongType(), True),
+    StructField("starttidspunkt_utc", TimestampType(), True),
+    StructField("sluttidspunkt_utc", TimestampType(), True),
+    StructField("varighet_sekunder", DoubleType(), True),
+    StructField("kan_proeves_igjen", BooleanType(), True),
+    StructField("feilmelding", StringType(), True),
 ])
 
 
 def write_execution_metric(spark, table_name: str, payload: dict) -> None:
     row = {
-        "script_name": payload.get("script_name"),
+        "skriptnavn": payload.get("script_name"),
         "status": payload.get("status"),
-        "output_target": payload.get("output_target"),
-        "artifact_target": payload.get("artifact_target"),
-        "row_count": int(payload.get("row_count", 0)) if payload.get("row_count") is not None else None,
-        "started_at_utc": payload.get("started_at_utc"),
-        "finished_at_utc": payload.get("finished_at_utc"),
-        "duration_seconds": float(payload.get("duration_seconds")) if payload.get("duration_seconds") is not None else None,
-        "is_retryable": payload.get("is_retryable"),
-        "error_message": payload.get("error_message"),
+        "utdestinasjon": payload.get("output_target"),
+        "maalartifakt": payload.get("artifact_target"),
+        "antall_rader": int(payload.get("row_count", 0)) if payload.get("row_count") is not None else None,
+        "starttidspunkt_utc": payload.get("started_at_utc"),
+        "sluttidspunkt_utc": payload.get("finished_at_utc"),
+        "varighet_sekunder": float(payload.get("duration_seconds")) if payload.get("duration_seconds") is not None else None,
+        "kan_proeves_igjen": payload.get("is_retryable"),
+        "feilmelding": payload.get("error_message"),
     }
     df = spark.createDataFrame([row], schema=_EXECUTION_METRIC_SCHEMA)
 
@@ -213,8 +213,8 @@ def write_execution_metric(spark, table_name: str, payload: dict) -> None:
 #
 # Public API
 # ----------
-# RESULT_SCHEMA                – canonical Spark schema for dq_run_results rows
-# VIOLATION_SCHEMA             – canonical Spark schema for dq_violations rows
+# RESULT_SCHEMA                – canonical Spark schema for kjoeringsresultater rows
+# VIOLATION_SCHEMA             – canonical Spark schema for avvik rows
 # _apply_resolution_tracking() – DataFrame-based persistence
 # =============================================================================
 
@@ -234,62 +234,62 @@ from pyspark.sql.types import (
 
 
 # ---------------------------------------------------------------------------
-# Canonical schema for dq_run_results
+# Canonical schema for kjoeringsresultater
 # ---------------------------------------------------------------------------
 
 RESULT_SCHEMA = StructType([
-    StructField("run_id",               StringType(),    False),
-    StructField("run_timestamp",        TimestampType(), False),
-    StructField("batch_date",           DateType(),      False),
-    StructField("rule_group",           StringType(),    False),
-    StructField("rule_id",              StringType(),    False),
-    StructField("rule_name",            StringType(),    False),
-    StructField("table_name",           StringType(),    False),
-    StructField("expectation",          StringType(),    False),
-    StructField("total_rows",           LongType(),      True),
-    StructField("passed_rows",          LongType(),      True),
-    StructField("failed_rows",          LongType(),      True),
-    StructField("success_pct",          DoubleType(),    True),
+    StructField("kjoert_id",            StringType(),    False),
+    StructField("kjoert_tidspunkt",     TimestampType(), False),
+    StructField("kjoert_dato",          DateType(),      False),
+    StructField("regelgruppe",          StringType(),    False),
+    StructField("regel_id",             StringType(),    False),
+    StructField("regelnavn",            StringType(),    False),
+    StructField("tabellnavn",           StringType(),    False),
+    StructField("forventning",          StringType(),    False),
+    StructField("totalt_antall_rader",  LongType(),      True),
+    StructField("bestaatte_rader",      LongType(),      True),
+    StructField("ikke_bestatte_rader",  LongType(),      True),
+    StructField("suksessprosent",       DoubleType(),    True),
     StructField("status",               StringType(),    False),
-    StructField("details",              StringType(),    True),
-    StructField("rule_duration_seconds", DoubleType(),   True),
-    # Populated only when status = 'ERROR'; NULL for PASSED/FAILED rules.
-    # Values: 'infrastructure' | 'configuration' | 'source_data'
-    StructField("error_category",       StringType(),    True),
+    StructField("detaljer",             StringType(),    True),
+    StructField("regelvarighet_sekunder", DoubleType(),  True),
+    # Populated only when status = 'Feil'; NULL for Bestått/Ikke bestått rows.
+    # Values: 'Infrastruktur' | 'Konfigurasjon' | 'Kildedata'
+    StructField("feilkategori",         StringType(),    True),
 ])
 
 
 # ---------------------------------------------------------------------------
-# Canonical schema for dq_violations
+# Canonical schema for avvik
 # ---------------------------------------------------------------------------
 
 VIOLATION_SCHEMA = StructType([
-    StructField("run_id",              StringType(),    False),
-    StructField("run_timestamp",       TimestampType(), False),
-    StructField("batch_date",          DateType(),      False),
-    StructField("rule_group",          StringType(),    False),
-    StructField("rule_id",             StringType(),    False),
-    StructField("rule_name",           StringType(),    False),
-    StructField("table_name",          StringType(),    False),
-    StructField("primary_key_value",   StringType(),    True),
+    StructField("kjoert_id",             StringType(),    False),
+    StructField("kjoert_tidspunkt",      TimestampType(), False),
+    StructField("kjoert_dato",           DateType(),      False),
+    StructField("regelgruppe",           StringType(),    False),
+    StructField("regel_id",              StringType(),    False),
+    StructField("regelnavn",             StringType(),    False),
+    StructField("tabellnavn",            StringType(),    False),
+    StructField("primaernoekkel_verdi",  StringType(),    True),
     # Human-meaningful identifier for the row (e.g. saksnummer), when the
     # catalog sets `identifier_column`. NULL when it doesn't — this is
     # enrichment, never used as a key.
-    StructField("identifier_value",    StringType(),    True),
-    StructField("violated_column",     StringType(),    True),
-    StructField("actual_value",        StringType(),    True),
-    StructField("expected_condition",  StringType(),    True),
-    StructField("violation_detail",    StringType(),    True),
-    StructField("issue_status",        StringType(),    False),
+    StructField("identifikator_verdi",   StringType(),    True),
+    StructField("avvikende_kolonne",     StringType(),    True),
+    StructField("faktisk_verdi",         StringType(),    True),
+    StructField("forventet_betingelse",  StringType(),    True),
+    StructField("avviksdetaljer",        StringType(),    True),
+    StructField("avviksstatus",          StringType(),    False),
     # Stored as an ISO-8601 string ("2026-04-03T10:00:00") so that the value
     # can be read in environments without full Delta/Spark type coercion.
-    StructField("resolution_timestamp", StringType(),   True),
+    StructField("loest_tidspunkt",       StringType(),    True),
     # Set once when the violation is first detected; preserved on every subsequent
-    # run so violation age can be calculated as (now - first_seen_at).
-    StructField("first_seen_at",       TimestampType(), True),
-    # "row" — primary_key_value is a PK in table_name; "group" — it's a group key
+    # run so violation age can be calculated as (now - foerst_observert_tidspunkt).
+    StructField("foerst_observert_tidspunkt", TimestampType(), True),
+    # "Rad" — primaernoekkel_verdi is a PK in tabellnavn; "Gruppe" — it's a group key
     # (event_flow, required_event, aggregate_matches).
-    StructField("violation_scope",     StringType(),    True),
+    StructField("avviksomfang",          StringType(),    True),
 ])
 
 
@@ -300,7 +300,7 @@ VIOLATION_SCHEMA = StructType([
 def _apply_resolution_tracking(
     current_violations_df: DataFrame,
     spark_session,
-    violations_table: str = "dq_violations",
+    violations_table: str = "avvik",
     run_timestamp: datetime | None = None,
 ) -> None:
     """
@@ -312,25 +312,25 @@ def _apply_resolution_tracking(
 
     Logic applied:
       1. Violations still present → row replaced with current run metadata
-         (run_id, run_timestamp, batch_date, violation_detail, actual_value);
-         issue_status stays 'Active'.
-      2. Brand-new violations → inserted with issue_status = 'Active' and
-         resolution_timestamp = NULL.
-      3. Previously Active violations absent from this run → issue_status set
-         to 'Resolved', resolution_timestamp set to the run timestamp.
-      4. Already-Resolved historical rows → kept unchanged.
+         (kjoert_id, kjoert_tidspunkt, kjoert_dato, avviksdetaljer, faktisk_verdi);
+         avviksstatus stays 'Aktiv'.
+      2. Brand-new violations → inserted with avviksstatus = 'Aktiv' and
+         loest_tidspunkt = NULL.
+      3. Previously Aktiv violations absent from this run → avviksstatus set
+         to 'Løst', loest_tidspunkt set to the run timestamp.
+      4. Already-Løst historical rows → kept unchanged.
 
     Parameters
     ----------
     current_violations_df : Spark DataFrame matching VIOLATION_SCHEMA
     spark_session         : active SparkSession
-    violations_table      : fully-qualified table name (e.g. "datakvalitet.dq_violations")
+    violations_table      : fully-qualified table name (e.g. "datakvalitet.avvik")
     run_timestamp         : timestamp to record for resolutions
                             (defaults to datetime.now(timezone.utc))
     """
     _REQUIRED_COLUMNS = {
-        "rule_id", "primary_key_value", "violated_column",
-        "expected_condition", "issue_status",
+        "regel_id", "primaernoekkel_verdi", "avvikende_kolonne",
+        "forventet_betingelse", "avviksstatus",
     }
     missing = _REQUIRED_COLUMNS - set(current_violations_df.columns)
     if missing:
@@ -341,27 +341,28 @@ def _apply_resolution_tracking(
 
     ts = (run_timestamp or datetime.now(timezone.utc)).isoformat()
 
-    # violated_column and expected_condition are nullable; replace NULL with a
-    # sentinel for joining so two NULL values are treated as the same key.
+    # avvikende_kolonne and forventet_betingelse are nullable; replace NULL with
+    # a sentinel for joining so two NULL values are treated as the same key.
     #
-    # expected_condition is part of the key because group-style expectations
+    # forventet_betingelse is part of the key because group-style expectations
     # (e.g. event_flow) emit several distinct violations for the same
-    # (rule_id, primary_key_value, violated_column) — one per required pair —
-    # differing only in expected_condition.  Without it those rows would collapse
-    # to one under dropDuplicates/left-anti and the extra violations would be
-    # lost.  expected_condition is a deterministic rule/pair-level string (it
-    # never contains per-row data), so keying on it keeps resolution stable.
+    # (regel_id, primaernoekkel_verdi, avvikende_kolonne) — one per required
+    # pair — differing only in forventet_betingelse.  Without it those rows
+    # would collapse to one under dropDuplicates/left-anti and the extra
+    # violations would be lost.  forventet_betingelse is a deterministic
+    # rule/pair-level string (it never contains per-row data), so keying on it
+    # keeps resolution stable.
     _SENTINEL = "__NULL__"
-    _jk = ["rule_id", "primary_key_value", "_vk", "_ek"]
+    _jk = ["regel_id", "primaernoekkel_verdi", "_vk", "_ek"]
 
     def _with_join_key(df: DataFrame) -> DataFrame:
         return (
-            df.withColumn("_vk", F.coalesce(F.col("violated_column"), F.lit(_SENTINEL)))
-            .withColumn("_ek", F.coalesce(F.col("expected_condition"), F.lit(_SENTINEL)))
+            df.withColumn("_vk", F.coalesce(F.col("avvikende_kolonne"), F.lit(_SENTINEL)))
+            .withColumn("_ek", F.coalesce(F.col("forventet_betingelse"), F.lit(_SENTINEL)))
         )
 
     try:
-        merge_key = ["rule_id", "primary_key_value", "violated_column", "expected_condition"]
+        merge_key = ["regel_id", "primaernoekkel_verdi", "avvikende_kolonne", "forventet_betingelse"]
         current_violations_df = current_violations_df.dropDuplicates(merge_key)
 
         # Break the read's lineage to violations_table before the final write
@@ -369,12 +370,12 @@ def _apply_resolution_tracking(
         # with UNSUPPORTED_OVERWRITE.TABLE ("can't overwrite the target that is
         # also being read from") even though the write only happens afterwards.
         existing_df     = spark_session.table(violations_table).localCheckpoint(eager=True)
-        existing_active = existing_df.filter(F.col("issue_status") == "Active")
-        # Everything that is not Active is carried through unchanged.  Use a
-        # NULL-safe negation so legacy rows with a NULL issue_status (e.g. rows
+        existing_active = existing_df.filter(F.col("avviksstatus") == "Aktiv")
+        # Everything that is not Aktiv is carried through unchanged.  Use a
+        # NULL-safe negation so legacy rows with a NULL avviksstatus (e.g. rows
         # predating the column) are preserved rather than dropped on rewrite.
         existing_other  = existing_df.filter(
-            ~(F.col("issue_status") == "Active") | F.col("issue_status").isNull()
+            ~(F.col("avviksstatus") == "Aktiv") | F.col("avviksstatus").isNull()
         )
 
         curr_jk = _with_join_key(current_violations_df)
@@ -387,25 +388,26 @@ def _apply_resolution_tracking(
             .drop("_vk", "_ek")
         )
 
-        # Still-active violations → refresh run metadata but preserve first_seen_at
-        # from the existing row so violation age is measured from initial detection.
-        _orig_first_seen = act_jk.select(_jk + ["first_seen_at"]).withColumnRenamed(
-            "first_seen_at", "_orig_first_seen_at"
+        # Still-active violations → refresh run metadata but preserve
+        # foerst_observert_tidspunkt from the existing row so violation age is
+        # measured from initial detection.
+        _orig_first_seen = act_jk.select(_jk + ["foerst_observert_tidspunkt"]).withColumnRenamed(
+            "foerst_observert_tidspunkt", "_orig_first_seen_at"
         )
         still_active = (
             curr_jk
             .join(_orig_first_seen, on=_jk, how="inner")
-            .withColumn("first_seen_at", F.col("_orig_first_seen_at"))
+            .withColumn("foerst_observert_tidspunkt", F.col("_orig_first_seen_at"))
             .drop("_orig_first_seen_at", "_vk", "_ek")
         )
 
-        # Previously active, absent from current run → mark Resolved
+        # Previously active, absent from current run → mark Løst
         stale_active = (
             act_jk
             .join(curr_jk.select(_jk), on=_jk, how="left_anti")
             .drop("_vk", "_ek")
-            .withColumn("issue_status", F.lit("Resolved"))
-            .withColumn("resolution_timestamp", F.lit(ts))
+            .withColumn("avviksstatus", F.lit("Løst"))
+            .withColumn("loest_tidspunkt", F.lit(ts))
         )
 
         final_df = (
@@ -480,12 +482,12 @@ from pyspark.sql.types import StringType, StructField, StructType
 # =============================================================================
 
 _VIOLATION_COLUMNS = (
-    "primary_key_value",
-    "identifier_value",
-    "violated_column",
-    "actual_value",
-    "expected_condition",
-    "violation_detail",
+    "primaernoekkel_verdi",
+    "identifikator_verdi",
+    "avvikende_kolonne",
+    "faktisk_verdi",
+    "forventet_betingelse",
+    "avviksdetaljer",
 )
 
 _VIOLATION_SCHEMA = StructType([
@@ -532,7 +534,7 @@ def _str_or_null(col_name: str):
 
 
 def _row_identifier_expr(ctx: "Context"):
-    """identifier_value for a row-scoped builder: ctx.df still carries every
+    """identifikator_verdi for a row-scoped builder: ctx.df still carries every
     joined column per row, so this is a direct reference. NULL when the
     catalog has no `identifier_column` configured."""
     if ctx.identifier_column:
@@ -541,22 +543,22 @@ def _row_identifier_expr(ctx: "Context"):
 
 
 def _with_group_identifier(violating: DataFrame, ctx: "Context", group_column: str) -> DataFrame:
-    """Attach an `identifier_value` column to a group-scoped violations frame.
+    """Attach an `identifikator_verdi` column to a group-scoped violations frame.
 
     By the time a group-scoped builder assembles its final `violating` frame it
     has already reduced to one row per `group_column`, dropping every other
     joined column along the way — unlike the row-scoped builders, there is no
     column left to reference directly. This rebuilds a (group_column,
-    identifier_value) lookup from the original per-row frame — one value per
+    identifikator_verdi) lookup from the original per-row frame — one value per
     group, via `first(ignorenulls=True)`, since the identifier is expected to be
     constant within a group — and joins it onto `violating`.
     """
     if not ctx.identifier_column:
-        return violating.withColumn("identifier_value", F.lit(None).cast("string"))
+        return violating.withColumn("identifikator_verdi", F.lit(None).cast("string"))
     lookup = (
         ctx.df.filter(F.col(group_column).isNotNull())
         .groupBy(group_column)
-        .agg(F.first(_as_str(ctx.identifier_column), ignorenulls=True).alias("identifier_value"))
+        .agg(F.first(_as_str(ctx.identifier_column), ignorenulls=True).alias("identifikator_verdi"))
     )
     return violating.join(lookup, on=group_column, how="left")
 
@@ -571,7 +573,7 @@ def predicate_columns(expression: str) -> list[str]:
     predicate (`a` in `a >= b`).
 
     Best-effort: returns [] if the tree cannot be walked, in which case the
-    caller falls back to a NULL violated_column rather than failing the rule.
+    caller falls back to a NULL avvikende_kolonne rather than failing the rule.
     """
     try:
         expr = F.expr(expression)
@@ -614,13 +616,13 @@ def _comparison_parts(expression: str) -> tuple[str, str] | None:
 
 def _comparison_phrase(operator: str) -> str:
     return {
-        ">=": "is less than the required value",
-        ">": "is less than or equal to the required value",
-        "<=": "is greater than the required value",
-        "<": "is greater than or equal to the required value",
-        "=": "does not match the required value",
-        "!=": "matches the required value",
-    }.get(operator, "does not satisfy the required value")
+        ">=": "Er mindre enn kravverdien",
+        ">": "Er mindre enn eller lik kravverdien",
+        "<=": "Er større enn kravverdien",
+        "<": "Er større enn eller lik kravverdien",
+        "=": "Samsvarer ikke med kravverdien",
+        "!=": "Samsvarer med kravverdien",
+    }.get(operator, "Oppfyller ikke kravet")
 
 
 def _as_list(raw) -> list:
@@ -756,7 +758,7 @@ def _build_check(ctx: Context) -> Evaluation:
         actual = _as_str(subject)
         detail = F.concat(
             F.lit(f"{subject} = "), _str_or_null(subject),
-            F.lit("; expected "),
+            F.lit("; forventet "),
             F.lit(expression),
         )
         comparison = _comparison_parts(expression)
@@ -773,15 +775,15 @@ def _build_check(ctx: Context) -> Evaluation:
             )
     else:
         actual = F.lit(None).cast("string")
-        detail = F.lit(f"Row does not satisfy {expression}")
+        detail = F.lit(f"Raden oppfyller ikke {expression}")
 
     violations = violating.select(
-        _as_str(ctx.pk_column).alias("primary_key_value"),
-        _row_identifier_expr(ctx).alias("identifier_value"),
-        F.lit(subject).cast("string").alias("violated_column"),
-        actual.alias("actual_value"),
-        F.lit(expression).alias("expected_condition"),
-        detail.alias("violation_detail"),
+        _as_str(ctx.pk_column).alias("primaernoekkel_verdi"),
+        _row_identifier_expr(ctx).alias("identifikator_verdi"),
+        F.lit(subject).cast("string").alias("avvikende_kolonne"),
+        actual.alias("faktisk_verdi"),
+        F.lit(expression).alias("forventet_betingelse"),
+        detail.alias("avviksdetaljer"),
     )
     return Evaluation(evaluated, violations, expression)
 
@@ -809,12 +811,12 @@ def _build_unique(ctx: Context) -> Evaluation:
     combination = ", ".join(columns)
     condition = f"UNIQUE({combination})"
     violations = violating.select(
-        _as_str(ctx.pk_column).alias("primary_key_value"),
-        _row_identifier_expr(ctx).alias("identifier_value"),
-        F.lit(columns[0]).alias("violated_column"),
-        F.concat_ws("|", *[_as_str(c) for c in columns]).alias("actual_value"),
-        F.lit(condition).alias("expected_condition"),
-        F.lit(f"Duplicate combination of ({combination}).").alias("violation_detail"),
+        _as_str(ctx.pk_column).alias("primaernoekkel_verdi"),
+        _row_identifier_expr(ctx).alias("identifikator_verdi"),
+        F.lit(columns[0]).alias("avvikende_kolonne"),
+        F.concat_ws("|", *[_as_str(c) for c in columns]).alias("faktisk_verdi"),
+        F.lit(condition).alias("forventet_betingelse"),
+        F.lit(f"Duplikatkombinasjon av ({combination}).").alias("avviksdetaljer"),
     )
     return Evaluation(ctx.df, violations, condition)
 
@@ -845,7 +847,7 @@ def _build_row_count(ctx: Context) -> Evaluation:
         violations = empty_violations(ctx.spark)
     else:
         expected = f"{minimum} <= row_count <= {maximum}"
-        detail = f"Table has {count} rows; expected between {minimum} and {maximum}."
+        detail = f"Tabellen har {count} rader; forventet mellom {minimum} og {maximum}."
         violations = ctx.spark.createDataFrame(
             [(None, None, "row_count", str(count), expected, detail)],
             _VIOLATION_SCHEMA,
@@ -1032,44 +1034,44 @@ def _build_event_flow(ctx: Context) -> Evaluation:
     condition = f"Events must follow: {flow}"
     violating = _with_group_identifier(violating, ctx, group_column)
     violations = violating.select(
-        _as_str(group_column).alias("primary_key_value"),
-        F.col("identifier_value"),
-        F.lit(event_column).alias("violated_column"),
-        _as_str("_bad_event").alias("actual_value"),
-        F.lit(condition).alias("expected_condition"),
+        _as_str(group_column).alias("primaernoekkel_verdi"),
+        F.col("identifikator_verdi"),
+        F.lit(event_column).alias("avvikende_kolonne"),
+        _as_str("_bad_event").alias("faktisk_verdi"),
+        F.lit(condition).alias("forventet_betingelse"),
         F.when(
             F.col("_bad_event").isNotNull() & F.col("_expected_event").isNotNull(),
             F.concat(
-                F.lit("Unexpected event '"),
+                F.lit("Uventet hendelse '"),
                 _as_str("_bad_event"),
-                F.lit("' in the sequence; expected the next event to be '"),
+                F.lit("' i rekkefølgen; forventet at neste hendelse skulle være '"),
                 _as_str("_expected_event"),
                 F.lit("'."),
             ),
         ).when(
             F.col("_expected_event").isNotNull() & F.col("_bad_event").isNull(),
             F.concat(
-                F.lit("A flow started but did not complete; expected to continue as "),
+                F.lit("En hendelsesflyt startet, men ble ikke fullført; forventet å fortsette som "),
                 F.lit(flow),
-                F.lit("; expected the next event to be '"),
+                F.lit("; forventet at neste hendelse skulle være '"),
                 _as_str("_expected_event"),
                 F.lit("'."),
             ),
         ).when(
             F.col("_bad_event").isNotNull(),
             F.concat(
-                F.lit("Unexpected event '"),
+                F.lit("Uventet hendelse '"),
                 _as_str("_bad_event"),
-                F.lit("' in the sequence; expected "),
+                F.lit("' i rekkefølgen; forventet "),
                 F.lit(flow),
             ),
         ).otherwise(
             F.concat(
-                F.lit("A flow started but did not complete; expected to continue as "),
+                F.lit("En hendelsesflyt startet, men ble ikke fullført; forventet å fortsette som "),
                 F.lit(flow),
                 F.lit("."),
             )
-        ).alias("violation_detail"),
+        ).alias("avviksdetaljer"),
     )
     return Evaluation(evaluated, violations, condition)
 
@@ -1106,12 +1108,12 @@ def _build_required_event(ctx: Context) -> Evaluation:
     )
     violating = _with_group_identifier(violating, ctx, group_column)
     violations = violating.select(
-        _as_str(group_column).alias("primary_key_value"),
-        F.col("identifier_value"),
-        F.lit(event_column).alias("violated_column"),
-        F.lit(None).cast("string").alias("actual_value"),
-        F.lit(condition).alias("expected_condition"),
-        F.lit(f"Required event '{value}' missing.").alias("violation_detail"),
+        _as_str(group_column).alias("primaernoekkel_verdi"),
+        F.col("identifikator_verdi"),
+        F.lit(event_column).alias("avvikende_kolonne"),
+        F.lit(None).cast("string").alias("faktisk_verdi"),
+        F.lit(condition).alias("forventet_betingelse"),
+        F.lit(f"Påkrevd hendelse '{value}' mangler.").alias("avviksdetaljer"),
     )
     return Evaluation(evaluated, violations, condition)
 
@@ -1152,16 +1154,16 @@ def _build_aggregate_matches(ctx: Context) -> Evaluation:
     )
     violating = _with_group_identifier(violating, ctx, group_column)
     violations = violating.select(
-        _as_str(group_column).alias("primary_key_value"),
-        F.col("identifier_value"),
-        F.lit(aggregate_column).alias("violated_column"),
-        _as_str("_aggregate").alias("actual_value"),
-        F.lit(condition).alias("expected_condition"),
+        _as_str(group_column).alias("primaernoekkel_verdi"),
+        F.col("identifikator_verdi"),
+        F.lit(aggregate_column).alias("avvikende_kolonne"),
+        _as_str("_aggregate").alias("faktisk_verdi"),
+        F.lit(condition).alias("forventet_betingelse"),
         F.concat(
             F.lit(f"{aggregate.upper()}({aggregate_column}) = "), _str_or_null("_aggregate"),
-            F.lit(f", expected {reference_column} = "), _str_or_null(reference_column),
-            F.lit(", difference "), _str_or_null("_difference"),
-        ).alias("violation_detail"),
+            F.lit(f", forventet {reference_column} = "), _str_or_null(reference_column),
+            F.lit(", differanse "), _str_or_null("_difference"),
+        ).alias("avviksdetaljer"),
     )
     return Evaluation(evaluated, violations, condition)
 
@@ -1219,7 +1221,7 @@ RULE_TYPES: dict[str, RuleType] = {
 # by preflight. `check` is only a predicate for the `check` rule type.
 PREDICATE_KEYS = ("when", "check")
 
-# Rule types whose primary_key_value is a group key rather than a row key.
+# Rule types whose primaernoekkel_verdi is a group key rather than a row key.
 GROUP_SCOPED = frozenset(t.name for t in RULE_TYPES.values() if t.scope == "group")
 
 # Reserved rule-level keys that never name a rule type. Preflight imports this
@@ -1247,7 +1249,7 @@ def detect_rule_type(rule: dict) -> str:
 def _error(message: str) -> dict:
     return {
         "total_rows": 0, "passed_rows": 0, "failed_rows": 0,
-        "success_pct": 0.0, "status": "ERROR", "details": message,
+        "success_pct": 0.0, "status": "Feil", "details": message,
     }
 
 
@@ -1291,7 +1293,7 @@ def run_rule(rule: dict, df: DataFrame, spark, pk_column=None, identifier_column
         if rule_type.scope == "group":
             # One group counts once however many of its pairs or events failed,
             # so failures stay in the same unit as the denominator.
-            failed = evaluation.violations.select("primary_key_value").distinct().count()
+            failed = evaluation.violations.select("primaernoekkel_verdi").distinct().count()
         else:
             failed = evaluation.violations.count()
 
@@ -1307,7 +1309,7 @@ def run_rule(rule: dict, df: DataFrame, spark, pk_column=None, identifier_column
             "passed_rows": passed,
             "failed_rows": failed,
             "success_pct": _safe_pct(passed, total),
-            "status": "PASSED" if failed == 0 else "FAILED",
+            "status": "Bestått" if failed == 0 else "Ikke bestått",
             "details": details,
         }
         violations = (
@@ -1335,9 +1337,9 @@ def run_rule(rule: dict, df: DataFrame, spark, pk_column=None, identifier_column
 #        a. Dispatch to the matching rule type in the rule-type registry.
 #        b. Collect per-rule results (counts, success %, status).
 #        c. Collect per-row violation details.
-#   4. Write summary rows to dq_run_results (Delta table).
-#   5. Write violation rows to dq_violations via DataFrame-based resolution tracking.
-#   6. Write execution metrics to dq_execution_metrics.
+#   4. Write summary rows to kjoeringsresultater (Delta table).
+#   5. Write violation rows to avvik via DataFrame-based resolution tracking.
+#   6. Write execution metrics to kjoeringslogg.
 #
 # Schedule: nightly (after source tables are refreshed).
 # Prerequisites: QC_Setup_Tables must have been run at least once.
@@ -1487,7 +1489,7 @@ def load_rule_catalogs(rule_sources: dict) -> list[dict]:
         print(f"  Rule group: {catalog['rule_group']} ({len(rules)} rules)  [{name}]")
 
     # A catalog that cannot be loaded is a silent loss of coverage, not a warning.
-    # Skipping it would leave the run reporting Succeeded over fewer rules, and the
+    # Skipping it would leave the run reporting Vellykket over fewer rules, and the
     # quality score can *rise*, because the rules that disappeared included the
     # failing ones. Nobody reads stdout at 03:00, so fail the run instead.
     if unusable:
@@ -1513,14 +1515,14 @@ _SOURCE_ERROR_MARKERS = [
 
 
 def _classify_error_category(status: str, details: str | None) -> str | None:
-    if status != "ERROR":
+    if status != "Feil":
         return None
     lowered = (details or "").lower()
     if any(m in lowered for m in _INFRA_ERROR_MARKERS):
-        return "infrastructure"
+        return "Infrastruktur"
     if any(m in lowered for m in _SOURCE_ERROR_MARKERS):
-        return "source_data"
-    return "configuration"
+        return "Kildedata"
+    return "Konfigurasjon"
 
 
 def _empty_results():
@@ -1593,10 +1595,10 @@ def run_validation(
     ----------
     rule_catalog   : dict loaded from YAML rule files (one rule group)
     source_df      : full Spark DataFrame to validate
-    pk_col         : primary key column of source_df (stored as primary_key_value
+    pk_col         : primary key column of source_df (stored as primaernoekkel_verdi
                      in each violation row)
     identifier_col : optional human-meaningful identifier column of source_df
-                     (stored as identifier_value in each violation row)
+                     (stored as identifikator_verdi in each violation row)
 
     Returns
     -------
@@ -1620,8 +1622,8 @@ def run_validation(
             print(f"  → [{rule_id}] {rule_name} ... ERROR")
             all_results.append((
                 RUN_ID, RUN_TIMESTAMP, BATCH_DATE, rule_group, rule_id, rule_name,
-                table_name, exp_name, 0, 0, 0, 0.0, "ERROR",
-                f"[{table_name}/{rule_id}] {exc}", 0.0, "configuration",
+                table_name, exp_name, 0, 0, 0, 0.0, "Feil",
+                f"[{table_name}/{rule_id}] {exc}", 0.0, "Konfigurasjon",
             ))
             continue
 
@@ -1642,7 +1644,7 @@ def run_validation(
                     "passed_rows": 0,
                     "failed_rows": 0,
                     "success_pct": 0.0,
-                    "status":      "ERROR",
+                    "status":      "Feil",
                     "details":     f"[{table_name}/{rule_id}] Timed out after {_timeout_s}s.",
                 }
                 viols_spark = None
@@ -1660,7 +1662,7 @@ def run_validation(
                     "passed_rows": 0,
                     "failed_rows": 0,
                     "success_pct": 0.0,
-                    "status":      "ERROR",
+                    "status":      "Feil",
                     "details":     f"[{table_name}/{rule_id}/{exp_name}] Error: {exc}",
                 }
                 viols_spark = None
@@ -1690,25 +1692,25 @@ def run_validation(
 
         if viols_spark is not None:
             viols_spark = viols_spark.select(
-                F.lit(RUN_ID).alias("run_id"),
-                F.lit(RUN_TIMESTAMP).alias("run_timestamp"),
-                F.lit(str(BATCH_DATE)).cast("date").alias("batch_date"),
-                F.lit(rule_group).alias("rule_group"),
-                F.lit(rule_id).alias("rule_id"),
-                F.lit(rule_name).alias("rule_name"),
-                F.lit(table_name).alias("table_name"),
-                F.col("primary_key_value"),
-                F.col("identifier_value"),
-                F.col("violated_column"),
-                F.col("actual_value"),
-                F.col("expected_condition"),
-                F.col("violation_detail"),
-                F.lit("Active").alias("issue_status"),
-                F.lit(None).cast("string").alias("resolution_timestamp"),
+                F.lit(RUN_ID).alias("kjoert_id"),
+                F.lit(RUN_TIMESTAMP).alias("kjoert_tidspunkt"),
+                F.lit(str(BATCH_DATE)).cast("date").alias("kjoert_dato"),
+                F.lit(rule_group).alias("regelgruppe"),
+                F.lit(rule_id).alias("regel_id"),
+                F.lit(rule_name).alias("regelnavn"),
+                F.lit(table_name).alias("tabellnavn"),
+                F.col("primaernoekkel_verdi"),
+                F.col("identifikator_verdi"),
+                F.col("avvikende_kolonne"),
+                F.col("faktisk_verdi"),
+                F.col("forventet_betingelse"),
+                F.col("avviksdetaljer"),
+                F.lit("Aktiv").alias("avviksstatus"),
+                F.lit(None).cast("string").alias("loest_tidspunkt"),
                 # resolution.py preserves this value for still-active violations;
                 # brand-new violations use the current run timestamp as their origin.
-                F.lit(RUN_TIMESTAMP).alias("first_seen_at"),
-                F.lit("group" if exp_name in GROUP_SCOPED else "row").alias("violation_scope"),
+                F.lit(RUN_TIMESTAMP).alias("foerst_observert_tidspunkt"),
+                F.lit("Gruppe" if exp_name in GROUP_SCOPED else "Rad").alias("avviksomfang"),
             )
             violation_dfs.append(viols_spark)
 
@@ -1867,10 +1869,10 @@ def run_quality_catalog(rule_sources: dict) -> tuple[int, int]:
 
     # Print the top-5 slowest rules to help identify bottlenecks.
     if results_count > 0:
-        print("\n--- Top-5 slowest rules (by rule_duration_seconds) ---")
+        print("\n--- Top-5 slowest rules (by regelvarighet_sekunder) ---")
         all_results_combined.orderBy(
-            "rule_duration_seconds", ascending=False
-        ).select("rule_id", "rule_name", "status", "rule_duration_seconds").show(
+            "regelvarighet_sekunder", ascending=False
+        ).select("regel_id", "regelnavn", "status", "regelvarighet_sekunder").show(
             5, truncate=False
         )
 
@@ -1893,19 +1895,19 @@ def run_quality_catalog(rule_sources: dict) -> tuple[int, int]:
     spark.sql(
         f"""
         SELECT
-            rule_group,
-            COUNT(*)                                                    AS total_rules,
-            SUM(CASE WHEN status = 'PASSED' THEN 1 ELSE 0 END)         AS passed,
-            SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END)         AS failed,
-            SUM(CASE WHEN status = 'ERROR'  THEN 1 ELSE 0 END)         AS errors,
+            regelgruppe,
+            COUNT(*)                                                        AS total_rules,
+            SUM(CASE WHEN status = 'Bestått' THEN 1 ELSE 0 END)            AS passed,
+            SUM(CASE WHEN status = 'Ikke bestått' THEN 1 ELSE 0 END)       AS failed,
+            SUM(CASE WHEN status = 'Feil'  THEN 1 ELSE 0 END)              AS errors,
             ROUND(
-                SUM(CASE WHEN status = 'PASSED' THEN 1 ELSE 0 END)
+                SUM(CASE WHEN status = 'Bestått' THEN 1 ELSE 0 END)
                 * 100.0 / COUNT(*), 1
-            )                                                           AS quality_score_pct
+            )                                                               AS quality_score_pct
         FROM {TARGETS['results_table']}
-        WHERE run_id = (SELECT _run_id FROM _dq_run_id)
-        GROUP BY rule_group
-        ORDER BY rule_group
+        WHERE kjoert_id = (SELECT _run_id FROM _dq_run_id)
+        GROUP BY regelgruppe
+        ORDER BY regelgruppe
         """
     ).show(truncate=False)
     try:
@@ -1919,7 +1921,7 @@ def run_quality_catalog(rule_sources: dict) -> tuple[int, int]:
 
 
 def run_with_metrics(rule_sources: dict, script_name: str) -> tuple[int, int]:
-    """Run the catalog and record the outcome in dq_execution_metrics.
+    """Run the catalog and record the outcome in kjoeringslogg.
 
     A crashed run must still leave evidence of why, so the failure metric is
     written before the original exception is re-raised.
@@ -1936,7 +1938,7 @@ def run_with_metrics(rule_sources: dict, script_name: str) -> tuple[int, int]:
             TARGETS["execution_metrics_table"],
             {
                 "script_name": script_name,
-                "status": "Failed",
+                "status": "Mislykket",
                 "output_target": TARGETS["results_table"],
                 "artifact_target": TARGETS["violations_table"],
                 "row_count": 0,
@@ -1955,7 +1957,7 @@ def run_with_metrics(rule_sources: dict, script_name: str) -> tuple[int, int]:
         TARGETS["execution_metrics_table"],
         {
             "script_name": script_name,
-            "status": "Succeeded",
+            "status": "Vellykket",
             "output_target": TARGETS["results_table"],
             "artifact_target": TARGETS["violations_table"],
             "row_count": int(results_count),
