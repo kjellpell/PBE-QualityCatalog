@@ -19,6 +19,7 @@ TABLE_NAME = "test_dq_violations"
 def _violation_row(
     rule_id="R1",
     pk="P1",
+    identifier_value="SAK-001",
     violated_column="col_a",
     expected_condition="col_a IS NOT NULL",
     issue_status="Active",
@@ -37,6 +38,7 @@ def _violation_row(
         "Test rule",
         "test_table",
         pk,
+        identifier_value,
         violated_column,
         "some value",
         expected_condition,

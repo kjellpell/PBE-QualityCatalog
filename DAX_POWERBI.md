@@ -103,6 +103,11 @@ MAX( dq_run_results[run_ts] )
    `table_name`; `"group"` (used by `event_flow`, `required_event`,
    `aggregate_matches`) means it's a group key, not a
    row PK — don't join it back to `table_name` as if it were one.
+   `identifier_value` carries a human-meaningful identifier (saksnummer, for
+   every catalog shipped today) alongside the technical `primary_key_value` —
+   add it to this table so a violation is searchable/filterable by case
+   number without a manual lookup. It's `NULL` for a catalog that hasn't set
+   `identifier_column`, or when the underlying join found no match.
 4. Resolution Trend:
    Time series of `Active` vs `Resolved` by `first_seen_at` / `resolved_at`.
 

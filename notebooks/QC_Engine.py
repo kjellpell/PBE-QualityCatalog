@@ -128,6 +128,7 @@ CATALOG_KEYS = frozenset({
     "database",
     "description",
     "pk_column",
+    "identifier_column",
     "where",
     "joins",
     "rules",
@@ -271,6 +272,10 @@ VIOLATION_SCHEMA = StructType([
     StructField("rule_name",           StringType(),    False),
     StructField("table_name",          StringType(),    False),
     StructField("primary_key_value",   StringType(),    True),
+    # Human-meaningful identifier for the row (e.g. saksnummer), when the
+    # catalog sets `identifier_column`. NULL when it doesn't — this is
+    # enrichment, never used as a key.
+    StructField("identifier_value",    StringType(),    True),
     StructField("violated_column",     StringType(),    True),
     StructField("actual_value",        StringType(),    True),
     StructField("expected_condition",  StringType(),    True),
@@ -476,6 +481,7 @@ from pyspark.sql.types import StringType, StructField, StructType
 
 _VIOLATION_COLUMNS = (
     "primary_key_value",
+    "identifier_value",
     "violated_column",
     "actual_value",
     "expected_condition",
@@ -523,6 +529,36 @@ def _as_str(col_name: str):
 def _str_or_null(col_name: str):
     """Column value as a string, rendering NULL as the literal text 'NULL'."""
     return F.coalesce(_as_str(col_name), F.lit("NULL"))
+
+
+def _row_identifier_expr(ctx: "Context"):
+    """identifier_value for a row-scoped builder: ctx.df still carries every
+    joined column per row, so this is a direct reference. NULL when the
+    catalog has no `identifier_column` configured."""
+    if ctx.identifier_column:
+        return _as_str(ctx.identifier_column)
+    return F.lit(None).cast("string")
+
+
+def _with_group_identifier(violating: DataFrame, ctx: "Context", group_column: str) -> DataFrame:
+    """Attach an `identifier_value` column to a group-scoped violations frame.
+
+    By the time a group-scoped builder assembles its final `violating` frame it
+    has already reduced to one row per `group_column`, dropping every other
+    joined column along the way — unlike the row-scoped builders, there is no
+    column left to reference directly. This rebuilds a (group_column,
+    identifier_value) lookup from the original per-row frame — one value per
+    group, via `first(ignorenulls=True)`, since the identifier is expected to be
+    constant within a group — and joins it onto `violating`.
+    """
+    if not ctx.identifier_column:
+        return violating.withColumn("identifier_value", F.lit(None).cast("string"))
+    lookup = (
+        ctx.df.filter(F.col(group_column).isNotNull())
+        .groupBy(group_column)
+        .agg(F.first(_as_str(ctx.identifier_column), ignorenulls=True).alias("identifier_value"))
+    )
+    return violating.join(lookup, on=group_column, how="left")
 
 
 def predicate_columns(expression: str) -> list[str]:
@@ -678,6 +714,7 @@ class Context:
     cfg: object             # the value of the rule-type key
     spark: Any
     pk_column: str | None
+    identifier_column: str | None = None
 
 
 @dataclass
@@ -740,6 +777,7 @@ def _build_check(ctx: Context) -> Evaluation:
 
     violations = violating.select(
         _as_str(ctx.pk_column).alias("primary_key_value"),
+        _row_identifier_expr(ctx).alias("identifier_value"),
         F.lit(subject).cast("string").alias("violated_column"),
         actual.alias("actual_value"),
         F.lit(expression).alias("expected_condition"),
@@ -772,6 +810,7 @@ def _build_unique(ctx: Context) -> Evaluation:
     condition = f"UNIQUE({combination})"
     violations = violating.select(
         _as_str(ctx.pk_column).alias("primary_key_value"),
+        _row_identifier_expr(ctx).alias("identifier_value"),
         F.lit(columns[0]).alias("violated_column"),
         F.concat_ws("|", *[_as_str(c) for c in columns]).alias("actual_value"),
         F.lit(condition).alias("expected_condition"),
@@ -808,7 +847,7 @@ def _build_row_count(ctx: Context) -> Evaluation:
         expected = f"{minimum} <= row_count <= {maximum}"
         detail = f"Table has {count} rows; expected between {minimum} and {maximum}."
         violations = ctx.spark.createDataFrame(
-            [(None, "row_count", str(count), expected, detail)],
+            [(None, None, "row_count", str(count), expected, detail)],
             _VIOLATION_SCHEMA,
         )
 
@@ -991,8 +1030,10 @@ def _build_event_flow(ctx: Context) -> Evaluation:
         + ([" or ".join(ends_with)] if ends_with else [])
     )
     condition = f"Events must follow: {flow}"
+    violating = _with_group_identifier(violating, ctx, group_column)
     violations = violating.select(
         _as_str(group_column).alias("primary_key_value"),
+        F.col("identifier_value"),
         F.lit(event_column).alias("violated_column"),
         _as_str("_bad_event").alias("actual_value"),
         F.lit(condition).alias("expected_condition"),
@@ -1063,8 +1104,10 @@ def _build_required_event(ctx: Context) -> Evaluation:
         f"Group must contain at least one row where {event_column} = '{value}'"
         + (f" and {order_column} IS NOT NULL" if order_column else "")
     )
+    violating = _with_group_identifier(violating, ctx, group_column)
     violations = violating.select(
         _as_str(group_column).alias("primary_key_value"),
+        F.col("identifier_value"),
         F.lit(event_column).alias("violated_column"),
         F.lit(None).cast("string").alias("actual_value"),
         F.lit(condition).alias("expected_condition"),
@@ -1107,8 +1150,10 @@ def _build_aggregate_matches(ctx: Context) -> Evaluation:
     condition = (
         f"ABS({aggregate.upper()}({aggregate_column}) - {reference_column}) <= {tolerance}"
     )
+    violating = _with_group_identifier(violating, ctx, group_column)
     violations = violating.select(
         _as_str(group_column).alias("primary_key_value"),
+        F.col("identifier_value"),
         F.lit(aggregate_column).alias("violated_column"),
         _as_str("_aggregate").alias("actual_value"),
         F.lit(condition).alias("expected_condition"),
@@ -1206,7 +1251,7 @@ def _error(message: str) -> dict:
     }
 
 
-def run_rule(rule: dict, df: DataFrame, spark, pk_column=None) -> tuple:
+def run_rule(rule: dict, df: DataFrame, spark, pk_column=None, identifier_column=None) -> tuple:
     """
     Evaluate one rule and return ``(result_dict, violations_df)``.
 
@@ -1238,7 +1283,7 @@ def run_rule(rule: dict, df: DataFrame, spark, pk_column=None) -> tuple:
         evaluation = rule_type.build(
             Context(
                 df=scoped, cfg=rule[type_name], spark=spark,
-                pk_column=resolved_pk,
+                pk_column=resolved_pk, identifier_column=identifier_column,
             )
         )
 
@@ -1432,6 +1477,7 @@ def load_rule_catalogs(rule_sources: dict) -> list[dict]:
             "table":      doc.get("table", ""),
             "database":   doc.get("database", ""),
             "pk_column":  doc.get("pk_column"),
+            "identifier_column": doc.get("identifier_column"),
             "joins":      [_normalize_join_cfg(j) for j in (doc.get("joins") or [])],
             "where":      doc.get("where"),
             "rules":      rules,
@@ -1538,16 +1584,19 @@ def run_validation(
     rule_catalog: dict,
     source_df,
     pk_col: str,
+    identifier_col: str | None = None,
 ) -> tuple:
     """
     Validate source_df against all rules in rule_catalog.
 
     Parameters
     ----------
-    rule_catalog : dict loaded from YAML rule files (one rule group)
-    source_df    : full Spark DataFrame to validate
-    pk_col       : primary key column of source_df (stored as primary_key_value
-                   in each violation row)
+    rule_catalog   : dict loaded from YAML rule files (one rule group)
+    source_df      : full Spark DataFrame to validate
+    pk_col         : primary key column of source_df (stored as primary_key_value
+                     in each violation row)
+    identifier_col : optional human-meaningful identifier column of source_df
+                     (stored as identifier_value in each violation row)
 
     Returns
     -------
@@ -1584,7 +1633,7 @@ def run_validation(
         for _attempt in range(_max_retries + 1):
             try:
                 result, viols_spark = _run_validator(
-                    source_df, rule, spark, pk_col, _timeout_s
+                    source_df, rule, spark, pk_col, identifier_col, _timeout_s
                 )
                 break
             except concurrent.futures.TimeoutError:
@@ -1649,6 +1698,7 @@ def run_validation(
                 F.lit(rule_name).alias("rule_name"),
                 F.lit(table_name).alias("table_name"),
                 F.col("primary_key_value"),
+                F.col("identifier_value"),
                 F.col("violated_column"),
                 F.col("actual_value"),
                 F.col("expected_condition"),
@@ -1676,6 +1726,7 @@ def _run_validator(
     rule: dict,
     spark_session,
     pk_col,
+    identifier_col,
     timeout_s: float,
 ) -> tuple:
     """Execute one rule in a bounded-time background thread.
@@ -1688,7 +1739,7 @@ def _run_validator(
     When a timeout does *not* occur the thread is already finished by the time
     we call ``shutdown(wait=True)``, so there is no extra blocking cost.
     """
-    call = lambda: run_rule(rule, source_df, spark_session, pk_col)
+    call = lambda: run_rule(rule, source_df, spark_session, pk_col, identifier_col)
 
     _executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     _future = _executor.submit(call)
@@ -1725,6 +1776,7 @@ def run_quality_catalog(rule_sources: dict) -> tuple[int, int]:
         table_name = catalog["table"]
         database = catalog.get("database", "")
         pk_col = catalog.get("pk_column")
+        identifier_col = catalog.get("identifier_column")
         joins_cfg = catalog.get("joins", [])
 
         full_table = f"{database}.{table_name}" if database else table_name
@@ -1789,6 +1841,7 @@ def run_quality_catalog(rule_sources: dict) -> tuple[int, int]:
                 rule_catalog=catalog,
                 source_df=source_df,
                 pk_col=pk_col,
+                identifier_col=identifier_col,
             )
         finally:
             source_df.unpersist()
