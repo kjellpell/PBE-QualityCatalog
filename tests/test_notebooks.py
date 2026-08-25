@@ -24,7 +24,7 @@ from tests.notebook_source import (
     notebook_path,
 )
 
-LIBRARY_NOTEBOOKS = ["QC_Config", "QC_Rules", "QC_Engine", "QC_EventFlow"]
+LIBRARY_NOTEBOOKS = ["QC_Config", "QC_Rules", "QC_Engine", "QC_EventFlow", "QC_ViolationTracking"]
 ENTRY_NOTEBOOKS = ["QC_Setup_Tables", "QC_Preflight", "QC_Run_Validation"]
 ALL_NOTEBOOKS = LIBRARY_NOTEBOOKS + ENTRY_NOTEBOOKS
 
@@ -43,6 +43,7 @@ PUBLIC_NAMES = {
         "run_rule",
     ],
     "QC_EventFlow": ["check_event_flow"],
+    "QC_ViolationTracking": ["stamp_violations", "apply_resolution_tracking", "VIOLATION_SCHEMA"],
 }
 
 
