@@ -311,6 +311,89 @@ def test_gate_accepts_several_values(spark):
 
 
 # --------------------------------------------------------------------------
+# forgiving: completion_gate also closes an open pass, not just scopes groups
+# --------------------------------------------------------------------------
+
+def test_gate_forgives_an_open_pass(spark):
+    """The lone A before the gate event is an incomplete pass; the gate closes
+    it without a violation, and the flow still reaches its real ends_with."""
+    result, _ = _run(
+        spark, ["start", "A", "gate", "end"],
+        completion_gate={"event_column": "ev", "value": "gate", "order_column": "d"},
+    )
+    assert result["status"] == "Bestått"
+    assert result["failed_rows"] == 0
+
+
+def test_gate_forgiveness_allows_a_fresh_complete_pass_afterward(spark):
+    result, _ = _run(
+        spark, ["start", "A", "gate", "A", "B", "end"],
+        completion_gate={"event_column": "ev", "value": "gate", "order_column": "d"},
+    )
+    assert result["status"] == "Bestått"
+
+
+def test_gate_forgiveness_does_not_excuse_misorder_inside_the_forgiven_pass(spark):
+    """Forgiving waives completeness, not ordering: the B here is out of place
+    (A must come first) even though the pass containing it later gets
+    forgiven by the second gate occurrence."""
+    result, violations = _run(
+        spark, ["start", "A", "gate", "B", "gate", "A", "B", "end"],
+        completion_gate={"event_column": "ev", "value": "gate", "order_column": "d"},
+    )
+    assert result["status"] == "Ikke bestått"
+    row = violations.collect()[0]
+    assert row.faktisk_verdi == "B"
+    assert "forventet at neste hendelse skulle være 'A'" in row.avviksdetaljer
+    assert row.forventet_betingelse == "start → (A, B)* → gate → end"
+
+
+def test_gate_forgiveness_only_applies_to_earlier_passes_not_the_last_one(spark):
+    """The final pass is still open when the group's data ends, and gets no
+    gate occurrence after it to forgive it — still a violation, reported
+    against that last pass's own expected next event."""
+    result, violations = _run(
+        spark, ["start", "A", "gate", "A"],
+        completion_gate={"event_column": "ev", "value": "gate", "order_column": "d"},
+        ends_with=None,
+    )
+    assert result["status"] == "Ikke bestått"
+    row = violations.collect()[0]
+    assert "forventet at neste hendelse skulle være 'B'" in row.avviksdetaljer
+
+
+def test_gate_on_a_different_column_does_not_forgive(spark):
+    """completion_gate still scopes groups via any column, but forgiving only
+    applies when its event_column is this flow's own — a different column's
+    value never resets an open pass, even one that coincides with a cycle
+    event name."""
+    rows = [
+        ("g1", "A", date(2024, 1, 1), None),
+        ("g1", "note", date(2024, 1, 2), "A"),
+    ]
+    df = spark.createDataFrame(rows, "grp string, ev string, d date, status string")
+    rule = {"event_flow": {
+        "event_column": "ev", "group_column": "grp", "order_column": "d",
+        "cycle": ["A", "B"],
+        "completion_gate": {"event_column": "status", "value": "A", "order_column": "d"},
+    }}
+    result, violations = run_rule(rule, df, spark)
+
+    assert result["total_rows"] == 1            # scoping via `status` still applies
+    assert result["status"] == "Ikke bestått"    # but forgiving does not — A is still unclosed
+    assert [r.primaernoekkel_verdi for r in violations.collect()] == ["g1"]
+
+
+def test_forventet_betingelse_is_bare_flow_notation(spark):
+    """forventet_betingelse holds the technical notation, matching every other
+    rule builder — no leftover English prose."""
+    result, violations = _run(spark, ["B"])
+    row = violations.collect()[0]
+    assert row.forventet_betingelse == "start → (A, B)* → end"
+    assert "Events must follow" not in row.forventet_betingelse
+
+
+# --------------------------------------------------------------------------
 # configuration errors
 # --------------------------------------------------------------------------
 
@@ -321,6 +404,10 @@ def test_gate_accepts_several_values(spark):
         ({"cycle": ["A", "A"]}, "repeats an event"),
         ({"starts_with": ["a", "b"]}, "single event"),
         ({"cycle": ["A", "start"]}, "both an anchor and part of the cycle"),
+        (
+            {"completion_gate": {"event_column": "ev", "value": "A", "order_column": "d"}},
+            "also appear in starts_with/cycle/ends_with",
+        ),
     ],
 )
 def test_configuration_errors(spark, cfg, fragment):

@@ -159,11 +159,11 @@ anywhere are ignored, so unrelated activity in between is fine.
     cycle:                                       # required, repeats as whole passes
     - Merknader oversendt
     - Mottatt revidert planforslag
-    ends_with: [Vedtak fattet, Sak trukket]      # optional, any one closes
-    completion_gate:                             # only evaluate groups that got here
+    completion_gate:                             # scopes evaluation, and forgives an open pass
       event_column: milestone_title
-      value: Sendt til politisk behandling       # scalar or list; any match
+      value: Planforslaget er komplett            # scalar or list; any match
       order_column: milestonedate
+    ends_with: [Vedtak fattet, Sak trukket]      # optional, any one closes
 ```
 
 With `starts_with: start`, `cycle: [A, B]`, `ends_with: end`:
@@ -176,9 +176,11 @@ With `starts_with: start`, `cycle: [A, B]`, `ends_with: end`:
 | `B start A end` | error | cycle event before the start anchor |
 | `start A B A end` | error | the trailing `A` never closes |
 | `start A A B B end` | error | passes must alternate, not batch |
+| `start A gate A B end` | valid | the lone `A` before `gate` is an incomplete pass that gets forgiven; a fresh complete pass follows |
 
-The last two are the point: an opened pass that never closes is a real data
-problem, and a plain "do both exist?" check cannot see it.
+The `start A B A end` / `start A A B B end` rows are the point: an opened pass
+that never closes is a real data problem, and a plain "do both exist?" check
+cannot see it. The `gate` row is the deliberate exception to that — see below.
 
 **Anchors are optional.** A bare `cycle:` of two events is a pair check — every
 `A` must be closed by a `B`. A group containing none of the listed events is
@@ -186,8 +188,9 @@ valid (zero passes). `starts_with` takes a single value and may occur once;
 `ends_with` may list several, any one of which closes the flow, and only one may
 occur.
 
-`completion_gate` restricts evaluation to groups that have reached a given event,
-so work still legitimately in progress is not flagged. Its `value:` accepts a
+**`completion_gate` does two things, not one.** Its primary, older job is
+scoping: it restricts evaluation to groups that have reached a given event, so
+work still legitimately in progress is not flagged. Its `value:` accepts a
 scalar or a list.
 
 A handler does not always remember to set the gate milestone, so a group can
@@ -199,6 +202,29 @@ preferred trigger; `ends_with` is the safety net that catches a case at the
 point it actually closed, rather than skipping it forever because the gate
 milestone was never set. A `completion_gate` with no `ends_with` declared
 keeps the strict behaviour: only gated-in groups are evaluated.
+
+Its second job: when `completion_gate.event_column` is the same column as the
+rule's own `event_column` — the only supported case — reaching any of its
+`value`s also **forgives** whatever cycle pass is currently open at that
+point. This is what makes a real sequence like `Mottatt planforslag →
+Anmodning om oppdatert plandokumentasjon → Komplett planforslag → Vedtak
+høring og offentlig ettersyn` valid even though `Anmodning` never got its
+matching `Mottatt oppdatert plandokumentasjon` — the case moved on via
+`Komplett planforslag` instead, and that gate event closes the open pass
+without requiring it to be complete. Forgiving does not end the group's
+evaluation the way `ends_with` does — more passes, or `ends_with`, may still
+follow — and it only waives *completeness*: an out-of-order cycle event inside
+a pass that later gets forgiven is still a violation. Only the group's last,
+still-open pass needs to divide evenly by the cycle's length; every earlier
+pass, each closed by a gate occurrence, is exempt by construction. Do not set
+`completion_gate.value` to one of the flow's own `starts_with`/`cycle`/
+`ends_with` values — the engine rejects that as a config error, since a value
+can't be both a step in the flow and a marker that resets it.
+
+`forventet_betingelse` on a violation reflects this directly: for the example
+above it reads `Sendt til politisk behandling → (Merknader oversendt, Mottatt
+revidert planforslag)* → Planforslaget er komplett → Vedtak fattet or Sak
+trukket` — the gate step shown inline in the chain, no extra prose needed.
 
 Events on the **same date** are read in declared order, so a group whose
 milestones share a timestamp gives the same verdict every run.
@@ -236,7 +262,9 @@ reported, so the denominator is groups with a real key.
 Note how this differs from `event_flow`'s `completion_gate:`, which names the same
 kind of thing for the opposite purpose: `required_event:` **asserts** the event is
 there and fails the group when it is not, while `completion_gate:` **scopes** which
-groups `event_flow` evaluates and silently drops the ones that have not got there.
+groups `event_flow` evaluates and silently drops the ones that have not got there
+(and, for `event_flow` specifically, also forgives an open cycle pass — see
+"event_flow" above; `required_event` has no equivalent notion of forgiving).
 
 ### aggregate_matches
 

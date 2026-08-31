@@ -249,7 +249,7 @@
       "ikke_bestatte_rader": "0",
       "suksessprosent": "100.0",
       "status": "Bestått",
-      "detaljer": "All 0 groups satisfy Events must follow: (Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon)*.",
+      "detaljer": "All 0 groups satisfy (Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon)*.",
       "feilkategori": null
     },
     {
@@ -263,7 +263,7 @@
       "ikke_bestatte_rader": "0",
       "suksessprosent": "100.0",
       "status": "Bestått",
-      "detaljer": "All 0 groups satisfy Events must follow: (Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon)*.",
+      "detaljer": "All 0 groups satisfy (Anmodning om oppdatert plandokumentasjon, Mottatt oppdatert plandokumentasjon)* → Planforslaget er komplett.",
       "feilkategori": null
     }
   ],
