@@ -870,6 +870,19 @@ def _build_event_flow(ctx: Context) -> Evaluation:
     count to divide by the cycle length is what expresses that, and it also
     reproduces a plain "both or neither" pair check when the cycle is a pair and
     there are no anchors.
+
+    `completion_gate` has a second job beyond scoping which groups get
+    evaluated (see `_resolve_gate_groups`): when its `event_column` is the same
+    column as this rule's own `event_column`, reaching any of its `value`s also
+    forgives whatever cycle pass is currently open at that point — the
+    deliberate exception to "an unclosed pass is an error." Forgiving resets
+    the pass to closed without raising a violation for it, but does not end the
+    flow the way `ends_with` does: more passes, or `ends_with`, may still
+    follow. It only waives the completeness requirement, not ordering — an
+    out-of-order cycle event still fails even inside a pass that later gets
+    forgiven. Only the last (still-open) pass in a group needs to divide evenly
+    by the cycle width; every earlier pass, each closed by a gate occurrence,
+    is exempt by construction.
     """
     cfg = ctx.cfg
     if not isinstance(cfg, dict):
@@ -896,20 +909,33 @@ def _build_event_flow(ctx: Context) -> Evaluation:
     gate = cfg.get("completion_gate") or {}
     _require_columns(ctx.df, event_column, group_column, order_column)
 
+    # completion_gate doubles as a "forgives an open pass" marker when it names
+    # the same event_column this flow already reads — see the docstring above.
+    gate_values = _as_list(gate.get("value"))
+    forgiven_by = gate_values if gate_values and gate.get("event_column") == event_column else []
+
     overlap = (set(ends_with) | ({starts_with} if starts_with else set())) & set(cycle)
     if overlap:
         raise RuleConfigError(
             f"Event(s) {sorted(overlap)} are both an anchor and part of the cycle."
         )
+    forgiven_overlap = set(forgiven_by) & (set(cycle) | set(ends_with) | ({starts_with} if starts_with else set()))
+    if forgiven_overlap:
+        raise RuleConfigError(
+            f"Event(s) {sorted(forgiven_overlap)} in completion_gate.value also appear in "
+            f"starts_with/cycle/ends_with."
+        )
 
     width = len(cycle)
-    START_RANK, END_RANK = 0, width + 1
-    ranked_events = ([starts_with] if starts_with else []) + cycle + ends_with
+    START_RANK, END_RANK, FORGIVEN_RANK = 0, width + 1, width + 2
+    ranked_events = ([starts_with] if starts_with else []) + cycle + ends_with + forgiven_by
 
     rank = F.lit(None).cast("int")
     for value, position in (
         [(starts_with, START_RANK)] if starts_with else []
-    ) + [(v, i + 1) for i, v in enumerate(cycle)] + [(v, END_RANK) for v in ends_with]:
+    ) + [(v, i + 1) for i, v in enumerate(cycle)] + [(v, END_RANK) for v in ends_with] + [
+        (v, FORGIVEN_RANK) for v in forgiven_by
+    ]:
         rank = F.when(F.col(event_column) == value, F.lit(position)).otherwise(rank)
 
     df = _resolve_gate_groups(
@@ -936,11 +962,27 @@ def _build_event_flow(ctx: Context) -> Evaluation:
         "_last", F.max("_pos").over(Window.partitionBy(group_column))
     )
 
+    # A forgiving (completion_gate) occurrence starts a new segment: cycle position
+    # counting resets after each one, so an earlier open pass it closes is exempt
+    # from the completeness check, while ordering within it is still checked.
+    preceding = Window.partitionBy(group_column).orderBy(*ordering).rowsBetween(
+        Window.unboundedPreceding, -1
+    )
+    positioned = positioned.withColumn(
+        "_segment_id",
+        F.coalesce(
+            F.sum(F.when(F.col("_rank") == FORGIVEN_RANK, F.lit(1)).otherwise(F.lit(0))).over(preceding),
+            F.lit(0),
+        ),
+    ).withColumn(
+        "_last_segment_id", F.max("_segment_id").over(Window.partitionBy(group_column))
+    )
+
     cycle_only = positioned.filter(
         (F.col("_rank") > START_RANK) & (F.col("_rank") < END_RANK)
     ).withColumn(
         "_cpos",
-        F.row_number().over(Window.partitionBy(group_column).orderBy(*ordering)),
+        F.row_number().over(Window.partitionBy(group_column, "_segment_id").orderBy(*ordering)),
     )
     # The i-th cycle event must be cycle[i % width]; anything else is out of order.
     misplaced = F.col("_rank") != (((F.col("_cpos") - 1) % F.lit(width)) + 1)
@@ -982,7 +1024,9 @@ def _build_event_flow(ctx: Context) -> Evaluation:
         F.count(F.when(F.col("_rank") == END_RANK, F.lit(1))).alias("_ends"),
         F.count(
             F.when(
-                (F.col("_rank") > START_RANK) & (F.col("_rank") < END_RANK), F.lit(1)
+                (F.col("_rank") > START_RANK) & (F.col("_rank") < END_RANK)
+                & (F.col("_segment_id") == F.col("_last_segment_id")),
+                F.lit(1),
             )
         ).alias("_cycle_events"),
     )
@@ -1029,9 +1073,10 @@ def _build_event_flow(ctx: Context) -> Evaluation:
     flow = " → ".join(
         ([starts_with] if starts_with else [])
         + [f"({', '.join(cycle)})*"]
+        + ([" or ".join(forgiven_by)] if forgiven_by else [])
         + ([" or ".join(ends_with)] if ends_with else [])
     )
-    condition = f"Events must follow: {flow}"
+    condition = flow
     violating = _with_group_identifier(violating, ctx, group_column)
     violations = violating.select(
         _as_str(group_column).alias("primaernoekkel_verdi"),
