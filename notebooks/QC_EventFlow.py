@@ -41,6 +41,8 @@
 # Semantics preserved from the original:
 #   - shape: starts_with (once) -> cycle (repeated as whole passes) -> ends_with
 #     (once, any of several values); events not named anywhere are ignored.
+#   - within one turn, every step but the last (the "closer") may repeat any
+#     number of times in a row; the closer may occur only once per turn.
 #   - a pass that never closes is a violation, not just a mismatched event.
 #   - completion_gate scopes which groups get evaluated, falling back to the
 #     flow's own ends_with when a group reaches its closing event without the
@@ -86,12 +88,23 @@ def _first_problem(events: list[str], starts_with: str | None, cycle: list[str],
     Walk one group's events — already sorted in declared order — and return
     the first thing wrong with the flow `starts_with? -> (cycle)* -> ends_with?`.
 
+    Within one turn, every step but the last (the "closer") may repeat any
+    number of times in a row; the closer may occur only once — a second one
+    back-to-back has nothing left to close and is its own violation.
+
     None means the sequence is valid. Otherwise the returned Problem names
     what broke: an anchor in the wrong place, an event out of cycle order, or
-    a pass that opened and never closed.
+    a pass that opened and never closed (or closed with nothing to close).
     """
     width = len(cycle)
-    cycle_position = 0  # how many cycle events consumed so far, across all passes
+    step = 0         # cycle index the current turn is on
+    run_length = 0   # occurrences of that step consumed so far this turn (0 = no turn open yet)
+
+    def is_closed() -> bool:
+        # Never having opened a turn, or having ended one exactly on the
+        # closer, both count as closed. A width-1 cycle's only step is always
+        # also the closer, so any run of it is closed by construction.
+        return run_length == 0 or step == width - 1
 
     for position, event in enumerate(events):
         is_last = position == len(events) - 1
@@ -104,17 +117,24 @@ def _first_problem(events: list[str], starts_with: str | None, cycle: list[str],
         if event in ends_with:
             if not is_last:
                 return Problem("end_out_of_place", event, None)
-            if cycle_position % width != 0:
-                return Problem("closed_mid_pass", event, cycle[cycle_position % width])
+            if not is_closed():
+                return Problem("closed_mid_pass", event, cycle[step])
             continue
 
-        expected = cycle[cycle_position % width]
-        if event != expected:
-            return Problem("misplaced", event, expected)
-        cycle_position += 1
+        if run_length > 0 and event == cycle[step]:
+            if width > 1 and step == width - 1:
+                return Problem("misplaced", event, cycle[(step + 1) % width])
+            run_length += 1
+            continue
 
-    if cycle_position % width != 0:
-        return Problem("unclosed", None, cycle[cycle_position % width])
+        next_step = (step + 1) % width if run_length > 0 else step
+        if event != cycle[next_step]:
+            return Problem("misplaced", event, cycle[next_step])
+        step = next_step
+        run_length = 1
+
+    if not is_closed():
+        return Problem("unclosed", None, cycle[(step + 1) % width])
 
     return None
 

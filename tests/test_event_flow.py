@@ -39,11 +39,12 @@ def _run(spark, events, **overrides):
     "events,valid,why",
     [
         (["start", "A", "B", "end"], True, "one complete pass"),
+        (["start", "A", "A", "B", "end"], True, "two A's in a row, closed by the one B"),
         (["start", "A", "B", "A", "B", "end"], True, "two complete passes"),
         (["start", "B", "A", "end"], False, "cycle out of order"),
         (["B", "start", "A", "end"], False, "cycle event before the start anchor"),
         (["start", "A", "B", "A", "end"], False, "trailing A never closes"),
-        (["start", "A", "A", "B", "B", "end"], False, "passes must alternate, not batch"),
+        (["start", "A", "A", "B", "B", "end"], False, "the second B has nothing left to close"),
     ],
 )
 def test_worked_examples(spark, events, valid, why):
@@ -53,6 +54,17 @@ def test_worked_examples(spark, events, valid, why):
     assert result["failed_rows"] == (0 if valid else 1)
     if not valid:
         assert violations.count() == 1
+
+
+def test_repeated_closer_is_a_violation(spark):
+    """The closer may occur only once per turn: a second B right after the
+    first has nothing new to close, even though the batch it would have
+    closed (the preceding A) was itself valid."""
+    result, violations = _run(spark, ["start", "A", "B", "B", "end"])
+    assert result["status"] == "Ikke bestått"
+    row = violations.collect()[0]
+    assert row.faktisk_verdi == "B"
+    assert "forventet at neste hendelse skulle være 'A'" in row.avviksdetaljer
 
 
 # --------------------------------------------------------------------------

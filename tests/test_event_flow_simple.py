@@ -38,16 +38,22 @@ def _run(spark, events, **overrides):
     "events,valid,why",
     [
         (["start", "A", "B", "end"], True, "one complete pass"),
+        (["start", "A", "A", "B", "end"], True, "two A's in a row, closed by the one B"),
         (["start", "A", "B", "A", "B", "end"], True, "two complete passes"),
         (["start", "B", "A", "end"], False, "cycle out of order"),
         (["B", "start", "A", "end"], False, "cycle event before the start anchor"),
         (["start", "A", "B", "A", "end"], False, "trailing A never closes"),
-        (["start", "A", "A", "B", "B", "end"], False, "passes must alternate, not batch"),
+        (["start", "A", "A", "B", "B", "end"], False, "the second B has nothing left to close"),
     ],
 )
 def test_worked_examples(spark, events, valid, why):
     violations = _run(spark, events)
     assert (violations.count() == 0) == valid, why
+
+
+def test_repeated_closer_is_a_violation(spark):
+    violations = _run(spark, ["start", "A", "B", "B", "end"])
+    assert violations.count() == 1
 
 
 def test_anchors_are_optional(spark):

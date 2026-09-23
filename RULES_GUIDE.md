@@ -146,7 +146,10 @@ between `minimum` and `maximum` (inclusive).
 ### event_flow
 
 Declared events must occur **in order**, as **whole passes**. Events not named
-anywhere are ignored, so unrelated activity in between is fine.
+anywhere are ignored, so unrelated activity in between is fine. Within a pass,
+every step but the last (the "closer") may repeat any number of times in a
+row before the flow advances — the closer itself may occur only once per
+pass; a second one back-to-back has nothing left to close.
 
 ```yaml
 - rule_id: MIL-004
@@ -171,22 +174,24 @@ With `starts_with: start`, `cycle: [A, B]`, `ends_with: end`:
 | Events, by date | Verdict | Why |
 |---|---|---|
 | `start A B end` | valid | one complete pass |
+| `start A A B end` | valid | two `A`s in a row, closed by the one `B` |
 | `start A B A B end` | valid | two complete passes |
 | `start B A end` | error | cycle out of order |
 | `B start A end` | error | cycle event before the start anchor |
 | `start A B A end` | error | the trailing `A` never closes |
-| `start A A B B end` | error | passes must alternate, not batch |
+| `start A A B B end` | error | the second `B` has nothing left to close |
 | `start A gate A B end` | valid | the lone `A` before `gate` is an incomplete pass that gets forgiven; a fresh complete pass follows |
 
 The `start A B A end` / `start A A B B end` rows are the point: an opened pass
-that never closes is a real data problem, and a plain "do both exist?" check
-cannot see it. The `gate` row is the deliberate exception to that — see below.
+that never closes, or a closer with nothing to close, is a real data problem,
+and a plain "do both exist?" check cannot see it. The `gate` row is the
+deliberate exception to the first of those — see below.
 
 **Anchors are optional.** A bare `cycle:` of two events is a pair check — every
-`A` must be closed by a `B`. A group containing none of the listed events is
-valid (zero passes). `starts_with` takes a single value and may occur once;
-`ends_with` may list several, any one of which closes the flow, and only one may
-occur.
+run of one or more `A`s must be closed by a single `B`. A group containing
+none of the listed events is valid (zero passes). `starts_with` takes a
+single value and may occur once; `ends_with` may list several, any one of
+which closes the flow, and only one may occur.
 
 **`completion_gate` does two things, not one.** Its primary, older job is
 scoping: it restricts evaluation to groups that have reached a given event, so
@@ -215,8 +220,9 @@ without requiring it to be complete. Forgiving does not end the group's
 evaluation the way `ends_with` does — more passes, or `ends_with`, may still
 follow — and it only waives *completeness*: an out-of-order cycle event inside
 a pass that later gets forgiven is still a violation. Only the group's last,
-still-open pass needs to divide evenly by the cycle's length; every earlier
-pass, each closed by a gate occurrence, is exempt by construction. Do not set
+still-open pass needs to have reached a whole number of turns (ended on the
+closer, not mid-repeat); every earlier pass, each closed by a gate
+occurrence, is exempt by construction. Do not set
 `completion_gate.value` to one of the flow's own `starts_with`/`cycle`/
 `ends_with` values — the engine rejects that as a config error, since a value
 can't be both a step in the flow and a marker that resets it.
