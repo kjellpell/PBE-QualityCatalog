@@ -865,11 +865,14 @@ def _build_event_flow(ctx: Context) -> Evaluation:
     ignored entirely, so unrelated activity between the declared ones is fine.
 
     A pass that never closes is the error this exists to catch: with
-    `cycle: [A, B]`, `start A B A end` is wrong because the trailing A has no B,
-    while `start A B A B end` is two complete passes and correct. Requiring the
-    count to divide by the cycle length is what expresses that, and it also
-    reproduces a plain "both or neither" pair check when the cycle is a pair and
-    there are no anchors.
+    `cycle: [A, B]`, `start A end` is wrong because A never got its B, while
+    `start A B end` and `start A A B end` are both complete — every step but
+    the last (the "closer") may repeat any number of times in a row before
+    the flow advances; the closer itself may not (a second one back-to-back
+    has nothing left to close, and is its own violation). Counting whole
+    turns reached rather than rows is what expresses that, and with a
+    two-step cycle and no anchors it reproduces a "however many opens, one
+    close" pair check.
 
     `completion_gate` has a second job beyond scoping which groups get
     evaluated (see `_resolve_gate_groups`): when its `event_column` is the same
@@ -978,14 +981,43 @@ def _build_event_flow(ctx: Context) -> Evaluation:
         "_last_segment_id", F.max("_segment_id").over(Window.partitionBy(group_column))
     )
 
-    cycle_only = positioned.filter(
-        (F.col("_rank") > START_RANK) & (F.col("_rank") < END_RANK)
-    ).withColumn(
-        "_cpos",
-        F.row_number().over(Window.partitionBy(group_column, "_segment_id").orderBy(*ordering)),
+    # A turn is every consecutive run of one cycle step — the i-th turn must be
+    # cycle[i % width]. A non-final step's turn may hold any number of rows
+    # (it repeats freely); the final step (the "closer") may only occupy
+    # position 1 of its turn, since one closer clears however many of the
+    # prior step accumulated. A second closer back-to-back has nothing left
+    # to close and is its own violation (_closer_repeated below), not part of
+    # ordering (_misplaced) — mutually exclusive so each offending row is
+    # reported once, under one explanation.
+    cycle_window = Window.partitionBy(group_column, "_segment_id").orderBy(*ordering)
+    cycle_only = (
+        positioned.filter((F.col("_rank") > START_RANK) & (F.col("_rank") < END_RANK))
+        .withColumn("_prev_rank", F.lag("_rank").over(cycle_window))
+        .withColumn(
+            "_new_turn",
+            F.when(
+                F.col("_prev_rank").isNull() | (F.col("_prev_rank") != F.col("_rank")), F.lit(1)
+            ).otherwise(F.lit(0)),
+        )
+        .withColumn(
+            "_turn",
+            F.sum("_new_turn").over(cycle_window.rowsBetween(Window.unboundedPreceding, 0)),
+        )
+        .withColumn(
+            "_pos_in_turn",
+            F.row_number().over(
+                Window.partitionBy(group_column, "_segment_id", "_turn").orderBy(*ordering)
+            ),
+        )
     )
-    # The i-th cycle event must be cycle[i % width]; anything else is out of order.
-    misplaced = F.col("_rank") != (((F.col("_cpos") - 1) % F.lit(width)) + 1)
+    misplaced = F.col("_rank") != (((F.col("_turn") - 1) % F.lit(width)) + 1)
+    # A width-1 cycle has no step distinct from its closer, so "repeats
+    # freely" already covers it — test_single_event_cycle_allows_any_number_
+    # of_repeats depends on this staying unrestricted.
+    if width > 1:
+        closer_repeated = (F.col("_rank") == F.lit(width)) & (F.col("_pos_in_turn") > 1) & ~misplaced
+    else:
+        closer_repeated = F.lit(False)
 
     anchor_problem = (
         # a start that is not the first listed event, or an end that is not the last
@@ -996,7 +1028,7 @@ def _build_event_flow(ctx: Context) -> Evaluation:
     expected_event_for_cycle = F.lit(None).cast("string")
     for idx, value in enumerate(cycle):
         expected_event_for_cycle = F.when(
-            (((F.col("_cpos") - 1) % F.lit(width)) + 1) == idx + 1,
+            (((F.col("_turn") - 1) % F.lit(width)) + 1) == idx + 1,
             F.lit(value),
         ).otherwise(expected_event_for_cycle)
 
@@ -1004,7 +1036,7 @@ def _build_event_flow(ctx: Context) -> Evaluation:
     for idx, value in enumerate(cycle):
         next_value = cycle[(idx + 1) % width]
         next_expected_event = F.when(
-            (((F.col("_cpos") - 1) % F.lit(width)) + 1) == idx + 1,
+            (((F.col("_turn") - 1) % F.lit(width)) + 1) == idx + 1,
             F.lit(next_value),
         ).otherwise(next_expected_event)
 
@@ -1017,23 +1049,32 @@ def _build_event_flow(ctx: Context) -> Evaluation:
             .withColumn("_expected_event", expected_event_for_cycle)
             .select(group_column, order_column, event_column, "_expected_event")
         )
+        .unionByName(
+            cycle_only.filter(closer_repeated)
+            .withColumn("_expected_event", next_expected_event)
+            .select(group_column, order_column, event_column, "_expected_event")
+        )
     )
 
-    counts = positioned.groupBy(group_column).agg(
+    starts_ends = positioned.groupBy(group_column).agg(
         F.count(F.when(F.col("_rank") == START_RANK, F.lit(1))).alias("_starts"),
         F.count(F.when(F.col("_rank") == END_RANK, F.lit(1))).alias("_ends"),
-        F.count(
-            F.when(
-                (F.col("_rank") > START_RANK) & (F.col("_rank") < END_RANK)
-                & (F.col("_segment_id") == F.col("_last_segment_id")),
-                F.lit(1),
-            )
-        ).alias("_cycle_events"),
+    )
+    # A pass is complete once the group's still-open segment has reached a
+    # whole number of turns (its last turn was the closer's) — turn count,
+    # not row count, since a turn before the closer can hold any number of rows.
+    open_pass_turns = (
+        cycle_only.filter(F.col("_segment_id") == F.col("_last_segment_id"))
+        .groupBy(group_column)
+        .agg(F.max("_turn").alias("_last_turn"))
+    )
+    counts = starts_ends.join(open_pass_turns, on=group_column, how="left").withColumn(
+        "_last_turn", F.coalesce(F.col("_last_turn"), F.lit(0))
     )
     structural = counts.filter(
         (F.col("_starts") > 1)
         | (F.col("_ends") > 1)
-        | (F.col("_cycle_events") % F.lit(width) != 0)   # an unclosed pass
+        | (F.col("_last_turn") % F.lit(width) != 0)   # an unclosed pass
     ).select(group_column)
 
     structural_expectations = (
