@@ -883,9 +883,9 @@ def _build_event_flow(ctx: Context) -> Evaluation:
     flow the way `ends_with` does: more passes, or `ends_with`, may still
     follow. It only waives the completeness requirement, not ordering — an
     out-of-order cycle event still fails even inside a pass that later gets
-    forgiven. Only the last (still-open) pass in a group needs to divide evenly
-    by the cycle width; every earlier pass, each closed by a gate occurrence,
-    is exempt by construction.
+    forgiven. Only the last (still-open) pass in a group needs to have reached
+    a whole number of turns; every earlier pass, each closed by a gate
+    occurrence, is exempt by construction.
     """
     cfg = ctx.cfg
     if not isinstance(cfg, dict):
@@ -986,8 +986,8 @@ def _build_event_flow(ctx: Context) -> Evaluation:
     # (it repeats freely); the final step (the "closer") may only occupy
     # position 1 of its turn, since one closer clears however many of the
     # prior step accumulated. A second closer back-to-back has nothing left
-    # to close and is its own violation (_closer_repeated below), not part of
-    # ordering (_misplaced) — mutually exclusive so each offending row is
+    # to close and is its own violation (closer_repeated below), not part of
+    # ordering (misplaced) — mutually exclusive so each offending row is
     # reported once, under one explanation.
     cycle_window = Window.partitionBy(group_column, "_segment_id").orderBy(*ordering)
     cycle_only = (

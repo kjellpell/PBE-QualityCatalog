@@ -118,7 +118,7 @@ def _first_problem(events: list[str], starts_with: str | None, cycle: list[str],
             if not is_last:
                 return Problem("end_out_of_place", event, None)
             if not is_closed():
-                return Problem("closed_mid_pass", event, cycle[step])
+                return Problem("closed_mid_pass", event, cycle[(step + 1) % width])
             continue
 
         if run_length > 0 and event == cycle[step]:
